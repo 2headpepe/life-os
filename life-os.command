@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # Double-clickable macOS launcher for Life OS.
-# Place anywhere — it finds the repo root from its own location.
-# To put on Desktop: cp life-os.command ~/Desktop/ && chmod +x ~/Desktop/life-os.command
+# Run directly from the repo folder, or symlink to Desktop:
+#   ln -sf "$(pwd)/life-os.command" ~/Desktop/life-os.command
 
 set -euo pipefail
 
-REPO_ROOT="$( cd "$( dirname "$0" )" && pwd )"
+# Resolve symlinks so Desktop shortcuts work
+SCRIPT="$0"
+while [ -L "$SCRIPT" ]; do
+    SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT")" && pwd)"
+    SCRIPT="$(readlink "$SCRIPT")"
+    [[ "$SCRIPT" != /* ]] && SCRIPT="$SCRIPT_DIR/$SCRIPT"
+done
+REPO_ROOT="$(cd -P "$(dirname "$SCRIPT")" && pwd)"
 BACKEND="$REPO_ROOT/life-os/backend"
 FRONTEND="$REPO_ROOT/life-os/frontend"
 BACKEND_PORT=3001

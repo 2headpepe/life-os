@@ -339,8 +339,8 @@ app.get('/api/people', async (req, res) => {
   try {
     const index = JSON.parse(await fs.readFile(PEOPLE_INDEX, 'utf-8'))
     res.json(index.people)
-  } catch (e) {
-    res.status(500).json({ error: e.message })
+  } catch {
+    res.json([])
   }
 })
 
@@ -400,8 +400,8 @@ app.get('/api/insights', async (req, res) => {
   try {
     const data = JSON.parse(await fs.readFile(path.join(VAULT, 'insights/index.json'), 'utf-8'))
     res.json(data.insights)
-  } catch (e) {
-    res.status(500).json({ error: e.message })
+  } catch {
+    res.json([])
   }
 })
 
