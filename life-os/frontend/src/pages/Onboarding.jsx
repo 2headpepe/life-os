@@ -1,18 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, ArrowUp, Loader2, CheckCircle2, Sparkles, Plus, X } from 'lucide-react'
+import { ArrowRight, ArrowUp, Loader2, CheckCircle2, Sparkles, Terminal, RefreshCw } from 'lucide-react'
 import { claude, config as configApi, tree as treeApi } from '../api'
+import { openInConsole } from '../utils/openInConsole'
 
 const SPHERE_COLORS = ['#3B82F6', '#22C55E', '#EF4444', '#06B6D4', '#EC4899', '#F59E0B', '#8B5CF6', '#F97316']
-
-const DEFAULT_SPHERES = [
-  { title: 'Здоровье',    color: '#3B82F6' },
-  { title: 'Работа',      color: '#22C55E' },
-  { title: 'Учёба',       color: '#EF4444' },
-  { title: 'Отношения',   color: '#EC4899' },
-  { title: 'Саморазвитие',color: '#06B6D4' },
-  { title: 'Досуг',       color: '#F59E0B' },
-]
 
 const SETUP_SYSTEM = `Ты помощник по настройке Life OS — персональной системы управления жизнью.
 Ты ведёшь пользователя через онбординг. Отвечай по-русски, коротко и дружелюбно.
@@ -29,20 +21,29 @@ const SETUP_SYSTEM = `Ты помощник по настройке Life OS — 
 
 id сфер должны быть в формате root-{slug} (латиница, дефисы).`
 
-function slugify(str) {
-  return str.toLowerCase()
-    .replace(/[аa]/g,'a').replace(/[бb]/g,'b').replace(/[вv]/g,'v')
-    .replace(/[гg]/g,'g').replace(/[дd]/g,'d').replace(/[её]/g,'e')
-    .replace(/[жzh]/g,'zh').replace(/[зz]/g,'z').replace(/[ии]/g,'i')
-    .replace(/[йy]/g,'y').replace(/[кk]/g,'k').replace(/[лl]/g,'l')
-    .replace(/[мm]/g,'m').replace(/[нn]/g,'n').replace(/[оo]/g,'o')
-    .replace(/[пp]/g,'p').replace(/[рr]/g,'r').replace(/[сs]/g,'s')
-    .replace(/[тt]/g,'t').replace(/[уu]/g,'u').replace(/[фf]/g,'f')
-    .replace(/[хh]/g,'h').replace(/[цts]/g,'ts').replace(/[чch]/g,'ch')
-    .replace(/[шsh]/g,'sh').replace(/[щsch]/g,'sch').replace(/[ъь]/g,'')
-    .replace(/[ыy]/g,'y').replace(/[эe]/g,'e').replace(/[юyu]/g,'yu')
-    .replace(/[яya]/g,'ya').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')
-}
+const CLI_ONBOARDING_PROMPT = `Ты настраиваешь Life OS — личную систему управления жизнью — для нового пользователя.
+
+Твоя задача: провести короткое интервью и по итогу записать данные в файлы системы.
+
+Шаг 1. Поприветствуй пользователя и узнай:
+- Как его зовут
+- Чем занимается
+- Какие сферы жизни сейчас важны (здоровье, работа, учёба, отношения, хобби и т.д.)
+- 2-3 конкретные задачи или цели которые хочет отслеживать
+
+Шаг 2. По итогам разговора запиши данные в brain/content/tree/nodes.json.
+Формат узла:
+{"id":"root-health","title":"Здоровье","parent_id":null,"color":"#3B82F6","status":null,"due":null,"notes":null,"created":"TODAY","updated":"TODAY"}
+
+Корневые узлы (сферы): parent_id = null, id = root-{slug}
+Задачи: parent_id = id родительской сферы, id = node-{slug}, status = "in_progress"
+
+Файл nodes.json имеет структуру: {"_type":"tree","updated":"TODAY","nodes":[...все узлы...]}
+
+Сохрани существующие корневые узлы если они есть, добавь новые.
+После записи скажи пользователю: "Готово! Вернись в браузер и нажми кнопку 'Я готов'."
+
+Начни с приветствия прямо сейчас.`
 
 function extractJson(text) {
   const patterns = [
@@ -67,88 +68,103 @@ function StepDots({ step, total }) {
   )
 }
 
-function SphereList({ spheres, setSpheres, editingSphere, setEditingSphere }) {
+// ── No-AI flow: open CLI in terminal ──────────────────────────────
+
+function CliOnboarding({ cliCommand, onDone }) {
+  const [launched, setLaunched] = useState(false)
+  const [checking, setChecking] = useState(false)
+
+  const launch = async () => {
+    await openInConsole(CLI_ONBOARDING_PROMPT)
+    setLaunched(true)
+  }
+
+  const checkAndContinue = async () => {
+    setChecking(true)
+    try {
+      const nodes = await fetch('/api/tree').then(r => r.json())
+      const hasUserNodes = nodes.some(n => n.parent_id !== null)
+      if (hasUserNodes) {
+        onDone()
+      } else {
+        alert('Данные ещё не записаны. Заверши интервью в консоли и попробуй снова.')
+      }
+    } catch {
+      alert('Не удалось проверить данные. Попробуй снова.')
+    }
+    setChecking(false)
+  }
+
   return (
-    <div className="space-y-2">
-      {spheres.map((s, i) => (
-        <div key={i} className="flex items-center gap-3 bg-gray-50 dark:bg-gray-800 rounded-xl px-3 py-2.5">
-          <input
-            type="color"
-            value={s.color}
-            onChange={e => setSpheres(prev => prev.map((x, j) => j === i ? { ...x, color: e.target.value } : x))}
-            className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent flex-shrink-0"
-          />
-          {editingSphere === i ? (
-            <input
-              autoFocus
-              value={s.title}
-              onChange={e => setSpheres(prev => prev.map((x, j) => j === i ? { ...x, title: e.target.value } : x))}
-              onBlur={() => setEditingSphere(null)}
-              onKeyDown={e => e.key === 'Enter' && setEditingSphere(null)}
-              className="flex-1 bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none border-b border-gray-300 dark:border-gray-600"
-            />
-          ) : (
-            <button onClick={() => setEditingSphere(i)} className="flex-1 text-left text-sm text-gray-800 dark:text-gray-200 hover:text-gray-900">
-              {s.title || <span className="text-gray-400">Название...</span>}
-            </button>
-          )}
-          <button onClick={() => setSpheres(prev => prev.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-400 flex-shrink-0">
-            <X size={13} />
+    <div className="p-8 space-y-6">
+      <div className="text-center space-y-3">
+        <div className="w-12 h-12 rounded-2xl bg-gray-900 dark:bg-white flex items-center justify-center mx-auto">
+          <Terminal size={22} className="text-white dark:text-gray-900" />
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Настройка через консоль</h2>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
+            {cliCommand} откроется в терминале и проведёт короткое интервью.<br />
+            По итогу он сам запишет твои сферы и первые задачи.
+          </p>
+        </div>
+      </div>
+
+      <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 space-y-2 text-xs text-gray-500 dark:text-gray-400">
+        <div className="flex items-start gap-2">
+          <span className="text-gray-300 font-mono mt-0.5">1.</span>
+          <span>Нажми кнопку ниже — откроется терминал</span>
+        </div>
+        <div className="flex items-start gap-2">
+          <span className="text-gray-300 font-mono mt-0.5">2.</span>
+          <span>Ответь на вопросы {cliCommand}</span>
+        </div>
+        <div className="flex items-start gap-2">
+          <span className="text-gray-300 font-mono mt-0.5">3.</span>
+          <span>Когда {cliCommand} скажет «Готово» — вернись сюда и нажми «Я готов»</span>
+        </div>
+      </div>
+
+      {!launched ? (
+        <button
+          onClick={launch}
+          className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity"
+        >
+          <Terminal size={15} /> Открыть {cliCommand}
+        </button>
+      ) : (
+        <div className="space-y-2">
+          <button
+            onClick={checkAndContinue}
+            disabled={checking}
+            className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
+          >
+            {checking ? <Loader2 size={15} className="animate-spin" /> : <><CheckCircle2 size={15} /> Я готов</>}
+          </button>
+          <button
+            onClick={launch}
+            className="w-full flex items-center justify-center gap-2 text-xs text-gray-400 hover:text-gray-600 py-2"
+          >
+            <RefreshCw size={12} /> Открыть консоль снова
           </button>
         </div>
-      ))}
-      <button
-        onClick={() => setSpheres(prev => [...prev, { title: '', color: SPHERE_COLORS[prev.length % SPHERE_COLORS.length] }])}
-        className="w-full flex items-center justify-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 py-2 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl transition-colors"
-      >
-        <Plus size={12} /> Добавить сферу
-      </button>
+      )}
+
+      <div className="border-t border-gray-100 dark:border-gray-800 pt-4 flex gap-3 text-xs text-gray-400">
+        <button onClick={onDone} className="flex-1 hover:text-gray-600 dark:hover:text-gray-300 py-1">
+          Пропустить →
+        </button>
+      </div>
     </div>
   )
 }
 
-function TaskList({ tasks, setTasks, spheres }) {
-  return (
-    <div className="space-y-2">
-      {tasks.map((t, i) => {
-        const sphere = spheres.find(s => s.id === t.parent_id)
-        return (
-          <div key={i} className="flex items-start gap-3 bg-gray-50 dark:bg-gray-800 rounded-xl px-3 py-2.5">
-            <span className="w-2 h-2 rounded-full flex-shrink-0 mt-1.5" style={{ backgroundColor: sphere?.color || '#6B7280' }} />
-            <div className="flex-1 min-w-0 space-y-1">
-              <input
-                value={t.title}
-                onChange={e => setTasks(prev => prev.map((x, j) => j === i ? { ...x, title: e.target.value } : x))}
-                placeholder="Название задачи..."
-                className="w-full bg-transparent text-sm text-gray-800 dark:text-gray-200 outline-none placeholder-gray-400"
-              />
-              <select
-                value={t.parent_id}
-                onChange={e => setTasks(prev => prev.map((x, j) => j === i ? { ...x, parent_id: e.target.value } : x))}
-                className="text-[10px] text-gray-400 bg-transparent outline-none cursor-pointer"
-              >
-                {spheres.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
-              </select>
-            </div>
-            <button onClick={() => setTasks(prev => prev.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-400 flex-shrink-0 mt-0.5">
-              <X size={13} />
-            </button>
-          </div>
-        )
-      })}
-      <button
-        onClick={() => setTasks(prev => [...prev, { title: '', parent_id: spheres[0]?.id || '', status: 'in_progress' }])}
-        className="w-full flex items-center justify-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 py-2 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl transition-colors"
-      >
-        <Plus size={12} /> Добавить задачу
-      </button>
-    </div>
-  )
-}
+// ── AI web flow ───────────────────────────────────────────────────
 
 export default function Onboarding({ onDone }) {
   const navigate = useNavigate()
-  const [hasAi, setHasAi] = useState(null) // null = loading
+  const [hasAi, setHasAi] = useState(null)
+  const [cliCommand, setCliCommand] = useState('claude')
   const [step, setStep] = useState(0)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -160,16 +176,14 @@ export default function Onboarding({ onDone }) {
 
   useEffect(() => {
     configApi.get()
-      .then(c => setHasAi(!!c.hasAi))
+      .then(c => { setHasAi(!!c.hasAi); setCliCommand(c.cliCommand || 'claude') })
       .catch(() => setHasAi(false))
   }, [])
 
   const spheresWithIds = spheres.map((s, i) => ({
     ...s,
-    id: s.id || `root-${slugify(s.title) || `sphere-${i}`}`,
+    id: s.id || `root-sphere-${i}`,
   }))
-
-  // ── AI flow ────────────────────────────────────────────────────────
 
   const handleDescribeSelf = async () => {
     const text = input.trim()
@@ -220,29 +234,14 @@ export default function Onboarding({ onDone }) {
     setLoading(false)
   }
 
-  // ── Manual flow ────────────────────────────────────────────────────
-
-  const startManualSpheres = () => {
-    setSpheres(DEFAULT_SPHERES.map((s, i) => ({ ...s, color: SPHERE_COLORS[i] })))
-    setStep(2)
-  }
-
-  const prepareManualTasks = () => {
-    setTasks([{ title: '', parent_id: spheresWithIds[0]?.id || '', status: 'in_progress' }])
-    setStep(3)
-  }
-
-  // ── Shared: create nodes ───────────────────────────────────────────
-
   const createSpheres = async () => {
     setLoading(true); setError(null)
     try {
       for (const s of spheresWithIds) {
-        if (!s.title.trim()) continue
+        if (!s.title?.trim()) continue
         await treeApi.create({ id: s.id, title: s.title, color: s.color, parent_id: null })
       }
-      if (hasAi) setStep(3)
-      else prepareManualTasks()
+      setStep(3)
     } catch (e) { setError(e.message) }
     setLoading(false)
   }
@@ -251,7 +250,7 @@ export default function Onboarding({ onDone }) {
     setLoading(true); setError(null)
     try {
       for (const t of tasks) {
-        if (!t.title.trim()) continue
+        if (!t.title?.trim()) continue
         await treeApi.create({ title: t.title, parent_id: t.parent_id, status: t.status || 'in_progress' })
       }
       setStep(5)
@@ -261,11 +260,22 @@ export default function Onboarding({ onDone }) {
 
   const finish = () => { onDone?.(); navigate('/') }
 
-  const createdSpheres = spheresWithIds.filter(s => s.title.trim())
-  const createdTasks = tasks.filter(t => t.title.trim())
+  if (hasAi === null) return null
 
-  if (hasAi === null) return null // loading config
+  // No-AI: show CLI onboarding screen
+  if (!hasAi) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-4">
+        <div className="w-full max-w-lg">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden">
+            <CliOnboarding cliCommand={cliCommand} onDone={finish} />
+          </div>
+        </div>
+      </div>
+    )
+  }
 
+  // AI web flow
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
@@ -283,7 +293,7 @@ export default function Onboarding({ onDone }) {
                 <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Добро пожаловать в Life OS</h1>
                 <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                   Личная система для задач, целей, привычек и всего остального.<br />
-                  {hasAi ? 'AI поможет настроить её под тебя за пару минут.' : 'Давай настроим её под тебя за пару минут.'}
+                  AI поможет настроить её под тебя за пару минут.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-2 text-left text-xs text-gray-500 dark:text-gray-400">
@@ -293,13 +303,8 @@ export default function Onboarding({ onDone }) {
                   </div>
                 ))}
               </div>
-              {!hasAi && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-xl px-3 py-2">
-                  AI не настроен — заполни данные вручную. Это займёт 2 минуты.
-                </p>
-              )}
               <button
-                onClick={() => hasAi ? setStep(1) : startManualSpheres()}
+                onClick={() => setStep(1)}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity"
               >
                 Начать настройку <ArrowRight size={15} />
@@ -307,8 +312,8 @@ export default function Onboarding({ onDone }) {
             </div>
           )}
 
-          {/* Step 1: AI — describe yourself */}
-          {step === 1 && hasAi && (
+          {/* Step 1: Describe yourself */}
+          {step === 1 && (
             <div className="p-6 space-y-4">
               <div>
                 <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Расскажи о себе</p>
@@ -336,20 +341,36 @@ export default function Onboarding({ onDone }) {
             </div>
           )}
 
-          {/* Step 2: Spheres — edit & confirm (both modes) */}
+          {/* Step 2: Confirm spheres */}
           {step === 2 && (
             <div className="p-6 space-y-4">
               <div>
-                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Сферы жизни</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  {hasAi ? 'Нажми на название чтобы изменить.' : 'Оставь нужные, убери лишние, добавь свои.'}
-                </p>
+                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Твои сферы жизни</p>
+                <p className="text-xs text-gray-400 mt-1">Нажми на название чтобы изменить. Можешь убрать лишние.</p>
               </div>
-              <SphereList spheres={spheres} setSpheres={setSpheres} editingSphere={editingSphere} setEditingSphere={setEditingSphere} />
+              <div className="space-y-2">
+                {spheres.map((s, i) => (
+                  <div key={i} className="flex items-center gap-3 bg-gray-50 dark:bg-gray-800 rounded-xl px-3 py-2.5">
+                    <input type="color" value={s.color}
+                      onChange={e => setSpheres(prev => prev.map((x, j) => j === i ? { ...x, color: e.target.value } : x))}
+                      className="w-5 h-5 rounded cursor-pointer border-0 bg-transparent flex-shrink-0"
+                    />
+                    {editingSphere === i ? (
+                      <input autoFocus value={s.title}
+                        onChange={e => setSpheres(prev => prev.map((x, j) => j === i ? { ...x, title: e.target.value } : x))}
+                        onBlur={() => setEditingSphere(null)}
+                        onKeyDown={e => e.key === 'Enter' && setEditingSphere(null)}
+                        className="flex-1 bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none border-b border-gray-300 dark:border-gray-600"
+                      />
+                    ) : (
+                      <button onClick={() => setEditingSphere(i)} className="flex-1 text-left text-sm text-gray-800 dark:text-gray-200">{s.title}</button>
+                    )}
+                    <button onClick={() => setSpheres(prev => prev.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-400 text-xs px-1">✕</button>
+                  </div>
+                ))}
+              </div>
               {error && <p className="text-xs text-red-500">{error}</p>}
-              <button
-                onClick={createSpheres}
-                disabled={loading || createdSpheres.length === 0}
+              <button onClick={createSpheres} disabled={loading || spheres.length === 0}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
               >
                 {loading ? <Loader2 size={15} className="animate-spin" /> : <><CheckCircle2 size={15} /> Создать сферы</>}
@@ -357,8 +378,8 @@ export default function Onboarding({ onDone }) {
             </div>
           )}
 
-          {/* Step 3: AI — describe goals / Manual — already set to task editor */}
-          {step === 3 && hasAi && (
+          {/* Step 3: Describe goals */}
+          {step === 3 && (
             <div className="p-6 space-y-4">
               <div>
                 <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Первые задачи</p>
@@ -370,9 +391,7 @@ export default function Onboarding({ onDone }) {
                 ))}
               </div>
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
-                <textarea
-                  autoFocus
-                  value={input}
+                <textarea autoFocus value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleDescribeGoals() } }}
                   placeholder="Например: хочу начать ходить в зал, дочитать книгу по дизайну, разобраться с курсовой…"
@@ -381,40 +400,47 @@ export default function Onboarding({ onDone }) {
                 />
               </div>
               {error && <p className="text-xs text-red-500">{error}</p>}
-              <button
-                onClick={handleDescribeGoals}
-                disabled={!input.trim() || loading}
+              <button onClick={handleDescribeGoals} disabled={!input.trim() || loading}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
               >
                 {loading ? <Loader2 size={15} className="animate-spin" /> : <><ArrowUp size={15} /> Отправить</>}
               </button>
-              <button onClick={() => setStep(5)} className="w-full text-xs text-gray-400 hover:text-gray-600 py-1">
-                Пропустить
-              </button>
+              <button onClick={() => setStep(5)} className="w-full text-xs text-gray-400 hover:text-gray-600 py-1">Пропустить</button>
             </div>
           )}
 
-          {/* Step 4: Tasks — edit & confirm (both modes) */}
+          {/* Step 4: Confirm tasks */}
           {step === 4 && (
             <div className="p-6 space-y-4">
               <div>
                 <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Первые задачи</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  {hasAi ? 'Нажми на задачу чтобы изменить.' : 'Добавь первые задачи — по одной на каждую сферу.'}
-                </p>
+                <p className="text-xs text-gray-400 mt-1">Нажми на задачу чтобы изменить. Убери лишние.</p>
               </div>
-              <TaskList tasks={tasks} setTasks={setTasks} spheres={spheresWithIds} />
+              <div className="space-y-2">
+                {tasks.map((t, i) => {
+                  const sphere = spheresWithIds.find(s => s.id === t.parent_id)
+                  return (
+                    <div key={i} className="flex items-center gap-3 bg-gray-50 dark:bg-gray-800 rounded-xl px-3 py-2.5">
+                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: sphere?.color || '#6B7280' }} />
+                      <div className="flex-1 min-w-0">
+                        <input value={t.title}
+                          onChange={e => setTasks(prev => prev.map((x, j) => j === i ? { ...x, title: e.target.value } : x))}
+                          className="w-full bg-transparent text-sm text-gray-800 dark:text-gray-200 outline-none"
+                        />
+                        <span className="text-[10px] text-gray-400">{sphere?.title || t.parent_id}</span>
+                      </div>
+                      <button onClick={() => setTasks(prev => prev.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-400 text-xs px-1">✕</button>
+                    </div>
+                  )
+                })}
+              </div>
               {error && <p className="text-xs text-red-500">{error}</p>}
-              <button
-                onClick={createTasks}
-                disabled={loading || createdTasks.length === 0}
+              <button onClick={createTasks} disabled={loading || tasks.length === 0}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
               >
                 {loading ? <Loader2 size={15} className="animate-spin" /> : <><CheckCircle2 size={15} /> Добавить задачи</>}
               </button>
-              <button onClick={() => setStep(5)} className="w-full text-xs text-gray-400 hover:text-gray-600 py-1">
-                Пропустить
-              </button>
+              <button onClick={() => setStep(5)} className="w-full text-xs text-gray-400 hover:text-gray-600 py-1">Пропустить</button>
             </div>
           )}
 
@@ -427,9 +453,8 @@ export default function Onboarding({ onDone }) {
               <div>
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Готово!</h2>
                 <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
-                  Создали{' '}
-                  <span className="font-medium text-gray-700 dark:text-gray-300">{createdSpheres.length} сфер</span>{' '}и{' '}
-                  <span className="font-medium text-gray-700 dark:text-gray-300">{createdTasks.length} задач</span>.
+                  Создали <span className="font-medium text-gray-700 dark:text-gray-300">{spheres.length} сфер</span> и{' '}
+                  <span className="font-medium text-gray-700 dark:text-gray-300">{tasks.length} задач</span>.
                   Зайди в «Привычки» чтобы настроить трекинг, в «Сегодня» чтобы увидеть план дня.
                 </p>
               </div>
@@ -439,8 +464,7 @@ export default function Onboarding({ onDone }) {
                 <div><kbd className="bg-white dark:bg-gray-700 px-1.5 py-0.5 rounded text-[10px] border border-gray-200 dark:border-gray-600">⌘J</kbd> — чат с AI</div>
                 <div><kbd className="bg-white dark:bg-gray-700 px-1.5 py-0.5 rounded text-[10px] border border-gray-200 dark:border-gray-600">⌘F</kbd> — поиск</div>
               </div>
-              <button
-                onClick={finish}
+              <button onClick={finish}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity"
               >
                 Открыть Life OS <ArrowRight size={15} />
