@@ -6,3 +6,4 @@ life-os/backend/data/news/index.json
 brain/
 .DS_Store
 **/.DS_Store
+opencode.json
