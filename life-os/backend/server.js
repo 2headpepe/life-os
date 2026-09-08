@@ -339,8 +339,8 @@ app.get('/api/people', async (req, res) => {
   try {
     const index = JSON.parse(await fs.readFile(PEOPLE_INDEX, 'utf-8'))
     res.json(index.people)
-  } catch {
-    res.json([])
+  } catch (e) {
+    res.status(500).json({ error: e.message })
   }
 })
 
@@ -400,8 +400,8 @@ app.get('/api/insights', async (req, res) => {
   try {
     const data = JSON.parse(await fs.readFile(path.join(VAULT, 'insights/index.json'), 'utf-8'))
     res.json(data.insights)
-  } catch {
-    res.json([])
+  } catch (e) {
+    res.status(500).json({ error: e.message })
   }
 })
 
@@ -1272,8 +1272,13 @@ app.post('/api/open-claude', async (req, res) => {
   const cliCmd = process.env.CLI_COMMAND || 'claude'
   try {
     const scriptPath = '/tmp/life-os-cli.sh'
-    const escaped = (prompt || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`')
-    const cmd = prompt ? `${cliCmd} "${escaped}"` : cliCmd
+    let cmd = cliCmd
+    if (prompt) {
+      // Write long prompts to a file to avoid shell argument length limits
+      const promptPath = '/tmp/life-os-cli-prompt.txt'
+      await fs.writeFile(promptPath, prompt)
+      cmd = `${cliCmd} "$(cat ${promptPath})"`
+    }
     await fs.writeFile(scriptPath, `#!/bin/bash\ncd "${WORK_DIR}"\n${cmd}\n`)
     await fs.chmod(scriptPath, 0o755)
     exec(`osascript -e 'tell application "Terminal" to do script "${scriptPath}"' -e 'tell application "Terminal" to activate'`)
