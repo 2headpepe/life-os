@@ -1,0 +1,8 @@
+life-os/frontend/node_modules/
+life-os/frontend/dist/
+life-os/backend/node_modules/
+life-os/backend/.env
+life-os/backend/data/news/index.json
+brain/
+.DS_Store
+**/.DS_Store
