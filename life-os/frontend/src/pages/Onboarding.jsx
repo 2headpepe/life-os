@@ -113,14 +113,18 @@ function CliOnboarding({ cliCommand, onDone }) {
       <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 space-y-2 text-xs text-gray-500 dark:text-gray-400">
         <div className="flex items-start gap-2">
           <span className="text-gray-300 font-mono mt-0.5">1.</span>
-          <span>Нажми кнопку ниже — откроется терминал</span>
+          <span>Нажми кнопку ниже — откроется терминал с {cliCommand}</span>
         </div>
         <div className="flex items-start gap-2">
           <span className="text-gray-300 font-mono mt-0.5">2.</span>
-          <span>Ответь на вопросы {cliCommand}</span>
+          <span>Вставь первое сообщение <kbd className="bg-white dark:bg-gray-700 px-1 rounded border border-gray-200 dark:border-gray-600">⌘V</kbd> — оно уже в буфере обмена</span>
         </div>
         <div className="flex items-start gap-2">
           <span className="text-gray-300 font-mono mt-0.5">3.</span>
+          <span>Ответь на вопросы {cliCommand}, он сам запишет данные</span>
+        </div>
+        <div className="flex items-start gap-2">
+          <span className="text-gray-300 font-mono mt-0.5">4.</span>
           <span>Когда {cliCommand} скажет «Готово» — вернись сюда и нажми «Я готов»</span>
         </div>
       </div>

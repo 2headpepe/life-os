@@ -1272,14 +1272,21 @@ app.post('/api/open-claude', async (req, res) => {
   const cliCmd = process.env.CLI_COMMAND || 'claude'
   try {
     const scriptPath = '/tmp/life-os-cli.sh'
-    let cmd = cliCmd
+    let script = `#!/bin/bash\ncd "${WORK_DIR}"\n`
     if (prompt) {
-      // Write long prompts to a file to avoid shell argument length limits
-      const promptPath = '/tmp/life-os-cli-prompt.txt'
-      await fs.writeFile(promptPath, prompt)
-      cmd = `${cliCmd} "$(cat ${promptPath})"`
+      // Print instructions in the terminal before starting CLI,
+      // then copy prompt to clipboard so user can paste it
+      const escapedPrompt = prompt.replace(/'/g, "'\\''")
+      script += `echo '${escapedPrompt}' | pbcopy\n`
+      script += `echo ""\n`
+      script += `echo "══════════════════════════════════════════"\n`
+      script += `echo " Life OS — инструкции скопированы в буфер"\n`
+      script += `echo " Вставь первое сообщение: ⌘V (Cmd+V)"\n`
+      script += `echo "══════════════════════════════════════════"\n`
+      script += `echo ""\n`
     }
-    await fs.writeFile(scriptPath, `#!/bin/bash\ncd "${WORK_DIR}"\n${cmd}\n`)
+    script += `${cliCmd}\n`
+    await fs.writeFile(scriptPath, script)
     await fs.chmod(scriptPath, 0o755)
     exec(`osascript -e 'tell application "Terminal" to do script "${scriptPath}"' -e 'tell application "Terminal" to activate'`)
     res.json({ ok: true })
