@@ -33,26 +33,24 @@ node ops/scripts/seed-empty.js
 
 ```bash
 cp life-os/backend/.env.example life-os/backend/.env
+cp opencode.example.json opencode.json
 ```
 
-Открыть `life-os/backend/.env` и заполнить **один** из вариантов AI:
+Открыть `life-os/backend/.env` и вписать свой ключ:
 
-**Вариант A — Anthropic (Claude):**
 ```env
-ANTHROPIC_API_KEY=sk-ant-...
+AI_API_KEY=your-key-here   # заменить на реальный ключ
 ```
 
-**Вариант B — OpenAI или любой совместимый API (opencode, OpenRouter и др.):**
-```env
-AI_API_KEY=ваш-ключ
-AI_API_BASE_URL=https://api.openai.com/v1
-AI_MODEL=gpt-4o
+Открыть `opencode.json` и вписать тот же ключ:
+
+```json
+"apiKey": "your-key-here"
 ```
 
-Если используешь **opencode** как CLI-инструмент — добавь:
-```env
-CLI_COMMAND=opencode
-```
+После этого `opencode`, запущенный из папки репозитория, автоматически подхватит провайдера.
+
+**Другие AI-провайдеры** — см. варианты в `life-os/backend/.env.example`.
 
 ### 4. Установить зависимости
 
