@@ -42,30 +42,44 @@ cd <repo-name>
 
 ### 3. Configure environment
 
+**macOS / Linux:**
 ```bash
 cp life-os/backend/.env.example life-os/backend/.env
 ```
 
-Open `life-os/backend/.env` and add at least one AI key:
+**Windows (Command Prompt):**
+```cmd
+copy life-os\backend\.env.example life-os\backend\.env
+```
+
+**Windows (PowerShell):**
+```powershell
+Copy-Item life-os\backend\.env.example life-os\backend\.env
+```
+
+Open `life-os/backend/.env` in any text editor and add at least one AI key:
 
 **Option A — Anthropic Claude** (recommended)  
-Get key: [console.anthropic.com](https://console.anthropic.com) → API Keys
+Get key: [console.anthropic.com](https://console.anthropic.com) → API Keys → Create Key  
+Keys look like `sk-ant-api03-...`
 ```env
-ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_API_KEY=<paste-your-key-here>
 ```
 
 **Option B — OpenAI**  
-Get key: [platform.openai.com](https://platform.openai.com) → API Keys
+Get key: [platform.openai.com](https://platform.openai.com) → API Keys → Create new secret key  
+Keys look like `sk-proj-...`
 ```env
-AI_API_KEY=sk-...
+AI_API_KEY=<paste-your-key-here>
 AI_API_BASE_URL=https://api.openai.com/v1
 AI_MODEL=gpt-4o
 ```
 
-**Option C — OpenRouter** (access 100+ models via one key)  
-Get key: [openrouter.ai/keys](https://openrouter.ai/keys)
+**Option C — OpenRouter** (100+ models via one key, has free tier)  
+Get key: [openrouter.ai/keys](https://openrouter.ai/keys) → Create Key  
+Keys look like `sk-or-v1-...`
 ```env
-AI_API_KEY=sk-or-...
+AI_API_KEY=<paste-your-key-here>
 AI_API_BASE_URL=https://openrouter.ai/api/v1
 AI_MODEL=anthropic/claude-sonnet-4-5
 ```
@@ -101,18 +115,29 @@ cd ../frontend && npm install
 ln -sf "$(pwd)/life-os.command" ~/Desktop/life-os.command
 ```
 
-Double-click the shortcut. It starts backend + frontend and opens the browser automatically. Handles `npm install` and port cleanup on each launch.
+Double-click the shortcut. Starts backend + frontend, opens the browser. Handles `npm install` and port cleanup automatically.
 
 > Use `ln -sf` (symlink), not `cp` — the script needs to know the repo path.
 
-**Manual (two terminals):**
+**Windows — double-click launcher:**
+
+Double-click `life-os.bat` in the repo root. It runs `life-os.ps1` via PowerShell.
+
+If Windows blocks the script with a policy error, run once in PowerShell as Administrator:
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+**Manual — any OS (two terminals):**
 
 ```bash
 # Terminal 1 — backend (port 3001)
-cd life-os/backend && node --env-file=.env server.js
+cd life-os/backend
+node --env-file=.env server.js
 
 # Terminal 2 — frontend (port 5173)
-cd life-os/frontend && npm run dev
+cd life-os/frontend
+npm run dev
 ```
 
 Open: **http://localhost:5173**
@@ -205,3 +230,10 @@ All backend settings are in `life-os/backend/.env` (copy from `.env.example`):
 **Onboarding doesn't appear** — if `brain/content/tree/nodes.json` already has data, onboarding is skipped. Delete the file and restart, or go to http://localhost:5173/setup directly
 
 **Console button does nothing** — make sure `CLI_COMMAND` is set to an installed tool (e.g. `claude` requires `npm install -g @anthropic-ai/claude-code`)
+
+**Windows: PowerShell blocks life-os.bat** — run once in PowerShell as Administrator:
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+**Windows: console button doesn't open a terminal** — the backend detects Windows and uses `start cmd`. Make sure your `CLI_COMMAND` is installed and in your system PATH.

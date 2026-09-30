@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import fs from 'fs/promises'
 import path from 'path'
+import os from 'os'
 import { exec, spawn } from 'child_process'
 import { google } from 'googleapis'
 import multer from 'multer'
@@ -1287,25 +1288,61 @@ app.put('/api/profile', async (req, res) => {
 app.post('/api/open-claude', async (req, res) => {
   const { prompt } = req.body || {}
   const cliCmd = process.env.CLI_COMMAND || 'claude'
+  const platform = process.platform
+
   try {
-    const scriptPath = '/tmp/life-os-cli.sh'
-    let script = `#!/bin/bash\ncd "${WORK_DIR}"\n`
-    if (prompt) {
-      // Print instructions in the terminal before starting CLI,
-      // then copy prompt to clipboard so user can paste it
-      const escapedPrompt = prompt.replace(/'/g, "'\\''")
-      script += `echo '${escapedPrompt}' | pbcopy\n`
-      script += `echo ""\n`
-      script += `echo "══════════════════════════════════════════"\n`
-      script += `echo " Life OS — инструкции скопированы в буфер"\n`
-      script += `echo " Вставь первое сообщение: ⌘V (Cmd+V)"\n`
-      script += `echo "══════════════════════════════════════════"\n`
-      script += `echo ""\n`
+    if (platform === 'win32') {
+      // Windows: write a .bat, copy prompt via clip, open cmd
+      const scriptPath = path.join(os.tmpdir(), 'life-os-cli.bat')
+      let script = `@echo off\ncd /d "${WORK_DIR}"\n`
+      if (prompt) {
+        const escaped = prompt.replace(/"/g, '\\"')
+        script += `echo ${escaped}| clip\n`
+        script += `echo.\n`
+        script += `echo ==========================================\n`
+        script += `echo  Life OS - prompt copied to clipboard\n`
+        script += `echo  Paste your first message: Ctrl+V\n`
+        script += `echo ==========================================\n`
+        script += `echo.\n`
+      }
+      script += `${cliCmd}\n`
+      await fs.writeFile(scriptPath, script)
+      exec(`start cmd /k "${scriptPath}"`)
+    } else {
+      // macOS / Linux: write a .sh, copy prompt, open terminal
+      const scriptPath = path.join(os.tmpdir(), 'life-os-cli.sh')
+      let script = `#!/bin/bash\ncd "${WORK_DIR}"\n`
+      if (prompt) {
+        const escapedPrompt = prompt.replace(/'/g, "'\\''")
+        if (platform === 'darwin') {
+          script += `echo '${escapedPrompt}' | pbcopy\n`
+          script += `echo ""\n`
+          script += `echo "══════════════════════════════════════════"\n`
+          script += `echo " Life OS — инструкции скопированы в буфер"\n`
+          script += `echo " Вставь первое сообщение: ⌘V (Cmd+V)"\n`
+          script += `echo "══════════════════════════════════════════"\n`
+          script += `echo ""\n`
+        } else {
+          // Linux: try xclip, fall back to xsel
+          script += `echo '${escapedPrompt}' | xclip -selection clipboard 2>/dev/null || echo '${escapedPrompt}' | xsel --clipboard --input 2>/dev/null || true\n`
+          script += `echo ""\n`
+          script += `echo "══════════════════════════════════════════"\n`
+          script += `echo " Life OS — prompt copied to clipboard"\n`
+          script += `echo " Paste your first message: Ctrl+Shift+V"\n`
+          script += `echo "══════════════════════════════════════════"\n`
+          script += `echo ""\n`
+        }
+      }
+      script += `${cliCmd}\n`
+      await fs.writeFile(scriptPath, script)
+      await fs.chmod(scriptPath, 0o755)
+      if (platform === 'darwin') {
+        exec(`osascript -e 'tell application "Terminal" to do script "${scriptPath}"' -e 'tell application "Terminal" to activate'`)
+      } else {
+        // Linux: try common terminal emulators
+        exec(`x-terminal-emulator -e "${scriptPath}" 2>/dev/null || gnome-terminal -- bash "${scriptPath}" 2>/dev/null || xterm -e "${scriptPath}" 2>/dev/null`)
+      }
     }
-    script += `${cliCmd}\n`
-    await fs.writeFile(scriptPath, script)
-    await fs.chmod(scriptPath, 0o755)
-    exec(`osascript -e 'tell application "Terminal" to do script "${scriptPath}"' -e 'tell application "Terminal" to activate'`)
     res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: e.message })

@@ -2,6 +2,8 @@
 
 Personal operating system web app on top of Obsidian vault.
 
+> **Before making any change, read `life-os/SPEC.md`** — it defines invariants, contracts, and change protocols that must be preserved.
+
 ## Running the app
 
 ```bash
