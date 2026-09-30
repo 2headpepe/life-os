@@ -3,6 +3,7 @@ import { Circle, Clock, CircleDot, CheckCircle2, CircleDashed, CircleMinus, Lock
          ChevronDown, ChevronRight, Sparkles, Plus, X, AlignJustify } from 'lucide-react'
 import { tree as treeApi, habits as habitsApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
+import PageOnboarding from '../components/PageOnboarding'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
@@ -582,6 +583,7 @@ export default function Tree() {
   return (
     <>
       <div className="max-w-3xl mx-auto py-8 px-6">
+        <PageOnboarding pageId="tree" />
 
         {/* Header / Breadcrumb */}
         <div className="mb-6 flex items-center justify-between gap-4">

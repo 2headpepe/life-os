@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Check, X, Target } from 'lucide-react'
 import { habits, tree as treeApi } from '../api'
+import PageOnboarding from '../components/PageOnboarding'
 
 const DAYS_SHORT = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 
@@ -524,6 +525,7 @@ export default function Habits() {
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-6">
+      <PageOnboarding pageId="habits" />
       {/* Tabs */}
       <div className="flex items-center gap-1 mb-6 bg-gray-100 dark:bg-gray-800 rounded-xl p-1 w-fit">
         {[['track', 'Трекинг'], ['history', 'История'], ['gaps', 'Пропуски']].map(([id, label]) => (

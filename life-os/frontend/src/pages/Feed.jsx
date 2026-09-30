@@ -7,6 +7,7 @@ import {
   InboxPendingCard, StaleInProgressCard, PeopleStalCard, AiNoteCard, NudgeCard,
   ReflectionCard, CelebrationCard, ChallengeCard, PatternCard, EndCard,
 } from './FeedCards'
+import PageOnboarding from '../components/PageOnboarding'
 
 export default function Feed() {
   const [data, setData] = useState(null)
@@ -275,6 +276,7 @@ export default function Feed() {
     <div className="h-[calc(100vh-3rem)] flex flex-col">
       {/* Fixed header — always visible */}
       <div className="flex-shrink-0 max-w-2xl mx-auto w-full px-4 pt-5 pb-2 space-y-2">
+        <PageOnboarding pageId="feed" />
         <div className="flex items-center justify-between px-1">
           <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100 tracking-tight">Лента</h1>
           <div className="flex items-center gap-2">

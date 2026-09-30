@@ -62,6 +62,11 @@ export const config = {
   get: () => api.get('/config'),
 }
 
+export const profile = {
+  get: () => api.get('/profile'),
+  update: (data) => fetch('/api/profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+}
+
 export const insights = {
   all: () => api.get('/insights'),
   add: (insight) => api.post('/insights', insight),

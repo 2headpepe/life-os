@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { X, ChevronDown, ChevronRight } from 'lucide-react'
 import { inbox as inboxApi, tree as treeApi } from '../api'
 import { useSpheres } from '../SpheresContext'
+import PageOnboarding from '../components/PageOnboarding'
 
 function InboxItem({ item, onDelete, onCreateTask }) {
   const { SPHERE_ORDER, SPHERE_LABELS } = useSpheres()
@@ -114,6 +115,7 @@ export default function Inbox() {
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-6">
+      <PageOnboarding pageId="inbox" />
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Входящие</h1>
         <span className="text-sm text-gray-400">{items.length} элементов</span>

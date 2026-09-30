@@ -1267,6 +1267,23 @@ app.get('/api/config', (req, res) => {
   })
 })
 
+app.get('/api/profile', async (req, res) => {
+  try {
+    const data = JSON.parse(await fs.readFile(path.join(VAULT, 'profile/profile.json'), 'utf-8'))
+    res.json(data)
+  } catch { res.json({ name: null }) }
+})
+
+app.put('/api/profile', async (req, res) => {
+  try {
+    const existing = await fs.readFile(path.join(VAULT, 'profile/profile.json'), 'utf-8').then(JSON.parse).catch(() => ({}))
+    const updated = { ...existing, ...req.body, updated: new Date().toISOString().slice(0, 10) }
+    await fs.mkdir(path.join(VAULT, 'profile'), { recursive: true })
+    await fs.writeFile(path.join(VAULT, 'profile/profile.json'), JSON.stringify(updated, null, 2))
+    res.json(updated)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 app.post('/api/open-claude', async (req, res) => {
   const { prompt } = req.body || {}
   const cliCmd = process.env.CLI_COMMAND || 'claude'
@@ -2720,7 +2737,55 @@ Rules:
   res.status(400).json({ error: `Unknown task: ${task}` })
 })
 
-app.listen(PORT, () => console.log(`Life OS backend running on http://localhost:${PORT}`))
+// ─── Brain init ────────────────────────────────────────────────────
+
+async function initBrain() {
+  const today = new Date().toISOString().slice(0, 10)
+  const dirs = ['tree', 'habits/log', 'inbox', 'insights', 'memories/photos', 'lists', 'feed', 'profile']
+  for (const d of dirs) await fs.mkdir(path.join(VAULT, d), { recursive: true })
+
+  const defaults = {
+    'tree/nodes.json': { _type: 'tree', updated: today, nodes: [] },
+    'habits/definitions.json': { categories: [] },
+    'inbox/current.json': { _type: 'inbox', updated: today, items: [] },
+    'insights/index.json': { insights: [] },
+    'memories/index.json': { entries: [] },
+    'feed/reactions.json': { reactions: [] },
+    'profile/profile.json': { name: null, occupation: null, created: today },
+    'lists/_index.json': {
+      _type: 'list_collection', updated: today,
+      _config: { defaultTab: 'films', defaultView: 'cards' },
+      collections: [
+        { id: 'films', label: 'Фильмы', file: 'films.json' },
+        { id: 'series', label: 'Сериалы', file: 'series.json' },
+        { id: 'games', label: 'Игры', file: 'games.json' },
+        { id: 'books', label: 'Книги', file: 'books.json' },
+        { id: 'wishes', label: 'Желания', file: 'wishes.json' },
+        { id: 'restaurants', label: 'Рестораны', file: 'restaurants.json' },
+        { id: 'travel', label: 'Путешествия', file: 'travel.json' },
+      ],
+    },
+    'lists/films.json': { items: [] },
+    'lists/series.json': { items: [] },
+    'lists/games.json': { items: [] },
+    'lists/books.json': { items: [] },
+    'lists/wishes.json': { items: [] },
+    'lists/restaurants.json': { items: [] },
+    'lists/travel.json': { items: [] },
+  }
+
+  for (const [file, data] of Object.entries(defaults)) {
+    const fpath = path.join(VAULT, file)
+    try { await fs.access(fpath) } catch {
+      await fs.writeFile(fpath, JSON.stringify(data, null, 2))
+    }
+  }
+}
+
+app.listen(PORT, async () => {
+  await initBrain()
+  console.log(`Life OS backend running on http://localhost:${PORT}`)
+})
 
 // ─── Google Calendar sync ──────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { ChevronLeft, ChevronRight, Plus, X, Loader2, Trash2, ImageIcon, CalendarDays } from 'lucide-react'
 import { memories as memoriesApi } from '../api'
+import PageOnboarding from '../components/PageOnboarding'
 
 const MONTHS = ['января','февраля','марта','апреля','мая','июня',
                 'июля','августа','сентября','октября','ноября','декабря']
@@ -303,6 +304,7 @@ export default function Memories() {
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-6">
+      <PageOnboarding pageId="memories" />
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Воспоминания</h1>

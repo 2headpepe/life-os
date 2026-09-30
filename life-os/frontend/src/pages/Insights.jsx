@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { insights as insightsApi } from '../api'
 import { useSpheres } from '../SpheresContext'
 import MarkdownContent from '../components/MarkdownContent'
+import PageOnboarding from '../components/PageOnboarding'
 
 const SUBTAG_PALETTES = [
   { bg: 'bg-blue-100 dark:bg-blue-900/40',     text: 'text-blue-700 dark:text-blue-300' },
@@ -273,7 +274,8 @@ export default function Insights() {
 
   return (
     <div>
-      {/* Tab switcher */}
+      <PageOnboarding pageId="insights" />
+      {/* Tab switcher */
       <div className="flex gap-1 px-6 pt-6 pb-0">
         {TABS.map(t => (
           <button

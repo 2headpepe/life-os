@@ -4,6 +4,7 @@ import { Check, Circle, X, Minus, AlertTriangle, CalendarRange } from 'lucide-re
 import { tree as treeApi, habits, inbox } from '../api'
 import NodeCard from '../components/NodeCard'
 import { computeHabitScore, TrackInput, inTimeWindow, CYCLE_COLORS } from './Habits'
+import PageOnboarding from '../components/PageOnboarding'
 
 const PC = {
   green: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800',
@@ -367,7 +368,7 @@ export default function Today() {
   return (
     <>
       <div style={{ height: 'calc(100vh - 3rem)' }} className="flex flex-col overflow-hidden">
-
+        <PageOnboarding pageId="today" />
         {/* Greeting */}
         <div className="flex-shrink-0 flex items-start justify-between gap-4 px-8 pt-8 pb-6">
           <div>

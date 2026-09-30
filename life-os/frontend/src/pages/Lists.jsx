@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Star, Check, X } from 'lucide-react'
 import { lists as listsApi, people as peopleApi, tree as treeApi } from '../api'
+import PageOnboarding from '../components/PageOnboarding'
 
 const STATUS_LABELS = { want: 'Хочу', in_progress: 'Смотрю', done: 'Готово', dropped: 'Брошено' }
 
@@ -242,6 +243,7 @@ export default function Lists() {
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-6">
+      <PageOnboarding pageId="lists" />
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Списки</h1>
         <div className="flex items-center gap-2">

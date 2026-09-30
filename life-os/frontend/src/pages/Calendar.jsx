@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { events as eventsApi, tree as treeApi, sync as syncApi, calendars as calendarsApi } from '../api'
+import PageOnboarding from '../components/PageOnboarding'
 
 const LS_HIDDEN = 'life-os-hidden-calendars'
 const LS_FILTERS = 'life-os-cal-filters'
@@ -354,6 +355,7 @@ export default function Calendar() {
 
   return (
     <div className="py-4 px-4 h-full flex flex-col">
+      <PageOnboarding pageId="calendar" />
       {/* Header */}
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2 flex-shrink-0">
         <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Календарь</h1>
