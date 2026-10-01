@@ -1292,12 +1292,13 @@ app.post('/api/open-claude', async (req, res) => {
 
   try {
     if (platform === 'win32') {
-      // Windows: write a .bat, copy prompt via clip, open cmd
+      // Windows: write prompt to a temp file, copy via PowerShell, open cmd
       const scriptPath = path.join(os.tmpdir(), 'life-os-cli.bat')
+      const promptPath = path.join(os.tmpdir(), 'life-os-prompt.txt')
       let script = `@echo off\ncd /d "${WORK_DIR}"\n`
       if (prompt) {
-        const escaped = prompt.replace(/"/g, '\\"')
-        script += `echo ${escaped}| clip\n`
+        await fs.writeFile(promptPath, prompt, 'utf-8')
+        script += `powershell -Command "Get-Content '${promptPath}' -Raw -Encoding UTF8 | Set-Clipboard"\n`
         script += `echo.\n`
         script += `echo ==========================================\n`
         script += `echo  Life OS - prompt copied to clipboard\n`
@@ -1306,7 +1307,7 @@ app.post('/api/open-claude', async (req, res) => {
         script += `echo.\n`
       }
       script += `${cliCmd}\n`
-      await fs.writeFile(scriptPath, script)
+      await fs.writeFile(scriptPath, script, 'utf-8')
       exec(`start cmd /k "${scriptPath}"`)
     } else {
       // macOS / Linux: write a .sh, copy prompt, open terminal
