@@ -1092,7 +1092,7 @@ app.post('/api/tree', async (req, res) => {
       calendar_id: null,
       watched: false,
       color: null,
-      status: 'undefined',
+      status: null,
       due: null,
       notes: null,
       recurrence: null,

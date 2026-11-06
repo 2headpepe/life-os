@@ -19,6 +19,13 @@ test('AI runtime rejects an arbitrary command runtime', () => {
   assert.throws(() => aiRuntimeConfig({ AI_RUNTIME: 'claude' }), /none, codex, or opencode/)
 })
 
+test('AI runtime rejects shell syntax in a configured executable', () => {
+  assert.throws(
+    () => aiRuntimeConfig({ AI_RUNTIME: 'opencode', OPENCODE_COMMAND: 'opencode; rm -rf /' }),
+    /OPENCODE_COMMAND must be an executable path or name/,
+  )
+})
+
 test('chat prompts retain roles and system constraints', () => {
   const prompt = promptFromMessages([{ role: 'user', content: 'Привет' }, { role: 'assistant', content: 'Здравствуйте' }], 'Отвечай кратко')
   assert.match(prompt, /Отвечай кратко/)

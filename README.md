@@ -31,7 +31,7 @@ All data is stored locally as plain JSON files. No database, no cloud sync, no a
 
 - **Node.js 22+** — [nodejs.org](https://nodejs.org)  
   Check: `node -v`
-- An AI API key (optional but recommended — see step 3)
+- AI is optional. To enable it, install and sign in to either the Codex CLI or OpenCode CLI locally.
 
 ### 2. Clone
 
@@ -76,7 +76,9 @@ Verify the installation at any time:
 node ops/scripts/doctor.mjs
 ```
 
-The CLI assistant reads your `brain/content/` files directly and can add goals, tasks, habits, and notes through conversation.
+The in-app AI features run read-only analysis. The separate Console button opens your selected CLI in the repository; any file changes there remain an explicit action you approve in that CLI.
+
+Without AI, first launch opens a short manual setup: one sphere, one goal, and the first concrete task. This creates a useful local workspace without an account, key, or external service.
 
 ### 5. Install dependencies
 
@@ -181,6 +183,12 @@ All backend settings are in `life-os/backend/.env` (copy from `.env.example`):
 | `GOOGLE_CLIENT_SECRET` | No | — | Google Calendar OAuth secret |
 | `GOOGLE_REDIRECT_URI` | No | `http://localhost:3001/api/sync/oauth/callback` | OAuth callback |
 | `GOOGLE_TIMEZONE` | No | — | Timezone for calendar (e.g. `Europe/Moscow`) |
+
+If you change `PORT`, restart both the backend and Vite frontend: the development proxy reads the same local backend `.env` file.
+
+## Privacy and AI review
+
+Before sharing a fork or contribution, run the public-release checks and follow the [AI review playbook](docs/AI-REVIEWS.md). It defines a runtime-neutral review for Codex and OpenCode without collecting personal Life OS data or CLI session history.
 
 ---
 

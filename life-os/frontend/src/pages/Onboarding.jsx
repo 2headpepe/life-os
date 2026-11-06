@@ -371,12 +371,72 @@ function CliOnboarding({ cliCommand, onCliDone, onDone }) {
   )
 }
 
+function ManualOnboarding({ runtime, onDone }) {
+  const [name, setName] = useState('')
+  const [sphere, setSphere] = useState('Личное')
+  const [goal, setGoal] = useState('Настроить Life OS под себя')
+  const [firstTask, setFirstTask] = useState('Открыть «Сегодня» и выбрать одну задачу')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  const start = async () => {
+    if (!sphere.trim() || !goal.trim() || !firstTask.trim() || saving) return
+    setSaving(true)
+    setError(null)
+    const rootId = 'root-first-sphere'
+    const goalId = 'goal-first-goal'
+    try {
+      if (name.trim()) await profileApi.update({ name: name.trim() })
+      await treeApi.create({ id: rootId, title: sphere.trim(), color: SPHERE_COLORS[0], parent_id: null })
+      await treeApi.create({ id: goalId, title: goal.trim(), parent_id: rootId, outcome: 'Первый шаг определён' })
+      await treeApi.create({ id: 'node-first-task', title: firstTask.trim(), parent_id: goalId, status: 'in_progress' })
+      onDone()
+    } catch (e) {
+      setError(e.message || 'Не удалось сохранить первый план')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="p-6 space-y-5">
+      <div className="text-center space-y-2">
+        <div className="w-12 h-12 rounded-2xl bg-gray-900 dark:bg-white flex items-center justify-center mx-auto">
+          <Sparkles size={22} className="text-white dark:text-gray-900" />
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Начнём без AI</h1>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">Создай одну сферу, цель и первый шаг. AI можно подключить позже — данные останутся только на этом устройстве.</p>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="Как к тебе обращаться? (необязательно)" className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm" />
+        <input value={sphere} onChange={e => setSphere(e.target.value)} placeholder="Сфера, например: Здоровье" className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm" />
+        <input value={goal} onChange={e => setGoal(e.target.value)} placeholder="Ближайшая цель" className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm" />
+        <textarea value={firstTask} onChange={e => setFirstTask(e.target.value)} placeholder="Первый конкретный шаг" rows={2} className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm resize-none" />
+      </div>
+
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <button onClick={start} disabled={saving} className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 disabled:opacity-40">
+        {saving ? <Loader2 size={15} className="animate-spin" /> : <ArrowRight size={15} />} Создать мой первый план
+      </button>
+
+      <p className="text-center text-xs text-gray-400">
+        {runtime?.runtime === 'none'
+          ? 'AI отключён в .env — это безопасный режим.'
+          : `AI пока недоступен: ${runtime?.aiReason || 'проверь локальную установку CLI'}`}
+      </p>
+    </div>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────
 
 export default function Onboarding({ onDone }) {
   const navigate = useNavigate()
   const [hasAi, setHasAi] = useState(null)
   const [cliCommand, setCliCommand] = useState('AI')
+  const [runtime, setRuntime] = useState(null)
 
   const [step, setStep] = useState(0)
   const [error, setError] = useState(null)
@@ -411,7 +471,7 @@ export default function Onboarding({ onDone }) {
 
   useEffect(() => {
     configApi.get()
-      .then(c => { setHasAi(!!c.hasAi); setCliCommand(c.cliCommand || 'AI') })
+      .then(c => { setRuntime(c); setHasAi(!!c.hasAi); setCliCommand(c.cliCommand || 'AI') })
       .catch(() => setHasAi(false))
   }, [])
 
@@ -562,14 +622,7 @@ export default function Onboarding({ onDone }) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-4">
         <div className="w-full max-w-lg bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden">
-          {showCliGuide
-            ? <CliRemainingGuide stats={cliStats} onDone={finish} />
-            : <CliOnboarding
-                cliCommand={cliCommand}
-                onCliDone={(stats) => { setCliStats(stats); setShowCliGuide(true) }}
-                onDone={finish}
-              />
-          }
+          <ManualOnboarding runtime={runtime} onDone={finish} />
         </div>
       </div>
     )

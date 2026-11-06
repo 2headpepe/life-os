@@ -1,13 +1,24 @@
 import { spawn } from 'child_process'
 
 const RUNTIMES = new Set(['none', 'codex', 'opencode'])
+const SAFE_COMMAND = /^[A-Za-z0-9._/-]+$/
+
+function configuredCommand(value, fallback, variable) {
+  const command = value || fallback
+  if (!SAFE_COMMAND.test(command)) {
+    throw new Error(`${variable} must be an executable path or name without spaces or shell characters`)
+  }
+  return command
+}
 
 export function aiRuntimeConfig(env = process.env) {
   const runtime = (env.AI_RUNTIME || 'none').toLowerCase()
   if (!RUNTIMES.has(runtime)) throw new Error('AI_RUNTIME must be none, codex, or opencode')
   return {
     runtime,
-    command: runtime === 'codex' ? (env.CODEX_COMMAND || 'codex') : (env.OPENCODE_COMMAND || 'opencode'),
+    command: runtime === 'codex'
+      ? configuredCommand(env.CODEX_COMMAND, 'codex', 'CODEX_COMMAND')
+      : configuredCommand(env.OPENCODE_COMMAND, 'opencode', 'OPENCODE_COMMAND'),
     model: runtime === 'codex' ? env.CODEX_MODEL : env.OPENCODE_MODEL,
   }
 }
