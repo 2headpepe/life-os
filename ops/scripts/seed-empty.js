@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url'
 
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..')
 const CONTENT = path.join(ROOT, 'brain/content')
+const OPS = path.join(ROOT, 'ops')
 
 const today = new Date().toISOString().slice(0, 10)
 
@@ -182,6 +183,19 @@ async function seed() {
   for (const rel of dirs) {
     await fs.mkdir(path.join(CONTENT, rel), { recursive: true })
   }
+
+  // Runtime owners outside brain: all files remain local and ignored by Git.
+  for (const rel of ['ai-sessions', 'life-os-analytics/events', 'product-intelligence']) {
+    await fs.mkdir(path.join(OPS, rel), { recursive: true })
+  }
+  for (const rel of ['product-intelligence/initiatives.jsonl', 'product-intelligence/delivery-operations.jsonl', 'product-intelligence/reviews.jsonl']) {
+    const target = path.join(OPS, rel)
+    try { await fs.access(target) } catch { await fs.writeFile(target, '') }
+  }
+  const coverage = path.join(OPS, 'product-intelligence/coverage-registry.json')
+  try { await fs.access(coverage) } catch { await fs.writeFile(coverage, JSON.stringify({ zones: [] }, null, 2)) }
+  const registry = path.join(OPS, 'agent-registry.json')
+  try { await fs.access(registry) } catch { await fs.writeFile(registry, JSON.stringify({ agents: [] }, null, 2)) }
 
   // Empty brain/people and brain/topics dirs
   for (const rel of ['../people', '../topics']) {

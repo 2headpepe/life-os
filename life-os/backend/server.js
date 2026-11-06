@@ -3,15 +3,32 @@ import cors from 'cors'
 import fs from 'fs/promises'
 import path from 'path'
 import os from 'os'
+import { createHash, randomUUID } from 'crypto'
 import { exec } from 'child_process'
 import { google } from 'googleapis'
 import multer from 'multer'
 import { aiRuntimeConfig, checkAiRuntime, promptFromMessages, runAiTask } from './ai-runtime.js'
+import { appendAnalyticsEvents } from './analytics.js'
+import { assertEligibleExecutor, assertEligibleVerifier } from './agent-registry.js'
+import { commitDeliveryMutation as commitDeliveryMutationWithRecovery } from './delivery-mutation.js'
+import { assertDeliveryTransition, blockersFor, handoffIsComplete, hasDependencyCycle, inboundDependencyReferences, isBlocked, workContext } from './task-lifecycle.js'
+import { priorityPacket } from './priority-loop.js'
+import { publicReview } from './review-sanitizer.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
 const VAULT = process.env.VAULT_PATH || path.join(import.meta.dirname, '../../brain/content')
 const WORK_DIR = process.env.WORK_DIR || path.resolve(import.meta.dirname, '../..')
+const OPS_DIR = path.join(WORK_DIR, 'ops')
+const PRODUCT_INTELLIGENCE_DIR = path.join(OPS_DIR, 'product-intelligence')
+const ANALYTICS_DIR = path.join(OPS_DIR, 'life-os-analytics')
+const AGENT_REGISTRY_FILE = path.join(OPS_DIR, 'agent-registry.json')
+const PRODUCT_FILES = {
+  initiatives: path.join(PRODUCT_INTELLIGENCE_DIR, 'initiatives.jsonl'),
+  operations: path.join(PRODUCT_INTELLIGENCE_DIR, 'delivery-operations.jsonl'),
+  reviews: path.join(PRODUCT_INTELLIGENCE_DIR, 'reviews.jsonl'),
+  coverage: path.join(PRODUCT_INTELLIGENCE_DIR, 'coverage-registry.json'),
+}
 
 const STALENESS_DAYS = {
   node: 21,
@@ -21,6 +38,59 @@ const STALENESS_DAYS = {
 
 app.use(cors())
 app.use(express.json())
+
+// Public runtime records are local-only: task state belongs in brain/, while
+// delivery receipts, reviews and telemetry belong in ops/. This server never
+// reads ops/ai-sessions, which may contain raw private transcripts.
+const nowIso = () => new Date().toISOString()
+const recordId = prefix => `${prefix}:${randomUUID()}`
+const checksum = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+
+async function readJsonl(file) {
+  try {
+    return (await fs.readFile(file, 'utf8')).split('\n').filter(Boolean).map(JSON.parse)
+  } catch { return [] }
+}
+
+async function appendJsonl(file, record) {
+  await fs.mkdir(path.dirname(file), { recursive: true })
+  await fs.appendFile(file, `${JSON.stringify(record)}\n`, 'utf8')
+}
+
+function latestRecords(rows) {
+  const byId = new Map()
+  for (const row of rows) byId.set(row.id, row)
+  return [...byId.values()]
+}
+
+async function agentRegistry() {
+  try { return JSON.parse(await fs.readFile(AGENT_REGISTRY_FILE, 'utf8')) } catch { return { agents: [] } }
+}
+
+app.post('/api/analytics/events', async (req, res) => {
+  try {
+    res.status(202).json(await appendAnalyticsEvents({ rootDir: ANALYTICS_DIR, events: req.body?.events }))
+  } catch (error) { res.status(400).json({ error: error.message }) }
+})
+
+app.get('/api/agents', async (_req, res) => {
+  const registry = await agentRegistry()
+  res.json({ agents: registry.agents || [] })
+})
+
+app.get('/api/ai-reviews', async (_req, res) => {
+  try {
+    const [reviews, coverage] = await Promise.all([
+      readJsonl(PRODUCT_FILES.reviews),
+      fs.readFile(PRODUCT_FILES.coverage, 'utf8').then(JSON.parse).catch(() => ({ zones: [] })),
+    ])
+    res.json({
+      reviews: latestRecords(reviews).map(publicReview),
+      priority_loop: priorityPacket(coverage),
+      limits: ['Raw AI sessions are never read or returned by the public server.', 'Reviews are local records under ops/product-intelligence.'],
+    })
+  } catch (error) { res.status(500).json({ error: error.message }) }
+})
 
 // ─── Memories photo upload ───────────────────────────────────────
 const MEMORIES_DIR = path.join(VAULT, 'memories')
@@ -1018,6 +1088,51 @@ async function writeTree(data) {
   await fs.writeFile(TREE_FILE, JSON.stringify(data, null, 2))
 }
 
+function ensureDeliveryRoot(tree, today) {
+  let root = tree.nodes.find(node => node.id === 'root-delivery-life-os')
+  if (!root) {
+    root = { id: 'root-delivery-life-os', title: 'Delivery Life OS', parent_id: null, color: '#6366F1', status: null, due: null, notes: null, created: today, updated: today, work_context: 'delivery_root' }
+    tree.nodes.push(root)
+  }
+  return root
+}
+
+function deliveryNode({ id, title, outcome, parentId, today }) {
+  return { id, title, outcome: outcome || null, parent_id: parentId, calendar_id: null, watched: false, color: null, status: 'needs_grooming', due: null, notes: null, blocked_by: [], work_context: 'delivery', handoff_contract: null, verification: { state: 'not_started', evidence_refs: [], verified_by: null, verified_at: null, note: null }, execution: { actor: null, started_at: null, handed_off_at: null }, recurrence: null, created: today, updated: today }
+}
+
+async function commitDeliveryMutation({ tree, treeBefore, initiative, operationType, nodeIds }) {
+  return commitDeliveryMutationWithRecovery({
+    tree, treeBefore, initiative, operationType, nodeIds,
+    createOperationId: () => recordId('delivery-operation'), now: nowIso, checksum,
+    appendOperation: record => appendJsonl(PRODUCT_FILES.operations, record),
+    writeTree,
+    appendInitiative: record => appendJsonl(PRODUCT_FILES.initiatives, record),
+    restoreTree: snapshot => fs.writeFile(TREE_FILE, JSON.stringify(snapshot, null, 2), 'utf8'),
+  })
+}
+
+function latestInitiativeForWork(initiatives, workId, nodes) {
+  const direct = initiatives.find(initiative => (initiative.work_item_ids || []).includes(workId))
+  if (direct) return direct
+  const byId = new Map(nodes.map(node => [node.id, node]))
+  const seen = new Set([workId])
+  let current = byId.get(workId)
+  while (current?.parent_id && !seen.has(current.parent_id)) {
+    current = byId.get(current.parent_id)
+    if (!current) break
+    const owner = initiatives.find(initiative => (initiative.work_item_ids || []).includes(current.id))
+    if (owner) return owner
+    seen.add(current.id)
+  }
+  return null
+}
+
+async function approvedInitiativeForWork(tree, workId) {
+  const initiative = latestInitiativeForWork(latestRecords(await readJsonl(PRODUCT_FILES.initiatives)), workId, tree.nodes)
+  return initiative?.state === 'approved' ? initiative : null
+}
+
 app.get('/api/tree/spheres', async (req, res) => {
   try {
     const data = await readTree()
@@ -1051,10 +1166,9 @@ app.get('/api/tree/leaves', async (req, res) => {
         path.unshift(cur.title)
         root = cur
       }
-      const blockers = (leaf.blocked_by || [])
-        .map(bid => { const b = nodeMap[bid]; return b ? { id: b.id, title: b.title, status: b.status } : null })
-        .filter(Boolean)
-      const is_blocked = blockers.some(b => b.status !== 'done')
+      const byId = new Map(nodes.map(node => [node.id, node]))
+      const blockers = blockersFor(leaf, byId)
+      const is_blocked = isBlocked(leaf, byId)
       return {
         ...leaf,
         root_id:    root.id,
@@ -1080,8 +1194,157 @@ app.get('/api/tree', async (req, res) => {
   }
 })
 
+// Delivery work starts only from an explicit, locally recorded initiative.
+// Creating an initiative is manual; reviews and ranking never create one.
+app.post('/api/product-intelligence/initiatives', async (req, res) => {
+  const title = String(req.body?.title || '').trim()
+  const goal = String(req.body?.goal || '').trim()
+  const scope = String(req.body?.scope || '').trim()
+  if (!title || !goal || !scope) return res.status(400).json({ error: 'Нужны title, goal и scope' })
+  const initiative = { id: recordId('initiative'), schema_version: 1, title, goal, scope, non_goals: String(req.body?.non_goals || ''), state: 'approved', work_item_ids: [], created_at: nowIso(), updated_at: nowIso(), source: 'manual' }
+  await appendJsonl(PRODUCT_FILES.initiatives, initiative)
+  res.status(201).json(initiative)
+})
+
+app.post('/api/product-intelligence/initiatives/:id/work-items', async (req, res) => {
+  try {
+    const initiative = latestRecords(await readJsonl(PRODUCT_FILES.initiatives)).find(row => row.id === req.params.id)
+    if (!initiative) return res.status(404).json({ error: 'initiative not found' })
+    if (initiative.state !== 'approved') return res.status(409).json({ error: 'delivery work requires an approved initiative' })
+    const title = String(req.body?.title || '').trim()
+    const outcome = String(req.body?.outcome || '').trim()
+    if (!title || !outcome) return res.status(400).json({ error: 'Нужны title и outcome' })
+    const tree = await readTree()
+    const treeBefore = structuredClone(tree)
+    const today = new Date().toISOString().slice(0, 10)
+    const root = ensureDeliveryRoot(tree, today)
+    const node = deliveryNode({ id: `node-${randomUUID()}`, title, outcome, parentId: root.id, today })
+    tree.nodes.push(node)
+    const nextInitiative = { ...initiative, work_item_ids: [...(initiative.work_item_ids || []), node.id], updated_at: nowIso() }
+    await commitDeliveryMutation({ tree, treeBefore, operationType: 'create_work_item', nodeIds: [node.id], initiative: { id: initiative.id, before: initiative, after: nextInitiative } })
+    res.status(201).json({ initiative: nextInitiative, node })
+  } catch (error) { res.status(500).json({ error: error.message }) }
+})
+
+app.post('/api/tree/:id/dependencies', async (req, res) => {
+  try {
+    const title = String(req.body?.title || '').trim()
+    const outcome = String(req.body?.outcome || '').trim()
+    if (!title || !outcome) return res.status(400).json({ error: 'Нужны title и outcome' })
+    const tree = await readTree()
+    const source = tree.nodes.find(node => node.id === req.params.id)
+    if (!source) return res.status(404).json({ error: 'source node not found' })
+    if (workContext(source) !== 'delivery') return res.status(409).json({ error: 'dependency task is only available for delivery work' })
+    const initiative = await approvedInitiativeForWork(tree, source.id)
+    if (!initiative) return res.status(409).json({ error: 'source work must belong to an approved initiative' })
+    const treeBefore = structuredClone(tree)
+    const today = new Date().toISOString().slice(0, 10)
+    const dependency = deliveryNode({ id: `node-${randomUUID()}`, title, outcome, parentId: source.parent_id, today })
+    tree.nodes.push(dependency)
+    source.blocked_by = [...new Set([...(source.blocked_by || []), dependency.id])]
+    source.updated = today
+    const nextInitiative = { ...initiative, updated_at: nowIso() }
+    await commitDeliveryMutation({ tree, treeBefore, operationType: 'create_dependency_task', nodeIds: [source.id, dependency.id], initiative: { id: initiative.id, before: initiative, after: nextInitiative } })
+    res.status(201).json({ source, dependency, initiative: nextInitiative })
+  } catch (error) { res.status(500).json({ error: error.message }) }
+})
+
+app.get('/api/tree/:id/eligible-existing-dependencies', async (req, res) => {
+  try {
+    const tree = await readTree()
+    const source = tree.nodes.find(node => node.id === req.params.id)
+    if (!source) return res.status(404).json({ error: 'source node not found' })
+    if (workContext(source) !== 'delivery') return res.status(409).json({ error: 'existing dependencies are only available for delivery work' })
+    const initiative = await approvedInitiativeForWork(tree, source.id)
+    if (!initiative) return res.status(409).json({ error: 'source work must belong to an approved initiative' })
+    const candidates = []
+    for (const candidate of tree.nodes) {
+      if (candidate.id === source.id || workContext(candidate) !== 'delivery' || (source.blocked_by || []).includes(candidate.id)) continue
+      const candidateInitiative = await approvedInitiativeForWork(tree, candidate.id)
+      if (candidateInitiative?.id === initiative.id && !hasDependencyCycle(tree.nodes, source.id, candidate.id)) candidates.push({ id: candidate.id, title: candidate.title, status: candidate.status })
+    }
+    res.json({ candidates })
+  } catch (error) { res.status(error.status || 500).json({ error: error.message }) }
+})
+
+app.post('/api/tree/:id/existing-dependencies', async (req, res) => {
+  try {
+    const dependencyId = String(req.body?.dependency_id || '').trim()
+    if (!dependencyId) return res.status(400).json({ error: 'dependency_id is required' })
+    const tree = await readTree()
+    const source = tree.nodes.find(node => node.id === req.params.id)
+    const dependency = tree.nodes.find(node => node.id === dependencyId)
+    if (!source || !dependency) return res.status(404).json({ error: 'source or dependency node not found' })
+    if (workContext(source) !== 'delivery' || workContext(dependency) !== 'delivery') return res.status(409).json({ error: 'existing dependencies are only available between delivery tasks' })
+    const [sourceInitiative, dependencyInitiative] = await Promise.all([approvedInitiativeForWork(tree, source.id), approvedInitiativeForWork(tree, dependency.id)])
+    if (!sourceInitiative || sourceInitiative.id !== dependencyInitiative?.id) return res.status(409).json({ error: 'existing dependencies must belong to the same approved initiative' })
+    if ((source.blocked_by || []).includes(dependency.id)) return res.json({ ok: true, idempotent: true, source, dependency })
+    if (hasDependencyCycle(tree.nodes, source.id, dependency.id)) return res.status(409).json({ error: 'dependency would create a cycle' })
+    const treeBefore = structuredClone(tree)
+    source.blocked_by = [...new Set([...(source.blocked_by || []), dependency.id])]
+    source.updated = new Date().toISOString().slice(0, 10)
+    const nextInitiative = { ...sourceInitiative, updated_at: nowIso() }
+    await commitDeliveryMutation({ tree, treeBefore, operationType: 'link_existing_dependency', nodeIds: [source.id, dependency.id], initiative: { id: sourceInitiative.id, before: sourceInitiative, after: nextInitiative } })
+    res.status(201).json({ ok: true, idempotent: false, source, dependency, initiative: nextInitiative })
+  } catch (error) { res.status(error.status || 500).json({ error: error.message }) }
+})
+
+app.patch('/api/tree/:id/handoff-contract', async (req, res) => {
+  try {
+    const tree = await readTree()
+    const node = tree.nodes.find(item => item.id === req.params.id)
+    if (!node) return res.status(404).json({ error: 'node not found' })
+    if (workContext(node) !== 'delivery') return res.status(409).json({ error: 'handoff contract is only available for delivery work' })
+    if (!handoffIsComplete(req.body?.handoff_contract)) return res.status(400).json({ error: 'handoff contract is incomplete' })
+    node.handoff_contract = req.body.handoff_contract
+    if (node.status === 'needs_grooming') node.status = 'backlog'
+    node.updated = new Date().toISOString().slice(0, 10)
+    await writeTree(tree)
+    res.json(node)
+  } catch (error) { res.status(500).json({ error: error.message }) }
+})
+
+app.patch('/api/tree/:id/execution', async (req, res) => {
+  try {
+    const tree = await readTree()
+    const node = tree.nodes.find(item => item.id === req.params.id)
+    if (!node) return res.status(404).json({ error: 'node not found' })
+    if (workContext(node) !== 'delivery') return res.status(409).json({ error: 'execution is only available for delivery work' })
+    const actor = String(req.body?.actor || '').trim()
+    if (!actor) return res.status(400).json({ error: 'actor is required' })
+    assertEligibleExecutor(await agentRegistry(), actor, node.handoff_contract?.target_role)
+    node.execution = { ...(node.execution || {}), actor, assigned_at: nowIso() }
+    node.updated = new Date().toISOString().slice(0, 10)
+    await writeTree(tree)
+    res.json(node)
+  } catch (error) { res.status(400).json({ error: error.message }) }
+})
+
+app.post('/api/tree/:id/verification', async (req, res) => {
+  try {
+    const tree = await readTree()
+    const node = tree.nodes.find(item => item.id === req.params.id)
+    if (!node) return res.status(404).json({ error: 'node not found' })
+    if (workContext(node) !== 'delivery' || node.status !== 'waiting_for_review') return res.status(409).json({ error: 'delivery task must be waiting_for_review' })
+    const state = req.body?.state
+    const verifiedBy = String(req.body?.verified_by || '').trim()
+    const evidenceRefs = Array.isArray(req.body?.evidence_refs) ? req.body.evidence_refs.filter(Boolean) : []
+    if (!['passed', 'failed'].includes(state) || !verifiedBy || evidenceRefs.length === 0) return res.status(400).json({ error: 'Нужны state, verified_by и evidence_refs' })
+    assertEligibleVerifier(await agentRegistry(), verifiedBy, node.execution?.actor)
+    node.verification = { state, evidence_refs: evidenceRefs, verified_by: verifiedBy, verified_at: nowIso(), note: String(req.body?.note || '') || null }
+    node.status = state === 'passed' ? 'done' : 'backlog'
+    node.updated = new Date().toISOString().slice(0, 10)
+    assertDeliveryTransition({ ...node, status: 'waiting_for_review' }, node.status, node)
+    await writeTree(tree)
+    res.json(node)
+  } catch (error) { res.status(500).json({ error: error.message }) }
+})
+
 app.post('/api/tree', async (req, res) => {
   try {
+    if (req.body?.work_context === 'delivery') return res.status(409).json({ error: 'delivery work must be created from an approved initiative' })
+    if (req.body?.status === 'blocked') return res.status(400).json({ error: 'blocked is derived from blocked_by and cannot be stored' })
+    if (req.body?.blocked_by) return res.status(409).json({ error: 'dependencies must use the delivery dependency flow' })
     const data = await readTree()
     const today = new Date().toISOString().slice(0, 10)
     const node = {
@@ -1124,8 +1387,20 @@ app.patch('/api/tree/:id', async (req, res) => {
     const data = await readTree()
     const idx = data.nodes.findIndex(n => n.id === req.params.id)
     if (idx === -1) return res.status(404).json({ error: 'node not found' })
+    if (req.body?.status === 'blocked') return res.status(400).json({ error: 'blocked is derived from blocked_by and cannot be stored' })
+    if (Object.hasOwn(req.body || {}, 'blocked_by')) return res.status(409).json({ error: 'dependencies must use the delivery dependency flow' })
     const today = new Date().toISOString().slice(0, 10)
     const oldNode = data.nodes[idx]
+    if (Object.hasOwn(req.body || {}, 'work_context') && req.body.work_context !== oldNode.work_context) return res.status(409).json({ error: 'work_context is immutable after creation' })
+    if (workContext(oldNode) === 'delivery' && ['execution', 'handoff_contract', 'verification'].some(field => Object.hasOwn(req.body || {}, field))) {
+      return res.status(409).json({ error: 'delivery execution, handoff and verification use their dedicated endpoints' })
+    }
+    if (workContext(oldNode) === 'delivery' && req.body?.status) {
+      const nextDeliveryNode = { ...oldNode, ...req.body }
+      if (req.body.status === 'done') return res.status(409).json({ error: 'delivery completion uses the verification endpoint' })
+      if (req.body.status === 'in_progress' || req.body.status === 'waiting_for_review') assertEligibleExecutor(await agentRegistry(), nextDeliveryNode.execution?.actor, nextDeliveryNode.handoff_contract?.target_role)
+      assertDeliveryTransition(oldNode, req.body.status, nextDeliveryNode)
+    }
     data.nodes[idx] = { ...oldNode, ...req.body, updated: today }
     const newNode = data.nodes[idx]
 
@@ -1187,12 +1462,15 @@ app.patch('/api/tree/:id', async (req, res) => {
 app.delete('/api/tree/:id', async (req, res) => {
   try {
     const data = await readTree()
+    if (!data.nodes.some(node => node.id === req.params.id)) return res.status(404).json({ error: 'node not found' })
     const toDelete = new Set()
     const collect = (id) => {
       toDelete.add(id)
       data.nodes.filter(n => n.parent_id === id).forEach(n => collect(n.id))
     }
     collect(req.params.id)
+    const inboundRefs = inboundDependencyReferences(data.nodes, toDelete)
+    if (inboundRefs.length) return res.status(409).json({ error: 'cannot delete a dependency while another task references it', inbound_refs: inboundRefs })
     const gcalIds = data.nodes
       .filter(n => toDelete.has(n.id) && n.gcal_event_id)
       .map(n => n.gcal_event_id)

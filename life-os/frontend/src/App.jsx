@@ -21,6 +21,7 @@ import News from './pages/News'
 import Memories from './pages/Memories'
 import Onboarding from './pages/Onboarding'
 import NotificationBell from './components/NotificationBell'
+import AiReviews from './pages/AiReviews'
 import { tree as treeApi } from './api'
 
 function AppContent() {
@@ -113,6 +114,7 @@ function AppContent() {
           <Route path="/insights" element={<Insights />} />
           <Route path="/memories" element={<Memories />} />
           <Route path="/news"     element={<News />} />
+          <Route path="/ai-reviews" element={<AiReviews />} />
         </Routes>
       </main>
 

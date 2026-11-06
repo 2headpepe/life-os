@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
   Sun, Target, ListTodo, CalendarDays, Repeat2, Users, LayoutGrid, Lightbulb, Newspaper, Image as ImageIcon,
-  ChevronLeft, ChevronRight, Search, Plus, Terminal, Sparkles, Flame,
+  ChevronLeft, ChevronRight, Search, Plus, Terminal, Sparkles, Flame, ShieldCheck,
 } from 'lucide-react'
 import { tree as treeApi, config as configApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
@@ -21,6 +21,7 @@ const ALL_NAV = [
   { to: '/insights', label: 'Инсайты',    Icon: Lightbulb },
   { to: '/memories', label: 'Воспоминания', Icon: ImageIcon },
   { to: '/news',     label: 'Новости',     Icon: Newspaper },
+  { to: '/ai-reviews', label: 'AI обзоры', Icon: ShieldCheck },
 ]
 
 export default function Sidebar({ onCapture, onSearch, sphere, setSphere }) {

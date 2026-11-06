@@ -58,6 +58,10 @@ export const config = {
   get: () => api.get('/config'),
 }
 
+export const aiReviews = {
+  all: () => api.get('/ai-reviews'),
+}
+
 export const profile = {
   get: () => api.get('/profile'),
   update: (data) => fetch('/api/profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
