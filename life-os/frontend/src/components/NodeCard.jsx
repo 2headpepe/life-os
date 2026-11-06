@@ -124,7 +124,7 @@ function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecur
           className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
         >
           <Sparkles size={12} />
-          Claude
+          AI
         </button>
         <button onClick={onDelete} className="text-xs px-2.5 py-1 rounded-lg text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20">
           Удалить

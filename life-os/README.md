@@ -35,26 +35,14 @@ node ops/scripts/seed-empty.js
 cp life-os/backend/.env.example life-os/backend/.env
 ```
 
-Открыть `life-os/backend/.env` и вписать AI-ключ (нужен хотя бы один):
+AI необязателен. Чтобы включить его, выбери локальный runtime:
 
 ```env
-# Anthropic Claude:
-ANTHROPIC_API_KEY=sk-ant-...
-
-# или OpenAI:
-# AI_API_KEY=sk-...
-# AI_API_BASE_URL=https://api.openai.com/v1
-# AI_MODEL=gpt-4o
+AI_RUNTIME=codex       # предварительно выполнить `codex`
+# AI_RUNTIME=opencode  # предварительно выполнить `opencode auth login`
 ```
 
-Также выбрать CLI-инструмент для консоли:
-
-```env
-CLI_COMMAND=claude    # Claude Code (npm i -g @anthropic-ai/claude-code)
-# CLI_COMMAND=opencode  # opencode (npm i -g opencode-ai)
-```
-
-**Все варианты** с комментариями — в `life-os/backend/.env.example`.
+Токены и credentials не попадают в репозиторий; оба runtime авторизуются локально.
 
 ### 4. Установить зависимости
 

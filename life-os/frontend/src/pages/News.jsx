@@ -458,7 +458,7 @@ export default function News() {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Новости</h1>
-              <p className="text-sm text-gray-400 mt-0.5">Собрано Claude, отфильтровано тобой</p>
+              <p className="text-sm text-gray-400 mt-0.5">Собрано AI, отфильтровано тобой</p>
             </div>
             {items.length > 0 && (
               <span className="text-xs text-gray-400">{items.length} новостей</span>
@@ -549,7 +549,7 @@ export default function News() {
                 <>
                   <p>Нет новостей</p>
                   <p className="text-xs text-gray-300 dark:text-gray-600">
-                    Запусти Claude и скажи «собери новости», чтобы наполнить ленту
+                    Запусти AI и скажи «собери новости», чтобы наполнить ленту
                   </p>
                 </>
               ) : (

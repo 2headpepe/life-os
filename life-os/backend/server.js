@@ -3,9 +3,10 @@ import cors from 'cors'
 import fs from 'fs/promises'
 import path from 'path'
 import os from 'os'
-import { exec, spawn } from 'child_process'
+import { exec } from 'child_process'
 import { google } from 'googleapis'
 import multer from 'multer'
+import { aiRuntimeConfig, checkAiRuntime, promptFromMessages, runAiTask } from './ai-runtime.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -249,7 +250,7 @@ app.delete('/api/events/:id', async (req, res) => {
   }
 })
 
-// ─── Context (for Claude) ─────────────────────────────────────────
+// ─── Context for local AI runtimes ────────────────────────────────
 
 app.get('/api/context', async (req, res) => {
   const today = new Date().toISOString().slice(0, 10)
@@ -329,7 +330,7 @@ app.get('/api/search', async (req, res) => {
   res.json({ results: results.slice(0, 20) })
 })
 
-// ─── Claude ───────────────────────────────────────────────────────
+// ─── Local AI runtime ─────────────────────────────────────────────
 
 // ─── People ───────────────────────────────────────────────────────
 
@@ -1212,60 +1213,20 @@ app.delete('/api/tree/:id', async (req, res) => {
 
 const AI_SYSTEM_PROMPT = 'Ты личный ассистент в Life OS — системе управления жизнью пользователя. Помогай разбирать задачи, декомпозировать цели, планировать день. Отвечай кратко и по делу на русском языке. Используй markdown для форматирования когда уместно.'
 
-app.post('/api/claude', async (req, res) => {
+app.post('/api/ai/chat', async (req, res) => {
   const { messages, system } = req.body
   if (!messages?.length) return res.status(400).json({ error: 'messages required' })
-
-  const anthropicKey = process.env.ANTHROPIC_API_KEY
-  const openaiKey = process.env.AI_API_KEY || process.env.OPENAI_API_KEY
-
-  if (!anthropicKey && !openaiKey) {
-    return res.status(503).json({ error: 'AI не настроен: задайте ANTHROPIC_API_KEY или AI_API_KEY в .env файле бэкенда' })
-  }
-
-  const systemPrompt = system || AI_SYSTEM_PROMPT
-
   try {
-    if (anthropicKey) {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: process.env.AI_MODEL || 'claude-sonnet-4-6',
-          max_tokens: 2048,
-          system: systemPrompt,
-          messages,
-        }),
-      })
-      const data = await response.json()
-      if (data.error) return res.status(500).json({ error: data.error.message })
-      res.json({ text: data.content?.[0]?.text || '' })
-    } else {
-      const baseUrl = (process.env.AI_API_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')
-      const model = process.env.AI_MODEL || 'gpt-4o'
-      const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${openaiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          max_tokens: 2048,
-          messages: [{ role: 'system', content: systemPrompt }, ...messages],
-        }),
-      })
-      const data = await response.json()
-      if (data.error) return res.status(500).json({ error: data.error.message || JSON.stringify(data.error) })
-      res.json({ text: data.choices?.[0]?.message?.content || '' })
-    }
+    const output = await runAiTask(promptFromMessages(messages, system || AI_SYSTEM_PROMPT), { cwd: WORK_DIR })
+    res.json({ text: output })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(503).json({ error: e.message })
   }
 })
 
-app.get('/api/config', (req, res) => {
-  res.json({
-    cliCommand: process.env.CLI_COMMAND || 'claude',
-    hasAi: !!(process.env.ANTHROPIC_API_KEY || process.env.AI_API_KEY || process.env.OPENAI_API_KEY),
-  })
+app.get('/api/config', async (req, res) => {
+  const runtime = await checkAiRuntime({ cwd: WORK_DIR })
+  res.json({ aiRuntime: runtime.runtime, cliCommand: runtime.command, hasAi: runtime.available, aiReason: runtime.reason || null })
 })
 
 app.get('/api/profile', async (req, res) => {
@@ -1285,9 +1246,10 @@ app.put('/api/profile', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
-app.post('/api/open-claude', async (req, res) => {
+app.post('/api/ai/open', async (req, res) => {
   const { prompt } = req.body || {}
-  const cliCmd = process.env.CLI_COMMAND || 'claude'
+  const { runtime, command: cliCmd } = aiRuntimeConfig()
+  if (runtime === 'none') return res.status(503).json({ error: 'AI is disabled. Choose codex or opencode in .env.' })
   const platform = process.platform
 
   try {
@@ -2220,7 +2182,7 @@ Return ONLY this JSON between the exact markers:
 { "actions": [], "summary": "one sentence in Russian" }
 ---JSON---`
 
-    const raw = await runClaudeTask(prompt, 120000)
+    const raw = await runAiTask(prompt, { cwd: WORK_DIR, timeoutMs: 120000 })
     const result = extractJson(raw)
     const actions = result.actions || []
     const summaries = []
@@ -2527,7 +2489,7 @@ Rules:
 - No two cards about the same thing
 - No generic advice — everything must reference actual data`
 
-    const raw = await runClaudeTask(prompt, 120000)
+    const raw = await runAiTask(prompt, { cwd: WORK_DIR, timeoutMs: 120000 })
     const specs = extractJson(raw)
     const traceData = {
       'Режим': mode.id,
@@ -2592,31 +2554,9 @@ app.post('/api/feed/ai-generate', async (req, res) => {
 
 // ─── AI Task Runner ────────────────────────────────────────────────
 
-function runClaudeTask(prompt, timeoutMs = 180000) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn('claude', ['-p', '--dangerously-skip-permissions'], {
-      cwd: WORK_DIR,
-      env: process.env,
-    })
-    let stdout = ''
-    let stderr = ''
-    proc.stdout.on('data', d => { stdout += d })
-    proc.stderr.on('data', d => { stderr += d })
-    const timer = setTimeout(() => { proc.kill(); reject(new Error('Claude task timeout')) }, timeoutMs)
-    proc.on('close', code => {
-      clearTimeout(timer)
-      if (code !== 0 && code !== null) reject(new Error(`Claude exited ${code}: ${stderr.slice(0, 200)}`))
-      else resolve(stdout)
-    })
-    proc.on('error', reject)
-    proc.stdin.write(prompt)
-    proc.stdin.end()
-  })
-}
-
 function extractJson(output) {
   const match = output.match(/---JSON---\s*([\s\S]*?)\s*---JSON---/)
-  if (!match) throw new Error('No JSON block found in Claude output')
+  if (!match) throw new Error('No JSON block found in AI output')
   return JSON.parse(match[1].trim())
 }
 
@@ -2759,7 +2699,7 @@ Rules:
 - meta.subtitle and meta.tone apply to nudge cards too`
 
     try {
-      const output = await runClaudeTask(prompt)
+      const output = await runAiTask(prompt, { cwd: WORK_DIR })
       const result = extractJson(output)
       const cards = await resolveAiCards(result.cards || [], today, 'Feed extend: подборка 3-5 карточек на основе полного свода данных')
       const existing = await readAiCards()

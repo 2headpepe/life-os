@@ -57,46 +57,18 @@ copy life-os\backend\.env.example life-os\backend\.env
 Copy-Item life-os\backend\.env.example life-os\backend\.env
 ```
 
-Open `life-os/backend/.env` in any text editor and add at least one AI key:
+The app works fully without AI. To enable AI, choose one local runtime:
 
-**Option A — Anthropic Claude** (recommended)  
-Get key: [console.anthropic.com](https://console.anthropic.com) → API Keys → Create Key  
-Keys look like `sk-ant-api03-...`
 ```env
-ANTHROPIC_API_KEY=<paste-your-key-here>
+AI_RUNTIME=codex       # sign in first with `codex`
+# AI_RUNTIME=opencode  # sign in first with `opencode auth login`
 ```
-
-**Option B — OpenAI**  
-Get key: [platform.openai.com](https://platform.openai.com) → API Keys → Create new secret key  
-Keys look like `sk-proj-...`
-```env
-AI_API_KEY=<paste-your-key-here>
-AI_API_BASE_URL=https://api.openai.com/v1
-AI_MODEL=gpt-4o
-```
-
-**Option C — OpenRouter** (100+ models via one key, has free tier)  
-Get key: [openrouter.ai/keys](https://openrouter.ai/keys) → Create Key  
-Keys look like `sk-or-v1-...`
-```env
-AI_API_KEY=<paste-your-key-here>
-AI_API_BASE_URL=https://openrouter.ai/api/v1
-AI_MODEL=anthropic/claude-sonnet-4-5
-```
-
-**No key** — the app still works fully; AI features (feed generation, web onboarding) are disabled. You can use it with a CLI tool instead (see `CLI_COMMAND` below).
 
 > All variables with explanations are in `life-os/backend/.env.example`.
 
-### 4. Choose your CLI tool
+### 4. Choose your local AI runtime
 
-The app has a console button on every page that opens your AI assistant in the terminal. Set the command:
-
-```env
-# In life-os/backend/.env:
-CLI_COMMAND=claude    # Claude Code — npm install -g @anthropic-ai/claude-code
-# CLI_COMMAND=opencode  # opencode    — npm install -g opencode-ai
-```
+The console button opens the selected runtime in a terminal. Install either Codex or OpenCode, authenticate locally, then set `AI_RUNTIME` as above. API tokens are never added to this repository.
 
 The CLI assistant reads your `brain/content/` files directly and can add goals, tasks, habits, and notes through conversation.
 
@@ -183,8 +155,7 @@ The backend creates all files automatically on first start if they don't exist.
 | Frontend | React 18, Vite, TailwindCSS |
 | Backend | Node.js 22, Express (ESM) |
 | Data | JSON files (no database) |
-| AI (web) | Anthropic / OpenAI / OpenAI-compatible |
-| AI (CLI) | Claude Code, opencode, or any terminal command |
+| AI | Local Codex or OpenCode runtime (optional) |
 
 ---
 
@@ -194,11 +165,9 @@ All backend settings are in `life-os/backend/.env` (copy from `.env.example`):
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | No | — | Anthropic Claude key |
-| `AI_API_KEY` | No | — | OpenAI-compatible key |
-| `AI_API_BASE_URL` | No | — | Base URL for OpenAI-compatible API |
-| `AI_MODEL` | No | — | Model name for OpenAI-compatible API |
-| `CLI_COMMAND` | No | `claude` | Terminal command for console button |
+| `AI_RUNTIME` | No | `none` | `none`, `codex`, or `opencode` |
+| `CODEX_COMMAND` / `OPENCODE_COMMAND` | No | executable name | Local runtime executable |
+| `CODEX_MODEL` / `OPENCODE_MODEL` | No | — | Optional runtime model override |
 | `PORT` | No | `3001` | Backend port |
 | `VAULT_PATH` | No | `../../brain/content` | Absolute path to data directory |
 | `WORK_DIR` | No | repo root | Working directory for terminal |
@@ -225,15 +194,15 @@ All backend settings are in `life-os/backend/.env` (copy from `.env.example`):
 
 **Frontend can't reach API** — backend must be running on port 3001 before starting frontend
 
-**AI doesn't respond** — verify the key is set in `.env` and restart the backend after editing
+**AI doesn't respond** — verify `AI_RUNTIME` and that the selected CLI is installed and authenticated
 
 **Onboarding doesn't appear** — if `brain/content/tree/nodes.json` already has data, onboarding is skipped. Delete the file and restart, or go to http://localhost:5173/setup directly
 
-**Console button does nothing** — make sure `CLI_COMMAND` is set to an installed tool (e.g. `claude` requires `npm install -g @anthropic-ai/claude-code`)
+**Console button does nothing** — install and authenticate the selected Codex or OpenCode runtime
 
 **Windows: PowerShell blocks life-os.bat** — run once in PowerShell as Administrator:
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
-**Windows: console button doesn't open a terminal** — the backend detects Windows and uses `start cmd`. Make sure your `CLI_COMMAND` is installed and in your system PATH.
+**Windows: console button doesn't open a terminal** — make sure the selected runtime is installed and in your system PATH.

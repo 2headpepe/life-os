@@ -1,7 +1,7 @@
 # Life OS — Specification
 
 This file defines behavioral contracts, invariants, and change protocols for the Life OS codebase.
-Read it before making any change. It answers "what must always be true" — not "where things are" (that's `CLAUDE.md`).
+Read it before making any change. It answers "what must always be true" — not "where things are" (that's `ARCHITECTURE.md`).
 
 ---
 
@@ -76,7 +76,7 @@ These must never be broken by any change:
 
 - Cards are stateless on the server — the feed is regenerated each call.
 - Dismissed/answered cards are hidden using `feed/reactions.json` (client filters them out).
-- AI-generated cards (nudge, reflection, etc.) require `ANTHROPIC_API_KEY` or `AI_API_KEY` in env. Without a key, these card types are simply absent — no errors shown.
+- AI-generated cards require an available local `AI_RUNTIME` (`codex` or `opencode`). Without it, these card types are simply absent — no errors shown.
 - New card types require: a component in `FeedCards.jsx` + a case in `Feed.jsx`'s `render()` switch + server logic in `GET /api/feed`.
 
 ### Lists
@@ -109,7 +109,7 @@ These must never be broken by any change:
 3. Add nav entry in `Sidebar.jsx`.
 4. Add a `PageOnboarding` config entry in `PageOnboarding.jsx` (CONFIGS object).
 5. Add backend endpoints if the page needs new data (follow the existing pattern in `server.js`).
-6. Add the page to the frontend pages table in `CLAUDE.md`.
+6. Add the page to the frontend pages table in `ARCHITECTURE.md`.
 
 ### Adding a new feed card type
 

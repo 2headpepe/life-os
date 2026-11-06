@@ -5,7 +5,7 @@ import {
   Terminal, RefreshCw, Calendar, GitBranch, Activity,
   Zap, Layers, Edit2, X, ChevronDown, ChevronRight,
 } from 'lucide-react'
-import { claude, config as configApi, tree as treeApi, habits as habitsApi, profile as profileApi } from '../api'
+import { ai, config as configApi, tree as treeApi, habits as habitsApi, profile as profileApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
 
 // ─── Constants ────────────────────────────────────────────────────
@@ -376,7 +376,7 @@ function CliOnboarding({ cliCommand, onCliDone, onDone }) {
 export default function Onboarding({ onDone }) {
   const navigate = useNavigate()
   const [hasAi, setHasAi] = useState(null)
-  const [cliCommand, setCliCommand] = useState('claude')
+  const [cliCommand, setCliCommand] = useState('AI')
 
   const [step, setStep] = useState(0)
   const [error, setError] = useState(null)
@@ -411,7 +411,7 @@ export default function Onboarding({ onDone }) {
 
   useEffect(() => {
     configApi.get()
-      .then(c => { setHasAi(!!c.hasAi); setCliCommand(c.cliCommand || 'claude') })
+      .then(c => { setHasAi(!!c.hasAi); setCliCommand(c.cliCommand || 'AI') })
       .catch(() => setHasAi(false))
   }, [])
 
@@ -434,7 +434,7 @@ export default function Onboarding({ onDone }) {
       { role: 'user', content: 'На основе моего описания предложи 5–6 сфер жизни. Верни только JSON.' },
     ]
     try {
-      const reply = await claude.chat(msgs, SETUP_SYSTEM)
+      const reply = await ai.chat(msgs, SETUP_SYSTEM)
       if (reply.error) throw new Error(reply.error)
       const parsed = extractJson(reply.text)
       if (parsed?.spheres?.length) {
@@ -475,7 +475,7 @@ export default function Onboarding({ onDone }) {
       { role: 'user', content: 'Предложи цели и задачи. Верни только JSON с goals и tasks.' },
     ]
     try {
-      const reply = await claude.chat(msgs, SETUP_SYSTEM)
+      const reply = await ai.chat(msgs, SETUP_SYSTEM)
       if (reply.error) throw new Error(reply.error)
       const parsed = extractJson(reply.text)
       if (parsed?.goals?.length) {
@@ -512,7 +512,7 @@ export default function Onboarding({ onDone }) {
         { role: 'user', content: `Мои сферы: ${sphereList}. Мои цели: ${goalList}` },
         { role: 'user', content: 'Предложи 3–5 конкретных привычек для ежедневного трекинга. Верни только JSON.' },
       ]
-      const reply = await claude.chat(msgs, SETUP_SYSTEM)
+      const reply = await ai.chat(msgs, SETUP_SYSTEM)
       if (!reply.error) {
         const parsed = extractJson(reply.text)
         if (parsed?.habits?.length) setHabits(parsed.habits)

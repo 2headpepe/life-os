@@ -1,0 +1,25 @@
+name: Verify public release
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            life-os/backend/package-lock.json
+            life-os/frontend/package-lock.json
+      - run: node ops/scripts/verify-public-release.mjs
+      - run: npm ci && npm test
+        working-directory: life-os/backend
+      - run: npm ci && npm run build
+        working-directory: life-os/frontend

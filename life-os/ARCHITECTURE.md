@@ -1,4 +1,4 @@
-# Life OS — Claude Entry Point
+# Life OS — Architecture and development entry point
 
 Personal operating system web app on top of Obsidian vault.
 
@@ -71,7 +71,7 @@ Feed card components live in `pages/FeedCards.jsx` (one component per card type,
 | Component | Hotkey | Description |
 |---|---|---|
 | `QuickCapture.jsx` | ⌘K | Quick capture with type picker: **Задача** (leaf under `root-{sphere}`, or inbox if no sphere) / **Inbox** / **Вспоминание** (text + date + photos via paste) / **Инсайт** (title + tag + subtags) / **Список** (any collection). Also opened by the global floating **+** button (bottom-right, mounted in `App.jsx`) and by the Feed end-card (event `life-os:capture`). |
-| `ClaudeConsole.jsx` | ⌘J | Opens Terminal with `claude` via AppleScript |
+| `AiConsole.jsx` | ⌘J | Local chat through the selected AI runtime |
 | `GlobalSearch.jsx` | ⌘F | Search nodes/inbox, keyboard nav |
 | `Sidebar.jsx` | — | Nav links + root (domain) filter + action buttons |
 | `NodeCard.jsx` | — | Expandable node row, all fields editable inline (replaced `TaskCard.jsx`) |
@@ -112,8 +112,8 @@ GET/POST/PATCH/DELETE /api/sync/*         Google Calendar OAuth + push
 GET/POST/PATCH/DELETE /api/memories/*   memories CRUD + photo upload
 PUT    /api/content/* · GET /api/content/*   raw vault file read/write (e.g. habit logs)
 
-POST   /api/open-claude       open Terminal.app with `claude` via AppleScript
-POST   /api/claude            proxy to Anthropic API (requires ANTHROPIC_API_KEY in .env)
+POST   /api/ai/open           open Codex or OpenCode in a local terminal
+POST   /api/ai/chat           send a prompt through the selected local runtime
 ```
 
 > `/api/events/*` endpoints still exist but are **deprecated** (events are now `scheduled` leaves). `/api/tasks/*` and `/api/goals/*` were removed.
