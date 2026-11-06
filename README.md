@@ -1,224 +1,194 @@
 # Life OS
 
-Personal life management system — goals, tasks, habits, lists, memories, and an AI assistant built into every page.
+Локальное приложение для целей, задач, привычек, списков и заметок. Данные
+хранятся на вашем устройстве в обычных JSON-файлах: аккаунт, облако и база
+данных не нужны.
 
-All data is stored locally as plain JSON files. No database, no cloud sync, no accounts.
+AI — дополнительная возможность. Можно пользоваться приложением без AI или
+подключить локально установленный Codex CLI либо OpenCode CLI.
 
-![stack](https://img.shields.io/badge/stack-React%20%2B%20Vite%20%2B%20Express-blue)
-![node](https://img.shields.io/badge/node-22%2B-green)
+## Возможности
 
----
-
-## What's inside
-
-| Section | What it does |
+| Раздел | Назначение |
 |---|---|
-| **Today** | Tasks due today + habit check-in |
-| **Tree** | Goal hierarchy: spheres → goals → tasks |
-| **Habits** | Daily tracking with streaks and stats |
-| **Inbox** | Quick capture — route later |
-| **Feed** | AI-generated smart cards from your data |
-| **Lists** | Films, books, games, series, wishes, restaurants, travel |
-| **Calendar** | Timeline view of tasks with due dates |
-| **Memories** | Personal journal with photo support |
-| **Insights** | Observations, patterns, ideas |
+| Сегодня | План дня, просроченные задачи и привычки |
+| Дерево | Сферы жизни, цели и следующие действия |
+| Привычки | Ежедневные отметки и статистика |
+| Входящие | Быстрый захват мыслей и задач |
+| Лента | Карточки с актуальными задачами и наблюдениями |
+| Списки | Книги, фильмы, игры, желания и поездки |
+| Календарь | Задачи с датами и синхронизация с Google Calendar |
+| Воспоминания и инсайты | Личные заметки и журнал |
 
----
+## Быстрый запуск
 
-## Quick start
+### 1. Установите Node.js
 
-### 1. Requirements
-
-- **Node.js 22+** — [nodejs.org](https://nodejs.org)  
-  Check: `node -v`
-- AI is optional. To enable it, install and sign in to either the Codex CLI or OpenCode CLI locally.
-
-### 2. Clone
+Нужен [Node.js 22 или новее](https://nodejs.org/). Проверьте версию:
 
 ```bash
-git clone <repo-url>
-cd <repo-name>
+node -v
 ```
 
-### 3. Configure environment
+### 2. Клонируйте репозиторий
+
+```bash
+git clone https://github.com/2headpepe/life-os.git
+cd life-os
+```
+
+### 3. Создайте локальную настройку
 
 **macOS / Linux:**
+
 ```bash
 cp life-os/backend/.env.example life-os/backend/.env
 ```
 
-**Windows (Command Prompt):**
-```cmd
-copy life-os\backend\.env.example life-os\backend\.env
-```
+**Windows PowerShell:**
 
-**Windows (PowerShell):**
 ```powershell
 Copy-Item life-os\backend\.env.example life-os\backend\.env
 ```
 
-The app works fully without AI. To enable AI, choose one local runtime:
+По умолчанию в `.env` указано `AI_RUNTIME=none`. Это полноценный безопасный
+режим: приложение работает без ключей и внешних сервисов.
 
-```env
-AI_RUNTIME=codex       # sign in first with `codex`
-# AI_RUNTIME=opencode  # sign in first with `opencode auth login`
-```
-
-> All variables with explanations are in `life-os/backend/.env.example`.
-
-### 4. Choose your local AI runtime
-
-The console button opens the selected runtime in a terminal. Install either Codex or OpenCode, authenticate locally, then set `AI_RUNTIME` as above. API tokens are never added to this repository.
-
-Verify the installation at any time:
+### 4. Установите зависимости
 
 ```bash
-node ops/scripts/doctor.mjs
+cd life-os/backend
+npm ci
+cd ../frontend
+npm ci
+cd ../..
 ```
 
-The in-app AI features run read-only analysis. Codex receives its read-only sandbox; OpenCode runs in pure mode with edit, shell, and web-fetch permissions denied. The separate Console button opens your selected CLI in the repository; any file changes there remain an explicit action you approve in that CLI.
+### 5. Запустите приложение
 
-Without AI, first launch opens a short manual setup: one sphere, one goal, and the first concrete task. This creates a useful local workspace without an account, key, or external service.
-
-### 5. Install dependencies
+**macOS:**
 
 ```bash
-cd life-os/backend && npm install
-cd ../frontend && npm install
+chmod +x life-os.command
+./life-os.command
 ```
 
-### 6. Run
-
-**macOS — double-click launcher:**
+Также можно создать ярлык на рабочем столе:
 
 ```bash
 ln -sf "$(pwd)/life-os.command" ~/Desktop/life-os.command
 ```
 
-Double-click the shortcut. Starts backend + frontend, opens the browser. Handles `npm install` and port cleanup automatically.
+**Windows:** дважды откройте `life-os.bat` в корне репозитория.
 
-> Use `ln -sf` (symlink), not `cp` — the script needs to know the repo path.
-
-**Windows — double-click launcher:**
-
-Double-click `life-os.bat` in the repo root. It runs `life-os.ps1` via PowerShell.
-
-If Windows blocks the script with a policy error, run once in PowerShell as Administrator:
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
-
-**Manual — any OS (two terminals):**
+**Linux, macOS или Windows вручную:**
 
 ```bash
-# Terminal 1 — backend (port 3001)
+# Терминал 1
 cd life-os/backend
 node --env-file=.env server.js
+```
 
-# Terminal 2 — frontend (port 5173)
+```bash
+# Терминал 2
 cd life-os/frontend
 npm run dev
 ```
 
-Open: **http://localhost:5173**
+Откройте <http://localhost:5173>. При первом запуске появится настройка:
+сфера жизни, цель и первый конкретный шаг.
 
-On first launch, the onboarding wizard opens automatically.
+## AI: Codex или OpenCode
 
----
+AI не обязателен. Если он нужен, установите и авторизуйте один выбранный CLI,
+а затем измените `life-os/backend/.env`.
 
-## Data layout
+```env
+# Вариант 1: Codex CLI
+AI_RUNTIME=codex
 
-Everything lives in `brain/content/` — plain JSON, no database:
-
-```
-brain/
-  content/
-    tree/nodes.json              # all goals and tasks (flat list, parent_id links)
-    habits/definitions.json      # habit definitions
-    habits/log/YYYY-MM-DD.json   # daily habit check-ins
-    inbox/current.json           # unprocessed captures
-    insights/index.json          # observations, patterns, ideas
-    memories/index.json          # journal entries
-    memories/photos/             # attached photos
-    lists/films.json             # watchlist
-    lists/books.json
-    lists/games.json
-    lists/series.json
-    lists/wishes.json
-    lists/restaurants.json
-    lists/travel.json
-    feed/reactions.json          # feed interaction history
-    profile/profile.json         # name, occupation
+# Вариант 2: OpenCode CLI
+# AI_RUNTIME=opencode
 ```
 
-`brain/` is gitignored — your data never leaves your machine.  
-The backend creates all files automatically on first start if they don't exist.
+Авторизация и токены остаются в локальной среде выбранного CLI; в репозиторий
+их добавлять не нужно и нельзя. Проверьте настройку:
 
----
-
-## Stack
-
-| Layer | Tech |
-|---|---|
-| Frontend | React 18, Vite, TailwindCSS |
-| Backend | Node.js 22, Express (ESM) |
-| Data | JSON files (no database) |
-| AI | Local Codex or OpenCode runtime (optional) |
-
----
-
-## Configuration reference
-
-All backend settings are in `life-os/backend/.env` (copy from `.env.example`):
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `AI_RUNTIME` | No | `none` | `none`, `codex`, or `opencode` |
-| `CODEX_COMMAND` / `OPENCODE_COMMAND` | No | executable name | Local runtime executable |
-| `CODEX_MODEL` / `OPENCODE_MODEL` | No | — | Optional runtime model override |
-| `PORT` | No | `3001` | Backend port |
-| `VAULT_PATH` | No | `../../brain/content` | Absolute path to data directory |
-| `WORK_DIR` | No | repo root | Working directory for terminal |
-| `GOOGLE_CLIENT_ID` | No | — | Google Calendar OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | No | — | Google Calendar OAuth secret |
-| `GOOGLE_REDIRECT_URI` | No | `http://localhost:3001/api/sync/oauth/callback` | OAuth callback |
-| `GOOGLE_TIMEZONE` | No | — | Timezone for calendar (e.g. `Europe/Moscow`) |
-
-If you change `PORT`, restart both the backend and Vite frontend: the development proxy reads the same local backend `.env` file.
-
-## Privacy and AI review
-
-Before sharing a fork or contribution, run the public-release checks and follow the [AI review playbook](docs/AI-REVIEWS.md). It defines a runtime-neutral review for Codex and OpenCode without collecting personal Life OS data or CLI session history.
-
----
-
-## Keyboard shortcuts
-
-| Key | Action |
-|---|---|
-| `⌘K` | Quick capture (task / inbox / memory / insight) |
-| `⌘J` | AI chat |
-| `⌘F` | Search |
-
----
-
-## Troubleshooting
-
-**Backend won't start** — check Node.js version: `node -v` (need 22+)
-
-**Frontend can't reach API** — backend must be running on port 3001 before starting frontend
-
-**AI doesn't respond** — verify `AI_RUNTIME` and that the selected CLI is installed and authenticated
-
-**Codex reports a missing binary** — repair the local Codex installation first; `node ops/scripts/doctor.mjs` must show a version before Life OS can use it.
-
-**Onboarding doesn't appear** — if `brain/content/tree/nodes.json` already has data, onboarding is skipped. Delete the file and restart, or go to http://localhost:5173/setup directly
-
-**Console button does nothing** — install and authenticate the selected Codex or OpenCode runtime
-
-**Windows: PowerShell blocks life-os.bat** — run once in PowerShell as Administrator:
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```bash
+node ops/scripts/doctor.mjs
 ```
 
-**Windows: console button doesn't open a terminal** — make sure the selected runtime is installed and in your system PATH.
+Встроенные AI-функции только анализируют данные: Codex запускается в sandbox
+`read-only`, OpenCode — с запретом изменения файлов и запуска команд. Кнопка
+«Открыть в консоли» запускает отдельную интерактивную сессию: любые изменения
+в ней вы подтверждаете сами.
+
+## Где лежат данные
+
+Все личные данные создаются в `brain/content/` рядом с репозиторием:
+
+```text
+brain/content/
+  tree/nodes.json            цели и задачи
+  habits/                    привычки и ежедневные отметки
+  inbox/current.json         входящие
+  lists/                     списки
+  memories/                  воспоминания и фотографии
+  insights/index.json        инсайты
+  profile/profile.json       локальный профиль
+```
+
+Папка `brain/` находится в `.gitignore`. Она не попадёт в коммит или push.
+При первом запуске бэкенд сам создаёт пустую структуру; отдельный seed-скрипт
+не требуется.
+
+## Настройка
+
+Все настройки находятся в локальном файле `life-os/backend/.env`.
+
+| Переменная | По умолчанию | Назначение |
+|---|---:|---|
+| `AI_RUNTIME` | `none` | `none`, `codex` или `opencode` |
+| `CODEX_COMMAND`, `OPENCODE_COMMAND` | имя команды | Путь или имя выбранного CLI |
+| `CODEX_MODEL`, `OPENCODE_MODEL` | — | Необязательная модель CLI |
+| `PORT` | `3001` | Порт бэкенда |
+| `VAULT_PATH` | `../../brain/content` | Внешняя папка для личных данных |
+| `WORK_DIR` | корень репозитория | Папка для интерактивной консоли |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | — | Необязательная синхронизация Google Calendar |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:3001/api/sync/auth/callback` | Адрес возврата Google OAuth |
+| `GOOGLE_TIMEZONE` | `Europe/Moscow` | Часовой пояс календаря |
+
+После изменения `PORT` перезапустите бэкенд и фронтенд: Vite читает тот же
+локальный `.env`.
+
+## Проверка перед обновлением или публикацией
+
+```bash
+node ops/scripts/verify-public-release.mjs
+node ops/scripts/doctor.mjs
+cd life-os/backend && npm test
+cd ../frontend && npm run build
+```
+
+Инструкция по AI- и дизайн-ревью находится в
+[docs/AI-REVIEWS.md](docs/AI-REVIEWS.md). Она не требует передачи личных
+данных или истории сессий.
+
+## Частые проблемы
+
+- **Бэкенд не запускается:** убедитесь, что Node.js версии 22 или выше.
+- **Страница не видит API:** сначала запустите бэкенд, затем фронтенд.
+- **AI недоступен:** проверьте `AI_RUNTIME` и выполните
+  `node ops/scripts/doctor.mjs`.
+- **Онбординг не появляется:** откройте <http://localhost:5173/setup>.
+- **Windows блокирует PowerShell:** выполните один раз от имени пользователя:
+
+  ```powershell
+  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+  ```
+
+## Документация для разработки
+
+- [Устройство приложения](life-os/ARCHITECTURE.md)
+- [Технические правила изменений](life-os/SPEC.md)
+- [AI- и дизайн-ревью](docs/AI-REVIEWS.md)

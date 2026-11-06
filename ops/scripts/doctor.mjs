@@ -14,6 +14,11 @@ function report(ok, label, detail = '') {
   if (!ok) failed = true
 }
 
+function readEnvValue(content, name) {
+  const match = content.match(new RegExp(`^\\s*${name}\\s*=\\s*(.*?)\\s*$`, 'm'))
+  return match?.[1]?.replace(/^['"]|['"]$/g, '') || ''
+}
+
 report(nodeMajor >= 22, 'Node.js 22+', process.versions.node)
 report(fs.existsSync(path.join(root, 'life-os/backend/package.json')), 'backend source')
 report(fs.existsSync(path.join(root, 'life-os/frontend/package.json')), 'frontend source')
@@ -22,13 +27,15 @@ if (!fs.existsSync(envPath)) {
   console.log('• AI runtime — disabled until life-os/backend/.env is created')
 } else {
   const env = fs.readFileSync(envPath, 'utf8')
-  const runtime = (env.match(/^AI_RUNTIME=(.+)$/m)?.[1] || 'none').trim().toLowerCase()
+  const runtime = (readEnvValue(env, 'AI_RUNTIME') || 'none').toLowerCase()
   if (!['none', 'codex', 'opencode'].includes(runtime)) {
     report(false, 'AI_RUNTIME', 'must be none, codex, or opencode')
   } else if (runtime === 'none') {
     console.log('✓ AI runtime — none (safe mode)')
   } else {
-    const command = runtime === 'codex' ? 'codex' : 'opencode'
+    const command = runtime === 'codex'
+      ? (readEnvValue(env, 'CODEX_COMMAND') || 'codex')
+      : (readEnvValue(env, 'OPENCODE_COMMAND') || 'opencode')
     try {
       const version = execFileSync(command, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
       report(true, `${runtime} CLI`, version)

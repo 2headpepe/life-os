@@ -1,32 +1,32 @@
-# AI reviews in the public edition
+# AI- и дизайн-ревью в публичной версии
 
-Life OS keeps review instructions in Git and personal content in the local,
-gitignored `brain/` directory. A review must never require copying a user's
-profile, notes, photos, or CLI session history into an issue, commit, or pull
-request.
+Инструкции для ревью хранятся в Git, а личные данные — в локальной папке
+`brain/`, которая исключена из Git. Для ревью нельзя копировать в issue,
+коммиты или pull request профиль пользователя, заметки, фотографии, токены и
+историю сессий CLI.
 
-For in-app background jobs, Codex uses its read-only sandbox. OpenCode is
-started in pure mode with `edit`, `bash`, `webfetch`, and external-directory
-access denied. The interactive Console is intentionally different: it is a
-user-opened terminal session where the user decides each requested permission.
+Фоновые AI-задачи в приложении работают в режиме только для чтения: Codex
+получает read-only sandbox, а OpenCode запускается без возможности менять
+файлы, выполнять команды или обращаться к сайтам. Интерактивная консоль —
+другой сценарий: пользователь открывает её сам и подтверждает действия в ней.
 
-## What may be reviewed
+## Что можно проверять
 
-- source code, dependency manifests, and public documentation;
-- the empty seed-data schema and the onboarding flow;
-- privacy boundaries, error states, and cross-platform setup;
-- an explicitly prepared, synthetic test workspace.
+- исходный код, зависимости и публичную документацию;
+- сценарий первого запуска и пустое хранилище данных;
+- приватность, ошибки и установку на macOS, Windows и Linux;
+- специально подготовленную тестовую папку без личной информации.
 
-## What must stay local
+## Что должно оставаться локальным
 
-- `brain/content/` and all exported data;
-- `.env`, OAuth credentials, tokens, and CLI authentication state;
-- raw Codex/OpenCode conversations unless the user has manually redacted and
-  chosen to share them.
+- `brain/content/` и экспортированные из него данные;
+- `.env`, OAuth-данные, токены и авторизация CLI;
+- исходные диалоги Codex/OpenCode, если пользователь не отредактировал их
+  вручную перед передачей.
 
-## Repeatable review loop
+## Повторяемый порядок ревью
 
-1. Start with the deterministic checks:
+1. Выполните технические проверки:
 
    ```bash
    node ops/scripts/verify-public-release.mjs
@@ -35,61 +35,61 @@ user-opened terminal session where the user decides each requested permission.
    cd ../frontend && npm run build
    ```
 
-2. Open the app against an empty local `brain/` directory. Complete both
-   first-run paths: **without AI** and, if a local runtime is available,
-   **with AI**.
-3. Copy the prompt below into the already authenticated CLI chosen in `.env`.
-   It asks for an analysis only; do not grant write permissions for a review.
-4. Record findings using the review record below. A finding is actionable only
-   when it has a reproducible path, expected outcome, and severity.
-5. Fix accepted findings, re-run step 1, and attach only the sanitized review
-   record to a pull request.
+2. Откройте приложение с пустой локальной папкой `brain/`. Пройдите первый
+   запуск без AI и, если CLI доступен, с AI.
+3. Скопируйте запрос ниже в уже авторизованный Codex или OpenCode. Для ревью
+   не разрешайте изменение файлов.
+4. Зафиксируйте найденное по шаблону. Важной считается только проблема с
+   понятным способом повторения, влиянием на пользователя и критерием
+   исправления.
+5. После принятия исправлений повторите шаг 1. В pull request добавляйте
+   только очищенный от личных данных отчёт.
 
-## Runtime-neutral review prompt
+## Запрос для Codex или OpenCode
 
 ```text
-Review this repository's first-run experience for a new user on macOS,
-Windows, or Linux. Do not read or modify brain/, .env, credentials, or local
-session history. Inspect only tracked source and documentation.
+Проверь первый запуск этого репозитория для нового пользователя на macOS,
+Windows или Linux. Не читай и не изменяй brain/, .env, учётные данные и
+историю локальных сессий. Анализируй только отслеживаемый исходный код и
+документацию.
 
-Check: prerequisites, README clarity, no-AI path, Codex/OpenCode selection,
-runtime failure states, data privacy, and recoverability after a failed step.
-Return a concise Markdown report: severity (P0–P3), evidence, affected user,
-recommended change, and a testable acceptance criterion. Do not make edits.
+Проверь: требования, ясность README, сценарий без AI, выбор Codex/OpenCode,
+ошибки запуска CLI, приватность данных и возможность восстановиться после
+неудачного шага. Верни короткий отчёт Markdown: важность (P0–P3), доказательство,
+затронутый пользователь, рекомендуемое изменение и проверяемый критерий приёмки.
+Не изменяй файлы.
 ```
 
-## Review record
+## Шаблон отчёта
 
 ```md
-# Review: <scope> — <YYYY-MM-DD>
+# Ревью: <область> — <ГГГГ-ММ-ДД>
 
-## Coverage
-- OS tested:
-- AI runtime: none | codex | opencode
-- Data used: empty generated local workspace only
+## Покрытие
+- Проверенная ОС:
+- AI: none | codex | opencode
+- Данные: только пустая локальная тестовая папка
 
-## Findings
-| Severity | Evidence | User impact | Recommendation | Acceptance criterion |
+## Наблюдения
+| Важность | Доказательство | Влияние | Рекомендация | Критерий приёмки |
 |---|---|---|---|---|
 | P1 | ... | ... | ... | ... |
 
-## Decision
-- Accepted:
-- Deferred:
-- Rejected (with reason):
+## Решение
+- Принято:
+- Отложено:
+- Отклонено с причиной:
 ```
 
-## Design-review baseline: first-run onboarding
+## Гипотезы дизайн-ревью первого запуска
 
-The current baseline is deliberately a hypothesis, not telemetry:
-
-| Hypothesis | Risk | Current response | How to validate |
+| Гипотеза | Риск | Текущее решение | Как проверить |
 |---|---|---|---|
-| A newcomer may not have an AI subscription or token. | They abandon setup at the AI choice. | `AI_RUNTIME=none` is the default and opens a manual three-field setup. | Five moderated first-run sessions: time to create first task and completion rate. |
-| A CLI may be installed but unusable. | A blank/error-only onboarding path. | `/api/config` checks `--version`; unavailable AI falls back to manual setup with a reason. | Test absent CLI, unauthenticated CLI, and working OpenCode/Codex. |
-| A user needs an immediate useful result. | Empty dashboard has no next action. | Manual setup writes a sphere, a goal, and an active first task. | Confirm the user reaches Today with a visible actionable task. |
-| Users may change the backend port. | The UI cannot reach the API. | Vite reads the local backend `.env` `PORT`. | Start both services with a non-default port. |
+| У нового пользователя может не быть AI-подписки или токена. | Пользователь бросит настройку при выборе AI. | `AI_RUNTIME=none` установлен по умолчанию и открывает ручную настройку из трёх полей. | Пять тестовых первых запусков: время до первой задачи и доля завершивших. |
+| CLI может быть установлен, но не готов к работе. | Онбординг покажет пустой экран или неясную ошибку. | `/api/config` вызывает `--version`; при недоступном AI остаётся ручная настройка с причиной. | Проверить отсутствующий CLI, неавторизованный CLI и рабочие Codex/OpenCode. |
+| Пользователю нужен результат сразу. | Пустая главная страница не подсказывает следующий шаг. | Ручная настройка создаёт сферу, цель и активную первую задачу. | Убедиться, что после настройки в «Сегодня» видна задача. |
+| Пользователь может изменить порт бэкенда. | Интерфейс потеряет доступ к API. | Vite читает `PORT` из локального backend `.env`. | Запустить обе части с нестандартным портом. |
 
-Remaining review work before a public release: run the cross-platform sessions
-above, test a healthy Codex installation, and decide whether to add opt-in,
-redacted review receipts for local CLI sessions.
+Перед публичным релизом ещё нужно провести тесты на всех трёх ОС, проверить
+здоровую установку Codex и решить, нужны ли локальные обезличенные квитанции
+AI-ревью.

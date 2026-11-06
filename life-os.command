@@ -34,18 +34,24 @@ echo -e "${muted}─────────────────────
 if [ ! -f "$BACKEND/.env" ]; then
     echo -e "${red}Нет файла $BACKEND/.env${reset}"
     echo -e "Скопируй: ${muted}cp life-os/backend/.env.example life-os/backend/.env${reset}"
-    echo -e "И заполни API ключ."
+    echo -e "В файле можно оставить AI_RUNTIME=none или выбрать Codex/OpenCode."
     read -r -p "Нажми Enter для выхода..." && exit 1
+fi
+
+# PORT задаётся в локальном .env; фронтенд читает тот же файл через Vite.
+CONFIGURED_BACKEND_PORT=$(sed -nE 's/^[[:space:]]*PORT=([0-9]+).*/\1/p' "$BACKEND/.env" | tail -n 1)
+if [ -n "$CONFIGURED_BACKEND_PORT" ]; then
+    BACKEND_PORT="$CONFIGURED_BACKEND_PORT"
 fi
 
 # ── Check node_modules ──
 if [ ! -d "$BACKEND/node_modules" ]; then
     echo -e "${amber}Устанавливаю зависимости бэкенда...${reset}"
-    (cd "$BACKEND" && npm install --silent)
+    (cd "$BACKEND" && npm ci --silent)
 fi
 if [ ! -d "$FRONTEND/node_modules" ]; then
     echo -e "${amber}Устанавливаю зависимости фронтенда...${reset}"
-    (cd "$FRONTEND" && npm install --silent)
+    (cd "$FRONTEND" && npm ci --silent)
 fi
 
 # ── Kill old processes on ports ──

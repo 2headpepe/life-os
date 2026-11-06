@@ -2768,7 +2768,7 @@ app.listen(PORT, async () => {
 // ─── Google Calendar sync ──────────────────────────────────────────
 
 const GCAL_TOKEN_FILE = path.join(import.meta.dirname, 'google-tokens.json')
-const GCAL_REDIRECT = 'http://localhost:3001/api/sync/auth/callback'
+const GCAL_REDIRECT = process.env.GOOGLE_REDIRECT_URI || `http://localhost:${PORT}/api/sync/auth/callback`
 
 function getOAuth2Client() {
   return new google.auth.OAuth2(
