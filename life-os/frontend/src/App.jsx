@@ -4,7 +4,7 @@ import { Plus } from 'lucide-react'
 import { SpheresProvider } from './SpheresContext'
 import Sidebar from './components/Sidebar'
 import QuickCapture from './components/QuickCapture'
-import ClaudeConsole from './components/ClaudeConsole'
+import AiConsole from './components/AiConsole'
 import GlobalSearch from './components/GlobalSearch'
 import Feed from './pages/Feed'
 import Today from './pages/Today'
@@ -28,9 +28,9 @@ function AppContent() {
   const location = useLocation()
   const [ready, setReady] = useState(false)
   const [captureOpen, setCaptureOpen] = useState(false)
-  const [claudeOpen, setClaudeOpen] = useState(false)
-  const [claudePrefill, setClaudePrefill] = useState('')
-  const [claudeContextMessage, setClaudeContextMessage] = useState('')
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiPrefill, setAiPrefill] = useState('')
+  const [aiContextMessage, setAiContextMessage] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [sphere, setSphere] = useState(null)
   const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -52,9 +52,9 @@ function AppContent() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); setCaptureOpen(v => !v) }
       if ((e.metaKey || e.ctrlKey) && e.key === 'j') {
         e.preventDefault()
-        setClaudeOpen(v => !v)
-        setClaudePrefill('')
-        setClaudeContextMessage('')
+        setAiOpen(v => !v)
+        setAiPrefill('')
+        setAiContextMessage('')
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'f') { e.preventDefault(); setSearchOpen(v => !v) }
     }
@@ -69,13 +69,13 @@ function AppContent() {
   }, [])
 
   useEffect(() => {
-    const openClaude = (e) => {
-      setClaudeOpen(true)
-      setClaudePrefill(e.detail?.prefill || '')
-      setClaudeContextMessage(e.detail?.contextMessage || '')
+    const openAi = (e) => {
+      setAiOpen(true)
+      setAiPrefill(e.detail?.prefill || '')
+      setAiContextMessage(e.detail?.contextMessage || '')
     }
-    window.addEventListener('life-os:claude', openClaude)
-    return () => window.removeEventListener('life-os:claude', openClaude)
+    window.addEventListener('life-os:ai', openAi)
+    return () => window.removeEventListener('life-os:ai', openAi)
   }, [])
 
   if (!ready) return null
@@ -88,9 +88,7 @@ function AppContent() {
     <div className="flex h-screen overflow-hidden">
       <Sidebar
         onCapture={() => setCaptureOpen(true)}
-        onClaude={() => { setClaudeOpen(v => !v); setClaudePrefill(''); setClaudeContextMessage('') }}
         onSearch={() => setSearchOpen(true)}
-        claudeOpen={claudeOpen}
         sphere={sphere}
         setSphere={setSphere}
       />
@@ -119,12 +117,12 @@ function AppContent() {
       </main>
 
       <QuickCapture open={captureOpen} onClose={() => setCaptureOpen(false)} />
-      <ClaudeConsole
-        open={claudeOpen}
-        onClose={() => setClaudeOpen(false)}
-        prefill={claudePrefill}
-        contextMessage={claudeContextMessage}
-        onPrefillUsed={() => setClaudePrefill('')}
+      <AiConsole
+        open={aiOpen}
+        onClose={() => setAiOpen(false)}
+        prefill={aiPrefill}
+        contextMessage={aiContextMessage}
+        onPrefillUsed={() => setAiPrefill('')}
       />
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
 

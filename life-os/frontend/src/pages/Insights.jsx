@@ -275,7 +275,7 @@ export default function Insights() {
   return (
     <div>
       <PageOnboarding pageId="insights" />
-      {/* Tab switcher */
+      {/* Tab switcher */}
       <div className="flex gap-1 px-6 pt-6 pb-0">
         {TABS.map(t => (
           <button

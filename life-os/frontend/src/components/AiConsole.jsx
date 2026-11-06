@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { Check, X, ArrowUp } from 'lucide-react'
-import { claude, context as contextApi, config as configApi } from '../api'
+import { ai, context as contextApi, config as configApi } from '../api'
 
 function renderText(text) {
   return text.split('\n').map((line, i) => <span key={i}>{line}{i < text.split('\n').length - 1 && <br />}</span>)
 }
 
-export default function ClaudeConsole({ open, onClose, prefill = '', contextMessage = '', onPrefillUsed }) {
+export default function AiConsole({ open, onClose, prefill = '', contextMessage = '', onPrefillUsed }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -18,8 +18,7 @@ export default function ClaudeConsole({ open, onClose, prefill = '', contextMess
 
   useEffect(() => {
     configApi.get().then(c => {
-      const cmd = c.cliCommand || 'claude'
-      setAiLabel(cmd === 'opencode' ? 'AI' : 'Claude')
+      setAiLabel(c.aiRuntime === 'none' ? 'AI' : (c.aiRuntime || 'AI'))
     }).catch(() => {})
   }, [])
 
@@ -79,7 +78,7 @@ export default function ClaudeConsole({ open, onClose, prefill = '', contextMess
     }
 
     try {
-      const res = await claude.chat(apiMessages)
+      const res = await ai.chat(apiMessages)
       if (res.error) setError(res.error)
       else setMessages(prev => [...prev, { role: 'assistant', content: res.text }])
     } catch {

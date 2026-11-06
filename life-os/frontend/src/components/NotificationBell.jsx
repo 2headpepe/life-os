@@ -54,7 +54,7 @@ export default function NotificationBell() {
   }
 
   const discuss = (alert) => {
-    fetch('/api/open-claude', {
+    fetch('/api/ai/open', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt: `Хочу обсудить: ${alert.title} (${TYPE_META[alert.type]?.label})` }),

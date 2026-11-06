@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Creates empty brain/content structure for a fresh Life OS install.
-// Run once after cloning: node ops/scripts/seed-empty.js
-// Safe to re-run — skips files that already exist.
+// Создаёт примерную структуру brain/content для локального эксперимента.
+// Основному приложению этот скрипт не нужен: сервер создаёт пустые файлы сам.
+// Безопасен для повторного запуска: существующие файлы не меняются.
 
 import fs from 'fs/promises'
 import path from 'path'
@@ -188,8 +188,8 @@ async function seed() {
     await fs.mkdir(path.join(CONTENT, rel), { recursive: true })
   }
 
-  console.log(`\nDone: ${created} created, ${skipped} skipped.`)
-  if (created > 0) console.log('Next: copy .env.example → .env and fill in your API keys.')
+  console.log(`\nГотово: создано ${created}, пропущено ${skipped}.`)
+  if (created > 0) console.log('Далее: скопируйте .env.example в .env и при необходимости выберите Codex или OpenCode.')
 }
 
 seed().catch(e => { console.error(e); process.exit(1) })

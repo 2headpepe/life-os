@@ -1,239 +1,197 @@
 # Life OS
 
-Personal life management system — goals, tasks, habits, lists, memories, and an AI assistant built into every page.
+Локальное приложение для целей, задач, привычек, списков и заметок. Данные
+хранятся на вашем устройстве в обычных JSON-файлах: аккаунт, облако и база
+данных не нужны.
 
-All data is stored locally as plain JSON files. No database, no cloud sync, no accounts.
+AI — дополнительная возможность. Можно пользоваться приложением без AI или
+подключить локально установленный Codex CLI либо OpenCode CLI.
 
-![stack](https://img.shields.io/badge/stack-React%20%2B%20Vite%20%2B%20Express-blue)
-![node](https://img.shields.io/badge/node-22%2B-green)
+## Возможности
 
----
-
-## What's inside
-
-| Section | What it does |
+| Раздел | Назначение |
 |---|---|
-| **Today** | Tasks due today + habit check-in |
-| **Tree** | Goal hierarchy: spheres → goals → tasks |
-| **Habits** | Daily tracking with streaks and stats |
-| **Inbox** | Quick capture — route later |
-| **Feed** | AI-generated smart cards from your data |
-| **Lists** | Films, books, games, series, wishes, restaurants, travel |
-| **Calendar** | Timeline view of tasks with due dates |
-| **Memories** | Personal journal with photo support |
-| **Insights** | Observations, patterns, ideas |
+| Сегодня | План дня, просроченные задачи и привычки |
+| Дерево | Сферы жизни, цели и следующие действия |
+| Привычки | Ежедневные отметки и статистика |
+| Входящие | Быстрый захват мыслей и задач |
+| Лента | Карточки с актуальными задачами и наблюдениями |
+| Списки | Книги, фильмы, игры, желания и поездки |
+| Календарь | Задачи с датами и синхронизация с Google Calendar |
+| Воспоминания и инсайты | Личные заметки и журнал |
 
----
+## Быстрый запуск
 
-## Quick start
+### 1. Установите Node.js
 
-### 1. Requirements
-
-- **Node.js 22+** — [nodejs.org](https://nodejs.org)  
-  Check: `node -v`
-- An AI API key (optional but recommended — see step 3)
-
-### 2. Clone
+Нужен [Node.js 22 или новее](https://nodejs.org/). Проверьте версию:
 
 ```bash
-git clone <repo-url>
-cd <repo-name>
+node -v
 ```
 
-### 3. Configure environment
+### 2. Клонируйте репозиторий
+
+```bash
+git clone https://github.com/2headpepe/life-os.git
+cd life-os
+```
+
+### 3. Создайте локальную настройку
 
 **macOS / Linux:**
+
 ```bash
 cp life-os/backend/.env.example life-os/backend/.env
 ```
 
-**Windows (Command Prompt):**
-```cmd
-copy life-os\backend\.env.example life-os\backend\.env
-```
+**Windows PowerShell:**
 
-**Windows (PowerShell):**
 ```powershell
 Copy-Item life-os\backend\.env.example life-os\backend\.env
 ```
 
-Open `life-os/backend/.env` in any text editor and add at least one AI key:
+По умолчанию в `.env` указано `AI_RUNTIME=none`. Это полноценный безопасный
+режим: приложение работает без ключей и внешних сервисов.
 
-**Option A — Anthropic Claude** (recommended)  
-Get key: [console.anthropic.com](https://console.anthropic.com) → API Keys → Create Key  
-Keys look like `sk-ant-api03-...`
-```env
-ANTHROPIC_API_KEY=<paste-your-key-here>
-```
-
-**Option B — OpenAI**  
-Get key: [platform.openai.com](https://platform.openai.com) → API Keys → Create new secret key  
-Keys look like `sk-proj-...`
-```env
-AI_API_KEY=<paste-your-key-here>
-AI_API_BASE_URL=https://api.openai.com/v1
-AI_MODEL=gpt-4o
-```
-
-**Option C — OpenRouter** (100+ models via one key, has free tier)  
-Get key: [openrouter.ai/keys](https://openrouter.ai/keys) → Create Key  
-Keys look like `sk-or-v1-...`
-```env
-AI_API_KEY=<paste-your-key-here>
-AI_API_BASE_URL=https://openrouter.ai/api/v1
-AI_MODEL=anthropic/claude-sonnet-4-5
-```
-
-**No key** — the app still works fully; AI features (feed generation, web onboarding) are disabled. You can use it with a CLI tool instead (see `CLI_COMMAND` below).
-
-> All variables with explanations are in `life-os/backend/.env.example`.
-
-### 4. Choose your CLI tool
-
-The app has a console button on every page that opens your AI assistant in the terminal. Set the command:
-
-```env
-# In life-os/backend/.env:
-CLI_COMMAND=claude    # Claude Code — npm install -g @anthropic-ai/claude-code
-# CLI_COMMAND=opencode  # opencode    — npm install -g opencode-ai
-```
-
-The CLI assistant reads your `brain/content/` files directly and can add goals, tasks, habits, and notes through conversation.
-
-### 5. Install dependencies
+### 4. Установите зависимости
 
 ```bash
-cd life-os/backend && npm install
-cd ../frontend && npm install
+cd life-os/backend
+npm ci
+cd ../frontend
+npm ci
+cd ../..
 ```
 
-### 6. Run
+### 5. Запустите приложение
 
-**macOS — double-click launcher:**
+**macOS:**
+
+```bash
+chmod +x life-os.command
+./life-os.command
+```
+
+Также можно создать ярлык на рабочем столе:
 
 ```bash
 ln -sf "$(pwd)/life-os.command" ~/Desktop/life-os.command
 ```
 
-Double-click the shortcut. Starts backend + frontend, opens the browser. Handles `npm install` and port cleanup automatically.
+**Windows:** дважды откройте `life-os.bat` в корне репозитория.
 
-> Use `ln -sf` (symlink), not `cp` — the script needs to know the repo path.
-
-**Windows — double-click launcher:**
-
-Double-click `life-os.bat` in the repo root. It runs `life-os.ps1` via PowerShell.
-
-If Windows blocks the script with a policy error, run once in PowerShell as Administrator:
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
-
-**Manual — any OS (two terminals):**
+**Linux, macOS или Windows вручную:**
 
 ```bash
-# Terminal 1 — backend (port 3001)
+# Терминал 1
 cd life-os/backend
 node --env-file=.env server.js
+```
 
-# Terminal 2 — frontend (port 5173)
+```bash
+# Терминал 2
 cd life-os/frontend
 npm run dev
 ```
 
-Open: **http://localhost:5173**
+Откройте <http://localhost:5173>. При первом запуске появится настройка:
+сфера жизни, цель и первый конкретный шаг.
 
-On first launch, the onboarding wizard opens automatically.
+## AI: Codex или OpenCode
 
----
+AI не обязателен. Если он нужен, установите и авторизуйте один выбранный CLI,
+а затем измените `life-os/backend/.env`.
 
-## Data layout
+- Для Codex используйте [официальную инструкцию установки](https://learn.chatgpt.com/docs/codex/cli), затем выполните `codex` и войдите в аккаунт.
+- Для OpenCode используйте [официальную инструкцию установки](https://opencode.ai/docs/), затем выполните `opencode auth login`.
 
-Everything lives in `brain/content/` — plain JSON, no database:
+```env
+# Вариант 1: Codex CLI
+AI_RUNTIME=codex
 
-```
-brain/
-  content/
-    tree/nodes.json              # all goals and tasks (flat list, parent_id links)
-    habits/definitions.json      # habit definitions
-    habits/log/YYYY-MM-DD.json   # daily habit check-ins
-    inbox/current.json           # unprocessed captures
-    insights/index.json          # observations, patterns, ideas
-    memories/index.json          # journal entries
-    memories/photos/             # attached photos
-    lists/films.json             # watchlist
-    lists/books.json
-    lists/games.json
-    lists/series.json
-    lists/wishes.json
-    lists/restaurants.json
-    lists/travel.json
-    feed/reactions.json          # feed interaction history
-    profile/profile.json         # name, occupation
+# Вариант 2: OpenCode CLI
+# AI_RUNTIME=opencode
 ```
 
-`brain/` is gitignored — your data never leaves your machine.  
-The backend creates all files automatically on first start if they don't exist.
+Авторизация и токены остаются в локальной среде выбранного CLI; в репозиторий
+их добавлять не нужно и нельзя. Проверьте настройку:
 
----
-
-## Stack
-
-| Layer | Tech |
-|---|---|
-| Frontend | React 18, Vite, TailwindCSS |
-| Backend | Node.js 22, Express (ESM) |
-| Data | JSON files (no database) |
-| AI (web) | Anthropic / OpenAI / OpenAI-compatible |
-| AI (CLI) | Claude Code, opencode, or any terminal command |
-
----
-
-## Configuration reference
-
-All backend settings are in `life-os/backend/.env` (copy from `.env.example`):
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `ANTHROPIC_API_KEY` | No | — | Anthropic Claude key |
-| `AI_API_KEY` | No | — | OpenAI-compatible key |
-| `AI_API_BASE_URL` | No | — | Base URL for OpenAI-compatible API |
-| `AI_MODEL` | No | — | Model name for OpenAI-compatible API |
-| `CLI_COMMAND` | No | `claude` | Terminal command for console button |
-| `PORT` | No | `3001` | Backend port |
-| `VAULT_PATH` | No | `../../brain/content` | Absolute path to data directory |
-| `WORK_DIR` | No | repo root | Working directory for terminal |
-| `GOOGLE_CLIENT_ID` | No | — | Google Calendar OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | No | — | Google Calendar OAuth secret |
-| `GOOGLE_REDIRECT_URI` | No | `http://localhost:3001/api/sync/oauth/callback` | OAuth callback |
-| `GOOGLE_TIMEZONE` | No | — | Timezone for calendar (e.g. `Europe/Moscow`) |
-
----
-
-## Keyboard shortcuts
-
-| Key | Action |
-|---|---|
-| `⌘K` | Quick capture (task / inbox / memory / insight) |
-| `⌘J` | AI chat |
-| `⌘F` | Search |
-
----
-
-## Troubleshooting
-
-**Backend won't start** — check Node.js version: `node -v` (need 22+)
-
-**Frontend can't reach API** — backend must be running on port 3001 before starting frontend
-
-**AI doesn't respond** — verify the key is set in `.env` and restart the backend after editing
-
-**Onboarding doesn't appear** — if `brain/content/tree/nodes.json` already has data, onboarding is skipped. Delete the file and restart, or go to http://localhost:5173/setup directly
-
-**Console button does nothing** — make sure `CLI_COMMAND` is set to an installed tool (e.g. `claude` requires `npm install -g @anthropic-ai/claude-code`)
-
-**Windows: PowerShell blocks life-os.bat** — run once in PowerShell as Administrator:
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```bash
+node ops/scripts/doctor.mjs
 ```
 
-**Windows: console button doesn't open a terminal** — the backend detects Windows and uses `start cmd`. Make sure your `CLI_COMMAND` is installed and in your system PATH.
+Встроенные AI-функции только анализируют данные: Codex запускается в sandbox
+`read-only`, OpenCode — с запретом изменения файлов и запуска команд. Кнопка
+«Открыть в консоли» запускает отдельную интерактивную сессию: любые изменения
+в ней вы подтверждаете сами.
+
+## Где лежат данные
+
+Все личные данные создаются в `brain/content/` рядом с репозиторием:
+
+```text
+brain/content/
+  tree/nodes.json            цели и задачи
+  habits/                    привычки и ежедневные отметки
+  inbox/current.json         входящие
+  lists/                     списки
+  memories/                  воспоминания и фотографии
+  insights/index.json        инсайты
+  profile/profile.json       локальный профиль
+```
+
+Папка `brain/` находится в `.gitignore`. Она не попадёт в коммит или push.
+При первом запуске бэкенд сам создаёт пустую структуру; отдельный seed-скрипт
+не требуется.
+
+## Настройка
+
+Все настройки находятся в локальном файле `life-os/backend/.env`.
+
+| Переменная | По умолчанию | Назначение |
+|---|---:|---|
+| `AI_RUNTIME` | `none` | `none`, `codex` или `opencode` |
+| `CODEX_COMMAND`, `OPENCODE_COMMAND` | имя команды | Путь или имя выбранного CLI |
+| `CODEX_MODEL`, `OPENCODE_MODEL` | — | Необязательная модель CLI |
+| `PORT` | `3001` | Порт бэкенда |
+| `VAULT_PATH` | `../../brain/content` | Внешняя папка для личных данных |
+| `WORK_DIR` | корень репозитория | Папка для интерактивной консоли |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | — | Необязательная синхронизация Google Calendar |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:3001/api/sync/auth/callback` | Адрес возврата Google OAuth |
+| `GOOGLE_TIMEZONE` | `Europe/Moscow` | Часовой пояс календаря |
+
+После изменения `PORT` перезапустите бэкенд и фронтенд: Vite читает тот же
+локальный `.env`.
+
+## Проверка перед обновлением или публикацией
+
+```bash
+node ops/scripts/verify-public-release.mjs
+node ops/scripts/doctor.mjs
+cd life-os/backend && npm test
+cd ../frontend && npm run build
+```
+
+Инструкция по AI- и дизайн-ревью находится в
+[docs/AI-REVIEWS.md](docs/AI-REVIEWS.md). Она не требует передачи личных
+данных или истории сессий.
+
+## Частые проблемы
+
+- **Бэкенд не запускается:** убедитесь, что Node.js версии 22 или выше.
+- **Страница не видит API:** сначала запустите бэкенд, затем фронтенд.
+- **AI недоступен:** проверьте `AI_RUNTIME` и выполните
+  `node ops/scripts/doctor.mjs`.
+- **Онбординг не появляется:** откройте <http://localhost:5173/setup>.
+- **Windows блокирует PowerShell:** выполните один раз от имени пользователя:
+
+  ```powershell
+  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+  ```
+
+## Документация для разработки
+
+- [Устройство приложения](life-os/ARCHITECTURE.md)
+- [Технические правила изменений](life-os/SPEC.md)
+- [AI- и дизайн-ревью](docs/AI-REVIEWS.md)

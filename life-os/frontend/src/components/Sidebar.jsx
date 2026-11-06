@@ -28,11 +28,11 @@ export default function Sidebar({ onCapture, onSearch, sphere, setSphere }) {
     try { return localStorage.getItem(COLLAPSED_KEY) === 'true' } catch { return false }
   })
   const [roots, setRoots] = useState([])
-  const [cliCommand, setCliCommand] = useState('claude')
+  const [cliCommand, setCliCommand] = useState('AI')
 
   useEffect(() => {
     treeApi.all().then(nodes => setRoots(nodes.filter(n => !n.parent_id)))
-    configApi.get().then(c => setCliCommand(c.cliCommand || 'claude')).catch(() => {})
+    configApi.get().then(c => setCliCommand(c.cliCommand || 'AI')).catch(() => {})
   }, [])
 
   const toggle = () => setCollapsed(v => {

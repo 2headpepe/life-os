@@ -22,24 +22,28 @@ Write-Host "──────────────────────�
 # ── Check .env ──────────────────────────────────────────────
 $EnvFile = Join-Path $Backend ".env"
 if (-not (Test-Path $EnvFile)) {
-    Write-Err "No .env file found at $EnvFile"
-    Write-Host "Copy the example: copy life-os\backend\.env.example life-os\backend\.env"
-    Write-Host "Then add your API key."
-    Read-Host "Press Enter to exit"
+    Write-Err "Не найден файл .env: $EnvFile"
+    Write-Host "Скопируй пример: copy life-os\backend\.env.example life-os\backend\.env"
+    Write-Host "В файле можно оставить AI_RUNTIME=none или выбрать Codex/OpenCode."
+    Read-Host "Нажми Enter для выхода"
     exit 1
 }
 
+# PORT задаётся в локальном .env; фронтенд читает тот же файл через Vite.
+$ConfiguredPort = Select-String -Path $EnvFile -Pattern '^\s*PORT=(\d+)' | Select-Object -Last 1
+if ($ConfiguredPort) { $BackendPort = [int]$ConfiguredPort.Matches[0].Groups[1].Value }
+
 # ── Install dependencies if missing ──────────────────────────
 if (-not (Test-Path (Join-Path $Backend "node_modules"))) {
-    Write-Step "Installing backend dependencies..."
+    Write-Step "Устанавливаю зависимости бэкенда..."
     Push-Location $Backend
-    npm install --silent
+    npm ci --silent
     Pop-Location
 }
 if (-not (Test-Path (Join-Path $Frontend "node_modules"))) {
-    Write-Step "Installing frontend dependencies..."
+    Write-Step "Устанавливаю зависимости фронтенда..."
     Push-Location $Frontend
-    npm install --silent
+    npm ci --silent
     Pop-Location
 }
 
@@ -49,14 +53,14 @@ foreach ($Port in @($BackendPort, $FrontendPort)) {
         ($_ -split '\s+')[-1]
     } | Sort-Object -Unique) | Where-Object { $_ -match '^\d+$' }
     foreach ($Pid in $Pids) {
-        Write-Host "Freeing port $Port (pid $Pid)..." -ForegroundColor DarkGray
+        Write-Host "Освобождаю порт $Port (pid $Pid)..." -ForegroundColor DarkGray
         try { Stop-Process -Id $Pid -Force -ErrorAction SilentlyContinue } catch {}
     }
 }
 Start-Sleep -Milliseconds 500
 
 # ── Start backend ─────────────────────────────────────────────
-Write-Step "Starting backend..."
+Write-Step "Запускаю бэкенд..."
 $BackendJob = Start-Job -ScriptBlock {
     param($Dir)
     Set-Location $Dir
@@ -75,15 +79,15 @@ for ($i = 0; $i -lt 20; $i++) {
 }
 
 if (-not $Ready) {
-    Write-Err "Backend did not start. Check .env and the output above."
+    Write-Err "Бэкенд не запустился. Проверь .env и вывод выше."
     Stop-Job $BackendJob -ErrorAction SilentlyContinue
-    Read-Host "Press Enter to exit"
+    Read-Host "Нажми Enter для выхода"
     exit 1
 }
-Write-Ok "Backend running"
+Write-Ok "Бэкенд запущен"
 
 # ── Start frontend ────────────────────────────────────────────
-Write-Step "Starting frontend..."
+Write-Step "Запускаю фронтенд..."
 $FrontendJob = Start-Job -ScriptBlock {
     param($Dir, $Port)
     Set-Location $Dir
@@ -93,12 +97,12 @@ $FrontendJob = Start-Job -ScriptBlock {
 Start-Sleep -Seconds 3
 
 # ── Open browser ──────────────────────────────────────────────
-Write-Ok "Opening browser..."
+Write-Ok "Открываю браузер..."
 Start-Process $AppUrl
 
 Write-Host ""
-Write-Ok "Life OS is running → $AppUrl"
-Write-Host "Close this window to stop." -ForegroundColor DarkGray
+Write-Ok "Life OS запущен → $AppUrl"
+Write-Host "Закрой это окно, чтобы остановить приложение." -ForegroundColor DarkGray
 Write-Host "────────────────────────────────"
 
 # ── Keep alive, stream job output ────────────────────────────
@@ -108,7 +112,7 @@ try {
         Receive-Job $BackendJob  -ErrorAction SilentlyContinue
         Receive-Job $FrontendJob -ErrorAction SilentlyContinue
         if ($BackendJob.State -eq 'Failed') {
-            Write-Err "Backend crashed. Check the output above."
+            Write-Err "Бэкенд завершился с ошибкой. Проверь вывод выше."
             break
         }
     }

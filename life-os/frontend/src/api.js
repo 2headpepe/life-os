@@ -54,10 +54,6 @@ export const tree = {
   delete: (id)        => fetch(`/api/tree/${id}`, { method: 'DELETE' }).then(r => r.json()),
 }
 
-export const claude = {
-  chat: (messages, system) => api.post('/claude', { messages, ...(system ? { system } : {}) }),
-}
-
 export const config = {
   get: () => api.get('/config'),
 }
@@ -122,6 +118,7 @@ export const feed = {
 }
 
 export const ai = {
+  chat: (messages, system) => api.post('/ai/chat', { messages, ...(system ? { system } : {}) }),
   run: (task, params = {}) => fetch('/api/ai/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

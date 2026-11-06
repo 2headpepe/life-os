@@ -476,7 +476,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
             className="w-6 h-6 flex items-center justify-center text-gray-300 hover:text-gray-600 dark:hover:text-gray-400 rounded hover:bg-gray-100 dark:hover:bg-gray-800">
             <Plus size={12} />
           </button>
-          <button onClick={e => { e.stopPropagation(); openInConsole(consolePrompt) }} title="Claude"
+          <button onClick={e => { e.stopPropagation(); openInConsole(consolePrompt) }} title="AI"
             className="w-6 h-6 flex items-center justify-center text-gray-300 hover:text-blue-400 rounded hover:bg-gray-100 dark:hover:bg-gray-800">
             <Sparkles size={12} />
           </button>

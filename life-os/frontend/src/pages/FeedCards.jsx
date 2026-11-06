@@ -291,7 +291,7 @@ function CardActions({ liked, onLike, onDismiss, note, onNote, hideDismiss, onEd
         {card && (
           <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/30">
             <div className="flex items-center gap-1.5 mb-1">
-              <span className="text-[10px] text-gray-300 dark:text-gray-600">💬 Набросок → открыть Claude</span>
+              <span className="text-[10px] text-gray-300 dark:text-gray-600">💬 Набросок → открыть AI</span>
             </div>
             <div className="flex items-center gap-1.5">
               <input
