@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+:root[data-theme='glass'] .app-shell { background: radial-gradient(circle at 85% 0, rgba(56, 189, 248, .14), transparent 30rem); }
+:root[data-theme='glass'] .app-topbar { background: rgba(255,255,255,.62); backdrop-filter: blur(16px); }
+:root[data-theme='glass'].dark .app-topbar { background: rgba(15,23,42,.65); }
+
 @layer base {
   * { box-sizing: border-box; }
   html { font-family: 'Inter', sans-serif; }

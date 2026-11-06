@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { SpheresProvider } from './SpheresContext'
+import { ThemeProvider } from './context/ThemeContext'
 import Sidebar from './components/Sidebar'
 import QuickCapture from './components/QuickCapture'
 import AiConsole from './components/AiConsole'
@@ -21,6 +22,7 @@ import News from './pages/News'
 import Memories from './pages/Memories'
 import Onboarding from './pages/Onboarding'
 import NotificationBell from './components/NotificationBell'
+import ThemeSwitcher from './components/ThemeSwitcher'
 import AiReviews from './pages/AiReviews'
 import { tree as treeApi } from './api'
 
@@ -34,9 +36,6 @@ function AppContent() {
   const [aiContextMessage, setAiContextMessage] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [sphere, setSphere] = useState(null)
-  const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
-
-  useEffect(() => { document.documentElement.classList.toggle('dark', dark) }, [dark])
 
   // Check if onboarding needed (skip if already on /setup)
   useEffect(() => {
@@ -86,7 +85,7 @@ function AppContent() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="app-shell flex h-screen overflow-hidden">
       <Sidebar
         onCapture={() => setCaptureOpen(true)}
         onSearch={() => setSearchOpen(true)}
@@ -94,11 +93,9 @@ function AppContent() {
         setSphere={setSphere}
       />
       <main className="flex-1 overflow-y-auto">
-        <div className="sticky top-0 z-10 flex items-center justify-end gap-2 px-6 py-3 bg-gray-50/80 dark:bg-gray-950/80 backdrop-blur border-b border-gray-100 dark:border-gray-800">
+        <div className="app-topbar sticky top-0 z-10 flex items-center justify-end gap-2 px-6 py-3 bg-gray-50/80 dark:bg-gray-950/80 backdrop-blur border-b border-gray-100 dark:border-gray-800">
           <NotificationBell />
-          <button onClick={() => setDark(v => !v)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-sm" title="Тема">
-            {dark ? '☀︎' : '☽'}
-          </button>
+          <ThemeSwitcher />
         </div>
         <Routes>
           <Route path="/"         element={<Feed />} />
@@ -143,9 +140,7 @@ function AppContent() {
 export default function App() {
   return (
     <SpheresProvider>
-      <BrowserRouter>
-        <AppContent />
-      </BrowserRouter>
+      <ThemeProvider><BrowserRouter><AppContent /></BrowserRouter></ThemeProvider>
     </SpheresProvider>
   )
 }
