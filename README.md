@@ -103,6 +103,9 @@ npm run dev
 AI не обязателен. Если он нужен, установите и авторизуйте один выбранный CLI,
 а затем измените `life-os/backend/.env`.
 
+- Для Codex используйте [официальную инструкцию установки](https://learn.chatgpt.com/docs/codex/cli), затем выполните `codex` и войдите в аккаунт.
+- Для OpenCode используйте [официальную инструкцию установки](https://opencode.ai/docs/), затем выполните `opencode auth login`.
+
 ```env
 # Вариант 1: Codex CLI
 AI_RUNTIME=codex
