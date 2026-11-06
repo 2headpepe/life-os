@@ -35,7 +35,7 @@ test('chat prompts retain roles and system constraints', () => {
 
 test('OpenCode background tasks are launched without write-capable tools', () => {
   const invocation = aiTaskInvocation('Review this', { AI_RUNTIME: 'opencode' })
-  assert.deepEqual(invocation.args.slice(0, 2), ['run', '--pure'])
+  assert.deepEqual(invocation.args.slice(0, 2), ['--pure', 'run'])
   const config = JSON.parse(invocation.env.OPENCODE_CONFIG_CONTENT)
   assert.equal(config.permission.edit, 'deny')
   assert.equal(config.permission.bash, 'deny')

@@ -71,7 +71,9 @@ export function aiTaskInvocation(prompt, env = process.env) {
   const modelArgs = config.model ? ['--model', config.model] : []
   const args = config.runtime === 'codex'
     ? ['exec', '--ephemeral', '--sandbox', 'read-only', ...modelArgs, prompt]
-    : ['run', '--pure', ...modelArgs, prompt]
+    // `--pure` is a global OpenCode option. It must precede `run`: recent
+    // OpenCode releases reject it when it is parsed as a run-subcommand flag.
+    : ['--pure', 'run', ...modelArgs, prompt]
   const runtimeEnv = config.runtime === 'opencode'
     ? { ...env, OPENCODE_PURE: 'true', OPENCODE_CONFIG_CONTENT: OPENCODE_READ_ONLY_CONFIG }
     : env
