@@ -51,7 +51,7 @@ export function runAiTask(prompt, { cwd, timeoutMs = 180_000, env = process.env 
   const modelArgs = config.model ? ['--model', config.model] : []
   const args = config.runtime === 'codex'
     ? ['exec', '--ephemeral', '--sandbox', 'read-only', ...modelArgs, prompt]
-    : ['run', '--archived', '--format', 'json', ...modelArgs, prompt]
+    : ['run', ...modelArgs, prompt]
   return run(config.command, args, { cwd, timeoutMs, env })
 }
 

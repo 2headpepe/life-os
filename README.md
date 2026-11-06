@@ -70,6 +70,12 @@ AI_RUNTIME=codex       # sign in first with `codex`
 
 The console button opens the selected runtime in a terminal. Install either Codex or OpenCode, authenticate locally, then set `AI_RUNTIME` as above. API tokens are never added to this repository.
 
+Verify the installation at any time:
+
+```bash
+node ops/scripts/doctor.mjs
+```
+
 The CLI assistant reads your `brain/content/` files directly and can add goals, tasks, habits, and notes through conversation.
 
 ### 5. Install dependencies
@@ -195,6 +201,8 @@ All backend settings are in `life-os/backend/.env` (copy from `.env.example`):
 **Frontend can't reach API** — backend must be running on port 3001 before starting frontend
 
 **AI doesn't respond** — verify `AI_RUNTIME` and that the selected CLI is installed and authenticated
+
+**Codex reports a missing binary** — repair the local Codex installation first; `node ops/scripts/doctor.mjs` must show a version before Life OS can use it.
 
 **Onboarding doesn't appear** — if `brain/content/tree/nodes.json` already has data, onboarding is skipped. Delete the file and restart, or go to http://localhost:5173/setup directly
 

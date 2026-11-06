@@ -189,7 +189,7 @@ async function seed() {
   }
 
   console.log(`\nDone: ${created} created, ${skipped} skipped.`)
-  if (created > 0) console.log('Next: copy .env.example → .env and fill in your API keys.')
+  if (created > 0) console.log('Next: copy .env.example → .env, then optionally choose Codex or OpenCode.')
 }
 
 seed().catch(e => { console.error(e); process.exit(1) })
