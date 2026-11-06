@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { aiRuntimeConfig, promptFromMessages } from '../ai-runtime.js'
+import { aiRuntimeConfig, aiTaskInvocation, promptFromMessages } from '../ai-runtime.js'
 
 test('AI runtime defaults to no AI', () => {
   assert.deepEqual(aiRuntimeConfig({}), { runtime: 'none', command: 'opencode', model: undefined })
@@ -31,4 +31,13 @@ test('chat prompts retain roles and system constraints', () => {
   assert.match(prompt, /Отвечай кратко/)
   assert.match(prompt, /User: Привет/)
   assert.match(prompt, /Assistant: Здравствуйте/)
+})
+
+test('OpenCode background tasks are launched without write-capable tools', () => {
+  const invocation = aiTaskInvocation('Review this', { AI_RUNTIME: 'opencode' })
+  assert.deepEqual(invocation.args.slice(0, 2), ['run', '--pure'])
+  const config = JSON.parse(invocation.env.OPENCODE_CONFIG_CONTENT)
+  assert.equal(config.permission.edit, 'deny')
+  assert.equal(config.permission.bash, 'deny')
+  assert.equal(config.permission.webfetch, 'deny')
 })

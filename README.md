@@ -76,7 +76,7 @@ Verify the installation at any time:
 node ops/scripts/doctor.mjs
 ```
 
-The in-app AI features run read-only analysis. The separate Console button opens your selected CLI in the repository; any file changes there remain an explicit action you approve in that CLI.
+The in-app AI features run read-only analysis. Codex receives its read-only sandbox; OpenCode runs in pure mode with edit, shell, and web-fetch permissions denied. The separate Console button opens your selected CLI in the repository; any file changes there remain an explicit action you approve in that CLI.
 
 Without AI, first launch opens a short manual setup: one sphere, one goal, and the first concrete task. This creates a useful local workspace without an account, key, or external service.
 

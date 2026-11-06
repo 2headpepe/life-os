@@ -2,6 +2,15 @@ import { spawn } from 'child_process'
 
 const RUNTIMES = new Set(['none', 'codex', 'opencode'])
 const SAFE_COMMAND = /^[A-Za-z0-9._/-]+$/
+const OPENCODE_READ_ONLY_CONFIG = JSON.stringify({
+  $schema: 'https://opencode.ai/config.json',
+  permission: {
+    edit: 'deny',
+    bash: 'deny',
+    webfetch: 'deny',
+    external_directory: 'deny',
+  },
+})
 
 function configuredCommand(value, fallback, variable) {
   const command = value || fallback
@@ -56,14 +65,22 @@ export async function checkAiRuntime(options = {}) {
 
 // Background analysis is always read-only. User-approved writes belong to the
 // application backend, never to an AI CLI permission flag.
-export function runAiTask(prompt, { cwd, timeoutMs = 180_000, env = process.env } = {}) {
+export function aiTaskInvocation(prompt, env = process.env) {
   const config = aiRuntimeConfig(env)
   if (config.runtime === 'none') throw new Error('AI is disabled. Set AI_RUNTIME=codex or AI_RUNTIME=opencode.')
   const modelArgs = config.model ? ['--model', config.model] : []
   const args = config.runtime === 'codex'
     ? ['exec', '--ephemeral', '--sandbox', 'read-only', ...modelArgs, prompt]
-    : ['run', ...modelArgs, prompt]
-  return run(config.command, args, { cwd, timeoutMs, env })
+    : ['run', '--pure', ...modelArgs, prompt]
+  const runtimeEnv = config.runtime === 'opencode'
+    ? { ...env, OPENCODE_PURE: 'true', OPENCODE_CONFIG_CONTENT: OPENCODE_READ_ONLY_CONFIG }
+    : env
+  return { config, args, env: runtimeEnv }
+}
+
+export function runAiTask(prompt, { cwd, timeoutMs = 180_000, env = process.env } = {}) {
+  const invocation = aiTaskInvocation(prompt, env)
+  return run(invocation.config.command, invocation.args, { cwd, timeoutMs, env: invocation.env })
 }
 
 export function promptFromMessages(messages, system) {

@@ -5,6 +5,11 @@ gitignored `brain/` directory. A review must never require copying a user's
 profile, notes, photos, or CLI session history into an issue, commit, or pull
 request.
 
+For in-app background jobs, Codex uses its read-only sandbox. OpenCode is
+started in pure mode with `edit`, `bash`, `webfetch`, and external-directory
+access denied. The interactive Console is intentionally different: it is a
+user-opened terminal session where the user decides each requested permission.
+
 ## What may be reviewed
 
 - source code, dependency manifests, and public documentation;
