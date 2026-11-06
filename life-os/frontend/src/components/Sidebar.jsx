@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
   Sun, Target, ListTodo, CalendarDays, Repeat2, Users, LayoutGrid, Lightbulb, Newspaper, Image as ImageIcon,
-  ChevronLeft, ChevronRight, Search, Plus, Terminal, Sparkles, Flame, ShieldCheck,
+  ChevronLeft, ChevronRight, Search, Plus, Terminal, Sparkles, Flame, Activity, ShieldCheck,
 } from 'lucide-react'
 import { tree as treeApi, config as configApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
+import { useRecoveryMode } from '../context/RecoveryModeContext'
 
 const COLLAPSED_KEY = 'life-os:sidebar:collapsed'
 
@@ -29,11 +30,12 @@ export default function Sidebar({ onCapture, onSearch, sphere, setSphere }) {
     try { return localStorage.getItem(COLLAPSED_KEY) === 'true' } catch { return false }
   })
   const [roots, setRoots] = useState([])
-  const [cliCommand, setCliCommand] = useState('AI')
+  const [cliCommand, setCliCommand] = useState('ai')
+  const { isRecoveryMode, toggleRecoveryMode, suggestion, setSuggestion } = useRecoveryMode()
 
   useEffect(() => {
     treeApi.all().then(nodes => setRoots(nodes.filter(n => !n.parent_id)))
-    configApi.get().then(c => setCliCommand(c.cliCommand || 'AI')).catch(() => {})
+    configApi.get().then(c => setCliCommand(c.cliCommand || 'ai')).catch(() => {})
   }, [])
 
   const toggle = () => setCollapsed(v => {
@@ -101,6 +103,60 @@ export default function Sidebar({ onCapture, onSearch, sphere, setSphere }) {
 
       {/* Actions */}
       <div className="mt-auto pt-4 space-y-1 border-t border-gray-100 dark:border-gray-800">
+
+        {/* Suggestion banner */}
+        {!collapsed && suggestion && (
+          <div className={`mx-1 mb-3 px-3 py-2.5 rounded-xl text-xs border ${
+            suggestion === 'enter'
+              ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-700'
+              : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700'
+          }`}>
+            <p className={`mb-2 leading-snug ${
+              suggestion === 'enter'
+                ? 'text-amber-700 dark:text-amber-300'
+                : 'text-green-700 dark:text-green-300'
+            }`}>
+              {suggestion === 'enter'
+                ? 'Похоже, тяжёлый период.'
+                : 'Кажется, становится лучше.'}
+            </p>
+            <div className="flex gap-2 items-center">
+              <button
+                onClick={() => toggleRecoveryMode(suggestion === 'enter')}
+                className={`text-xs px-2 py-1 rounded-lg font-medium transition-colors ${
+                  suggestion === 'enter'
+                    ? 'bg-amber-100 dark:bg-amber-800/60 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-700/60'
+                    : 'bg-green-100 dark:bg-green-800/60 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-700/60'
+                }`}
+              >
+                {suggestion === 'enter' ? 'Включить' : 'Вернуться'}
+              </button>
+              <button
+                onClick={() => setSuggestion(null)}
+                className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+              >
+                Не сейчас
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Recovery mode toggle */}
+        <button
+          onClick={() => toggleRecoveryMode()}
+          title={collapsed ? (isRecoveryMode ? 'Выйти из режима восстановления' : 'Режим восстановления') : undefined}
+          className={`sidebar-item w-full text-left transition-colors ${
+            isRecoveryMode
+              ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg'
+              : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-100'
+          } ${collapsed ? 'justify-center px-0' : ''}`}
+        >
+          <Activity size={16} className="flex-shrink-0" />
+          {!collapsed && (isRecoveryMode ? 'Восстановление ·' : 'Режим дня')}
+          {!collapsed && isRecoveryMode && (
+            <span className="ml-1 text-[10px] text-amber-500 dark:text-amber-400/80">вкл</span>
+          )}
+        </button>
         <button
           onClick={() => openInConsole()}
           title={collapsed ? `Открыть ${cliCommand}` : undefined}

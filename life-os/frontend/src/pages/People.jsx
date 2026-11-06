@@ -28,7 +28,7 @@ function PersonContent({ content }) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="people-fields space-y-3">
       {rows.map(({ key, val }, i) => {
         if (key === 'links') {
           const links = val.replace(/\[\[|\]\]/g, '').split('|').map(l => l.split('/').pop().replace(/_/g, ' '))
@@ -87,31 +87,32 @@ export default function People() {
   }
 
   return (
-    <div className="h-full flex overflow-hidden">
-      <div className="w-52 flex-shrink-0 border-r border-gray-100 dark:border-gray-800 overflow-y-auto py-4">
-        <div className="px-4 py-1 text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">Люди</div>
+    <div className="people-page h-full flex overflow-hidden">
+      <div className="people-directory w-52 flex-shrink-0 border-r border-gray-100 dark:border-gray-800 overflow-y-auto py-4">
+        <div className="people-directory-heading px-4 py-1 mb-3"><p>Life OS · связи</p><h1>Люди</h1><span>{people.length} контактов</span></div>
         {people.map(p => (
           <button
             key={p.id}
             onClick={() => select(p)}
-            className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+            className={`people-person w-full text-left px-3 py-2 text-sm transition-colors ${
               selected?.id === p.id
                 ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-medium'
                 : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-900'
             }`}
           >
-            {p.name}
+            <span className="people-avatar">{p.name.slice(0, 1)}</span><span className="truncate">{p.name}</span>
           </button>
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="people-detail-area flex-1 overflow-y-auto">
         {!selected && (
-          <div className="flex items-center justify-center h-full text-gray-400 text-sm">Выбери человека слева</div>
+          <div className="people-empty flex items-center justify-center h-full text-gray-400 text-sm"><div><span>◌</span><strong>Выбери человека</strong><p>Контакты и важные детали собраны в спокойном личном пространстве.</p></div></div>
         )}
         {selected && (
-          <div className="max-w-xl py-8 px-8">
-            <div className="mb-6">
+          <div className="people-profile max-w-xl py-8 px-8">
+            <div className="people-profile-head mb-6">
+              <div className="people-profile-avatar">{selected.name.slice(0, 1)}</div>
               <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{selected.name}</h2>
               {selected.relation && (
                 <div className="text-sm text-gray-400 mt-0.5">{selected.relation.replace(/_/g, ' ')}</div>

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Search, ListTodo, Target, Inbox } from 'lucide-react'
 import { search as searchApi } from '../api'
 import { useSpheres } from '../SpheresContext'
+import { trackUiAction } from '../analytics'
 
 const TYPE_ICON = { task: ListTodo, goal: Target, inbox: Inbox }
 const TYPE_LABEL = { task: 'Задача', goal: 'Цель', inbox: 'Inbox' }
@@ -27,7 +28,7 @@ export default function GlobalSearch({ open, onClose }) {
       if (!open) return
       if (e.key === 'ArrowDown') { e.preventDefault(); setSelected(s => Math.min(s + 1, results.length - 1)) }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSelected(s => Math.max(s - 1, 0)) }
-      if (e.key === 'Enter' && results[selected]) { navigate(TYPE_ROUTE[results[selected].type]); onClose() }
+      if (e.key === 'Enter' && results[selected]) { trackUiAction('global_search', 'open_result'); navigate(TYPE_ROUTE[results[selected].type]); onClose() }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -70,7 +71,7 @@ export default function GlobalSearch({ open, onClose }) {
               return (
                 <button
                   key={r.id}
-                  onClick={() => { navigate(TYPE_ROUTE[r.type]); onClose() }}
+                  onClick={() => { trackUiAction('global_search', 'open_result'); navigate(TYPE_ROUTE[r.type]); onClose() }}
                   className={`w-full flex items-start gap-3 px-4 py-2.5 text-left transition-colors ${
                     i === selected ? 'bg-gray-50 dark:bg-gray-800' : 'hover:bg-gray-50/50 dark:hover:bg-gray-800/50'
                   }`}

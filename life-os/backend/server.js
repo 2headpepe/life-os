@@ -734,6 +734,7 @@ maybeRefreshNews()
 // ─── Memories ──────────────────────────────────────────────────────
 
 const MEMORIES_FILE = path.join(MEMORIES_DIR, 'index.json')
+const FOCUS_PLAN_FILE = path.join(VAULT, 'focus/active.json')
 
 async function readMemories() {
   try {
@@ -747,6 +748,27 @@ async function writeMemories(data) {
   await fs.mkdir(MEMORIES_DIR, { recursive: true })
   data.updated = new Date().toISOString().slice(0, 10)
   await fs.writeFile(MEMORIES_FILE, JSON.stringify(data, null, 2))
+}
+
+async function readFocusPlan() { try { return JSON.parse(await fs.readFile(FOCUS_PLAN_FILE, 'utf8')) } catch { return null } }
+async function readHabitLog(date) { try { return JSON.parse(await fs.readFile(path.join(VAULT, `habits/log/${date}.json`), 'utf8')) } catch { return { date, habits: {}, score: 0, notes: '' } } }
+async function writeHabitLog(log) { const file = path.join(VAULT, `habits/log/${log.date}.json`); await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, JSON.stringify(log, null, 2)) }
+function activeHabit(definitions, habitId) { for (const category of definitions.categories || []) { const habit = (category.habits || []).find(item => item.id === habitId); if (habit) return habit } return null }
+function focusDate(value) { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : new Date().toISOString().slice(0, 10) }
+function focusDays(from, to) { return Math.floor((new Date(`${to}T12:00:00`) - new Date(`${from}T12:00:00`)) / 86400000) }
+async function currentFocusPlan(date = null) {
+  const [plan, tree, memories, definitions] = await Promise.all([readFocusPlan(), readTree(), readMemories(), fs.readFile(path.join(VAULT, 'habits/definitions.json'), 'utf8').then(JSON.parse).catch(() => ({ categories: [] }))])
+  if (!plan || plan.status !== 'active') return null
+  const today = focusDate(date); const log = await readHabitLog(today); const byId = new Map(tree.nodes.map(node => [node.id, node])); const sections = []
+  for (const component of plan.components || []) {
+    if (component.visible_on && component.visible_on !== today) continue
+    if (component.type === 'habit') { const habit = activeHabit(definitions, component.entity?.habit_id); if (habit) sections.push({ ...component, value: log.habits?.[habit.id], completed: habitValueDone(habit, log.habits?.[habit.id]) }) }
+    else if (component.type === 'state_checkin') { const entry = memories.entries?.filter(item => item.date === today && item.source === 'focus' && item.focus_plan_id === plan.id && item.focus_component_id === component.id).at(-1); sections.push({ ...component, value: entry?.focus_value || null }) }
+    else if (component.type === 'checkpoint') { const node = byId.get(component.entity?.node_id); if (node) sections.push({ ...component, node: { id: node.id, due: node.due, status: node.status, title: node.title } }) }
+    else sections.push({ ...component })
+  }
+  const index = new Map(sections.map(section => [section.id, section])); for (const section of sections) if (section.type === 'daily_focus') { section.actions = (section.action_ids || []).map(id => index.get(id)).filter(Boolean); section.utilities = (section.utility_ids || []).map(id => index.get(id)).filter(Boolean) }
+  return { id: plan.id, title: plan.title, starts_on: plan.starts_on, ends_on: plan.ends_on, date: today, day: Math.max(1, Math.min(focusDays(plan.starts_on, today) + 1, focusDays(plan.starts_on, plan.ends_on) + 1)), total_days: focusDays(plan.starts_on, plan.ends_on) + 1, sections, notes: (memories.entries || []).filter(item => item.source === 'focus' && item.focus_plan_id === plan.id && item.focus_component_id === 'note').map(({ id, date, text, created }) => ({ id, date, text, created })) }
 }
 
 // Auto-memory: any user action creates a memory entry for today.
@@ -1071,6 +1093,23 @@ app.delete('/api/calendars/:id', async (req, res) => {
 })
 
 // ─── Tree ─────────────────────────────────────────────────────────
+
+app.get('/api/focus', async (req, res) => { try { res.json(await currentFocusPlan(req.query.date)) } catch (error) { res.status(500).json({ error: error.message }) } })
+app.post('/api/focus/action', async (req, res) => {
+  const { component_id, action, value, text, date } = req.body || {}
+  if (!component_id || !action) return res.status(400).json({ error: 'component_id and action required' })
+  try {
+    const plan = await readFocusPlan(); if (!plan || plan.status !== 'active') return res.status(404).json({ error: 'active focus plan not found' })
+    const component = (plan.components || []).find(item => item.id === component_id); if (!component) return res.status(404).json({ error: 'focus component not found' })
+    const today = focusDate(date)
+    if (component.type === 'habit' && action === 'toggle') { const definitions = JSON.parse(await fs.readFile(path.join(VAULT, 'habits/definitions.json'), 'utf8')); const habit = activeHabit(definitions, component.entity?.habit_id); if (!habit) return res.status(422).json({ error: 'referenced habit not found' }); const log = await readHabitLog(today); log.habits ||= {}; log.habits[habit.id] = !habitValueDone(habit, log.habits[habit.id]); await writeHabitLog(log) }
+    else if (component.type === 'state_checkin' && action === 'record_state') { const option = (component.options || []).find(item => item.id === value); if (!option) return res.status(422).json({ error: 'invalid state option' }); const memories = await readMemories(); const entry = { id: `mem-focus-${Date.now()}`, date: today, text: `Фокус: ${option.label}`, photos: [], source: 'focus', focus_plan_id: plan.id, focus_component_id: component.id, focus_value: option.id, created: today, updated: today }; memories.entries.push(entry); await writeMemories(memories) }
+    else if (component.type === 'note_capture' && action === 'record_note') { const clean = String(text || '').trim(); if (!clean || clean.length > 5000) return res.status(400).json({ error: 'invalid note text' }); const memories = await readMemories(); memories.entries.push({ id: `mem-focus-${Date.now()}`, date: today, text: clean, photos: [], source: 'focus', focus_plan_id: plan.id, focus_component_id: component.id, created: today, updated: today }); await writeMemories(memories) }
+    else if (component.type === 'checkpoint' && action === 'complete') { const tree = await readTree(); const node = tree.nodes.find(item => item.id === component.entity?.node_id); if (!node) return res.status(422).json({ error: 'referenced checkpoint not found' }); node.status = 'done'; node.updated = today; propagateDoneStatus(tree.nodes, node.id); await writeTree(tree) }
+    else return res.status(422).json({ error: 'unsupported action for focus component' })
+    res.json(await currentFocusPlan(today))
+  } catch (error) { res.status(500).json({ error: error.message }) }
+})
 
 const TREE_FILE = path.join(VAULT, 'tree/nodes.json')
 

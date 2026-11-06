@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { ChevronLeft, ChevronRight, Plus, X, Loader2, Trash2, ImageIcon, CalendarDays } from 'lucide-react'
 import { memories as memoriesApi } from '../api'
-import PageOnboarding from '../components/PageOnboarding'
 
 const MONTHS = ['января','февраля','марта','апреля','мая','июня',
                 'июля','августа','сентября','октября','ноября','декабря']
@@ -96,7 +95,7 @@ function MemoryEntry({ entry, onUpdate, onDelete }) {
   }
 
   return (
-    <div className="card px-4 py-3">
+    <div className="memory-entry card px-4 py-3">
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           {editing ? (
@@ -303,11 +302,10 @@ export default function Memories() {
     : null
 
   return (
-    <div className="max-w-2xl mx-auto py-8 px-6">
-      <PageOnboarding pageId="memories" />
+    <div className="memories-page max-w-2xl mx-auto py-8 px-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Воспоминания</h1>
+      <div className="memories-header flex items-center justify-between mb-6">
+        <div><p className="memories-kicker">Life OS · личный архив</p><h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Воспоминания</h1></div>
         {!adding && (
           <button onClick={() => setAdding(true)} className="btn btn-primary text-xs flex items-center gap-1">
             <Plus size={14} /> Добавить
@@ -316,8 +314,8 @@ export default function Memories() {
       </div>
 
       {/* View toggle + date nav */}
-      <div className="flex items-center gap-3 mb-6">
-        <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1">
+      <div className="memories-controls flex items-center gap-3 mb-6">
+        <div className="memories-switcher flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1">
           <button
             onClick={() => setView('all')}
             className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${view === 'all' ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500'}`}

@@ -4,10 +4,9 @@ import remarkGfm from 'remark-gfm'
 function stripFrontmatter(text) {
   if (!text) return ''
   const lines = text.split('\n')
-  // find first '---' separator and skip everything before it
-  const sep = lines.findIndex(l => l.trim() === '---')
-  if (sep === -1) return text
-  return lines.slice(sep + 1).join('\n').trimStart()
+  if (lines[0]?.trim() !== '---') return text
+  const closing = lines.findIndex((line, index) => index > 0 && line.trim() === '---')
+  return closing === -1 ? text : lines.slice(closing + 1).join('\n').trimStart()
 }
 
 const components = {

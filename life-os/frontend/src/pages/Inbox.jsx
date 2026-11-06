@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { X, ChevronDown, ChevronRight } from 'lucide-react'
 import { inbox as inboxApi, tree as treeApi } from '../api'
 import { useSpheres } from '../SpheresContext'
-import PageOnboarding from '../components/PageOnboarding'
 
 function InboxItem({ item, onDelete, onCreateTask }) {
   const { SPHERE_ORDER, SPHERE_LABELS } = useSpheres()
@@ -31,9 +30,9 @@ function InboxItem({ item, onDelete, onCreateTask }) {
   }
 
   return (
-    <div className="card overflow-hidden">
+    <article className="inbox-item card overflow-hidden">
       <div
-        className="px-4 py-3 cursor-pointer hover:bg-gray-50/50 dark:hover:bg-gray-900/30 transition-colors"
+        className="inbox-item-summary px-4 py-3 cursor-pointer hover:bg-gray-50/50 dark:hover:bg-gray-900/30 transition-colors"
         onClick={() => setExpanded(v => !v)}
       >
         <div className="flex items-start justify-between gap-3">
@@ -62,7 +61,7 @@ function InboxItem({ item, onDelete, onCreateTask }) {
       </div>
 
       {expanded && (
-        <div className="border-t border-gray-100 dark:border-gray-800 px-4 py-3 bg-gray-50/50 dark:bg-gray-900/20">
+        <div className="inbox-item-actions border-t border-gray-100 dark:border-gray-800 px-4 py-3 bg-gray-50/50 dark:bg-gray-900/20">
           <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">Что сделать с этим?</div>
           <div className="flex items-center gap-2 flex-wrap">
             {/* Create task */}
@@ -97,7 +96,7 @@ function InboxItem({ item, onDelete, onCreateTask }) {
           </div>
         </div>
       )}
-    </div>
+    </article>
   )
 }
 
@@ -114,27 +113,30 @@ export default function Inbox() {
   useEffect(() => { load() }, [])
 
   return (
-    <div className="max-w-2xl mx-auto py-8 px-6">
-      <PageOnboarding pageId="inbox" />
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Входящие</h1>
-        <span className="text-sm text-gray-400">{items.length} элементов</span>
-      </div>
+    <main className="inbox-page max-w-2xl mx-auto py-8 px-6">
+      <header className="inbox-header flex items-center justify-between mb-6">
+        <div>
+          <p className="inbox-kicker">Life OS · разгрузка головы</p>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Входящие</h1>
+          <p className="text-sm text-gray-400 mt-0.5">Сначала сохрани мысль, затем спокойно выбери ей место.</p>
+        </div>
+        <span className="inbox-count text-sm text-gray-400">{items.length} элементов</span>
+      </header>
 
       {loading ? (
         <p className="text-sm text-gray-400">Загрузка...</p>
       ) : items.length === 0 ? (
-        <div className="text-center py-12">
+        <div className="inbox-empty text-center py-12">
           <p className="text-gray-400 text-sm">Входящие пусты</p>
           <p className="text-gray-300 dark:text-gray-600 text-xs mt-1">Нажми ⌘K, чтобы добавить мысль</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="inbox-list space-y-2">
           {items.map(item => (
             <InboxItem key={item.id} item={item} onDelete={load} onCreateTask={load} />
           ))}
         </div>
       )}
-    </div>
+    </main>
   )
 }

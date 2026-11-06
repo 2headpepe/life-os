@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { SpheresProvider } from './SpheresContext'
+import { RecoveryModeProvider } from './context/RecoveryModeContext'
 import { ThemeProvider } from './context/ThemeContext'
 import Sidebar from './components/Sidebar'
 import QuickCapture from './components/QuickCapture'
@@ -22,9 +23,11 @@ import News from './pages/News'
 import Memories from './pages/Memories'
 import Onboarding from './pages/Onboarding'
 import NotificationBell from './components/NotificationBell'
-import ThemeSwitcher from './components/ThemeSwitcher'
 import AiReviews from './pages/AiReviews'
+import DesignPreview from './pages/DesignPreview'
+import ThemeSwitcher from './components/ThemeSwitcher'
 import { tree as treeApi } from './api'
+import { trackScreen } from './analytics'
 
 function AppContent() {
   const navigate = useNavigate()
@@ -36,6 +39,7 @@ function AppContent() {
   const [aiContextMessage, setAiContextMessage] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [sphere, setSphere] = useState(null)
+  useEffect(() => { trackScreen(location.pathname) }, [location.pathname])
 
   // Check if onboarding needed (skip if already on /setup)
   useEffect(() => {
@@ -84,11 +88,17 @@ function AppContent() {
     return <Onboarding onDone={() => navigate('/', { replace: true })} />
   }
 
+  // The design lab is deliberately outside the production shell so its navigation
+  // and material system can be evaluated without being blended into the live UI.
+  if (location.pathname === '/design-preview') return <DesignPreview />
+
   return (
     <div className="app-shell flex h-screen overflow-hidden">
       <Sidebar
         onCapture={() => setCaptureOpen(true)}
+        onAi={() => { setAiOpen(v => !v); setAiPrefill(''); setAiContextMessage('') }}
         onSearch={() => setSearchOpen(true)}
+        aiOpen={aiOpen}
         sphere={sphere}
         setSphere={setSphere}
       />
@@ -112,6 +122,7 @@ function AppContent() {
           <Route path="/memories" element={<Memories />} />
           <Route path="/news"     element={<News />} />
           <Route path="/ai-reviews" element={<AiReviews />} />
+          <Route path="/design-preview" element={<DesignPreview />} />
         </Routes>
       </main>
 
@@ -128,7 +139,7 @@ function AppContent() {
       <button
         onClick={() => setCaptureOpen(true)}
         title="Быстрый захват ⌘K"
-        className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-gray-900 dark:bg-white text-white dark:text-gray-900
+        className="ds-fab fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-gray-900 dark:bg-white text-white dark:text-gray-900
                    shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
       >
         <Plus size={20} />
@@ -140,7 +151,13 @@ function AppContent() {
 export default function App() {
   return (
     <SpheresProvider>
-      <ThemeProvider><BrowserRouter><AppContent /></BrowserRouter></ThemeProvider>
+      <ThemeProvider>
+        <RecoveryModeProvider>
+          <BrowserRouter>
+            <AppContent />
+          </BrowserRouter>
+        </RecoveryModeProvider>
+      </ThemeProvider>
     </SpheresProvider>
   )
 }

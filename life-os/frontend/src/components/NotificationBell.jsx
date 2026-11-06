@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bell, Target, LayoutGrid, Lightbulb, X } from 'lucide-react'
 import { pulse as pulseApi, inbox as inboxApi } from '../api'
+import { openInConsole } from '../utils/openInConsole'
 
 const TYPE_META = {
   node:      { Icon: Target,     label: 'Узел' },
@@ -54,11 +55,7 @@ export default function NotificationBell() {
   }
 
   const discuss = (alert) => {
-    fetch('/api/ai/open', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: `Хочу обсудить: ${alert.title} (${TYPE_META[alert.type]?.label})` }),
-    })
+    openInConsole(`Хочу обсудить: ${alert.title} (${TYPE_META[alert.type]?.label})`).catch(() => {})
     setOpen(false)
   }
 

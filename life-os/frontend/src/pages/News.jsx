@@ -44,7 +44,7 @@ function NewsCard({ item, expanded, onToggle, onSave, onDetail, onNote, onRate }
 
   return (
     <div
-      className={`card overflow-hidden cursor-pointer transition-all ${
+      className={`news-card card overflow-hidden cursor-pointer transition-all ${
         isCompact ? 'opacity-60 hover:opacity-80 py-1' : 'hover:shadow-md'
       } ${
         isProminent ? 'ring-1 ring-blue-200 dark:ring-blue-800 shadow-sm' : ''
@@ -267,9 +267,9 @@ function SourcesTab({ sources, onUpdate }) {
   }
 
   return (
-    <div className="flex overflow-hidden" style={{ height: 'calc(100vh - 120px)' }}>
+    <div className="news-sources flex overflow-hidden" style={{ height: 'calc(100vh - 120px)' }}>
       {/* Source list */}
-      <div className="w-52 flex-shrink-0 border-r border-gray-100 dark:border-gray-800 overflow-y-auto py-2">
+      <div className="news-source-list w-52 flex-shrink-0 border-r border-gray-100 dark:border-gray-800 overflow-y-auto py-2">
         {sources.map(s => (
           <button
             key={s.id}
@@ -297,7 +297,7 @@ function SourcesTab({ sources, onUpdate }) {
       </div>
 
       {/* Edit panel */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="news-source-editor flex-1 overflow-y-auto">
         {(selected || adding) ? (
           <div className="max-w-lg py-8 px-10 space-y-4">
             <div>
@@ -431,9 +431,9 @@ export default function News() {
   ]
 
   return (
-    <div>
+    <div className="news-page">
       {/* Tab switcher */}
-      <div className="flex gap-1 px-6 pt-6 pb-0">
+      <div className="news-tabs flex gap-1 px-6 pt-6 pb-0">
         {TABS.map(t => (
           <button
             key={t.id}
@@ -454,9 +454,10 @@ export default function News() {
       {tab === 'sources' && <SourcesTab sources={sources} onUpdate={load} />}
 
       {tab === 'feed' && (
-        <div className="max-w-2xl mx-auto px-6 py-8">
-          <div className="flex items-center justify-between mb-6">
+        <div className="news-content max-w-2xl mx-auto px-6 py-8">
+          <div className="news-header flex items-center justify-between mb-6">
             <div>
+              <p className="news-kicker">Life OS · внешний мир</p>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Новости</h1>
               <p className="text-sm text-gray-400 mt-0.5">Собрано AI, отфильтровано тобой</p>
             </div>
@@ -466,7 +467,7 @@ export default function News() {
           </div>
 
           {/* Search */}
-          <div className="relative mb-3">
+          <div className="news-search relative mb-3">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               value={search}

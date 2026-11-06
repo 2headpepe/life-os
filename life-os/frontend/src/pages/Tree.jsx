@@ -1,9 +1,9 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, Fragment } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Circle, Clock, CircleDot, CheckCircle2, CircleDashed, CircleMinus, Lock,
          ChevronDown, ChevronRight, Sparkles, Plus, X, AlignJustify } from 'lucide-react'
-import { tree as treeApi, habits as habitsApi } from '../api'
+import { tree as treeApi, habits as habitsApi, productIntelligence } from '../api'
 import { openInConsole } from '../utils/openInConsole'
-import PageOnboarding from '../components/PageOnboarding'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
@@ -76,6 +76,17 @@ function collectOpenLeaves(node) {
   return node.children.flatMap(collectOpenLeaves)
 }
 
+function parentPath(nodes, nodeId) {
+  const byId = Object.fromEntries(nodes.map(node => [node.id, node]))
+  const path = []
+  let node = byId[nodeId]
+  while (node) {
+    path.unshift(node.id)
+    node = node.parent_id ? byId[node.parent_id] : null
+  }
+  return path.slice(0, -1)
+}
+
 // ── Config ───────────────────────────────────────────────────────────────────
 
 const PRESET_COLORS = ['#3B82F6','#22C55E','#EF4444','#06B6D4','#EC4899','#EAB308','#F97316','#14B8A6','#A855F7','#6B7280']
@@ -83,13 +94,17 @@ const PRESET_COLORS = ['#3B82F6','#22C55E','#EF4444','#06B6D4','#EC4899','#EAB30
 const STATUS_CFG = {
   undefined:   { Icon: Circle,       cls: 'text-red-400',   label: 'Не определено' },
   scheduled:   { Icon: Clock,        cls: 'text-blue-400',  label: 'Запланировано' },
+  needs_grooming: { Icon: Sparkles,  cls: 'text-violet-400', label: 'Требует проработки' },
+  backlog:     { Icon: CircleDashed, cls: 'text-slate-400', label: 'Бэклог' },
+  ready:       { Icon: Circle,       cls: 'text-cyan-500', label: 'Готово к старту' },
   in_progress: { Icon: CircleDot,    cls: 'text-amber-400', label: 'В работе' },
+  waiting_for_review: { Icon: Clock, cls: 'text-fuchsia-500', label: 'На проверке' },
   done:        { Icon: CheckCircle2, cls: 'text-green-400', label: 'Готово' },
   someday:     { Icon: CircleDashed, cls: 'text-gray-400',  label: 'Когда-нибудь' },
   dropped:     { Icon: CircleMinus,  cls: 'text-gray-300',  label: 'Отменено' },
 }
 
-const LEAF_STATUSES = ['undefined', 'scheduled', 'in_progress', 'done', 'someday', 'dropped']
+const LEAF_STATUSES = ['undefined', 'needs_grooming', 'backlog', 'ready', 'scheduled', 'in_progress', 'waiting_for_review', 'done', 'someday', 'dropped']
 const NODE_STATUSES = ['done', 'someday', 'dropped']
 
 // ── Shared sub-components ────────────────────────────────────────────────────
@@ -210,7 +225,7 @@ function OverviewCard({ node, nodesMap, onEnter, onUpdate }) {
 
   return (
     <div
-      className="group bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 hover:border-gray-200 dark:hover:border-gray-700 overflow-hidden transition-colors cursor-pointer"
+      className="goals-overview-card group bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 hover:border-gray-200 dark:hover:border-gray-700 overflow-hidden transition-colors cursor-pointer"
       onClick={() => !editingTitle && !showColors && onEnter(node.id)}
     >
       <div className="flex">
@@ -275,6 +290,335 @@ function OverviewCard({ node, nodesMap, onEnter, onUpdate }) {
   )
 }
 
+// ── Delivery preparation ────────────────────────────────────────────────────
+
+const HANDOFF_FIELDS = [
+  ['target_role', 'Кому передать работу', 'Какая роль или компетенция нужна'],
+  ['requested_result', 'Ожидаемый результат', 'Что именно должно быть готово'],
+  ['scope', 'Границы работы', 'Что входит в эту задачу'],
+  ['non_goals', 'Не делать', 'Что сознательно остаётся за пределами'],
+  ['output_format', 'Формат результата', 'Например: проверенный список, изменение интерфейса, отчёт'],
+  ['verifier_role', 'Кто проверит', 'Роль независимого проверяющего'],
+]
+
+function contractDraft(contract = {}) {
+  const lines = value => Array.isArray(value) ? value : value ? [String(value)] : []
+  return {
+    target_role: contract.target_role || '',
+    requested_result: contract.requested_result || '',
+    input_refs: lines(contract.input_refs).join('\n'),
+    scope: contract.scope || '',
+    non_goals: contract.non_goals || '',
+    output_format: contract.output_format || '',
+    acceptance_criteria: lines(contract.acceptance_criteria).join('\n'),
+    verifier_role: contract.verifier_role || '',
+  }
+}
+
+function DeliveryTaskDialog({ node, nodesMap, onUpdate, initialView = 'prepare', onClose }) {
+  const [contract, setContract] = useState(() => contractDraft(node.handoff_contract))
+  const [dependency, setDependency] = useState({ title: '', outcome: '' })
+  const [existingDependencies, setExistingDependencies] = useState([])
+  const [selectedExistingDependency, setSelectedExistingDependency] = useState('')
+  const [execution, setExecution] = useState(() => ({
+    actor: node.execution?.actor || 'life-os-delivery-executor',
+    verifier: node.verification?.verified_by || 'life-os-independent-verifier',
+    evidence: (node.verification?.evidence_refs || []).join('\n'),
+    note: node.verification?.note || '',
+  }))
+  const [saving, setSaving] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [loadingExistingDependencies, setLoadingExistingDependencies] = useState(false)
+  const [linkingExistingDependency, setLinkingExistingDependency] = useState(false)
+  const [transitioning, setTransitioning] = useState(false)
+  const [message, setMessage] = useState(null)
+  const [activeView, setActiveView] = useState(initialView)
+
+  useEffect(() => setContract(contractDraft(node.handoff_contract)), [node.handoff_contract])
+  useEffect(() => setExecution({
+    actor: node.execution?.actor || 'life-os-delivery-executor',
+    verifier: node.verification?.verified_by || 'life-os-independent-verifier',
+    evidence: (node.verification?.evidence_refs || []).join('\n'),
+    note: node.verification?.note || '',
+  }), [node.execution, node.verification])
+
+  useEffect(() => {
+    let cancelled = false
+    if (activeView !== 'dependency') return undefined
+    setLoadingExistingDependencies(true)
+    treeApi.eligibleExistingDependencies(node.id)
+      .then(result => {
+        if (!cancelled) {
+          setExistingDependencies(result.candidates || [])
+          setSelectedExistingDependency('')
+        }
+      })
+      .catch(error => {
+        if (!cancelled) setMessage({ type: 'error', text: error.message || 'Не удалось загрузить доступные зависимости.' })
+      })
+      .finally(() => { if (!cancelled) setLoadingExistingDependencies(false) })
+    return () => { cancelled = true }
+  }, [activeView, node.id])
+
+  const blockers = (node.blocked_by || []).map(id => nodesMap[id]).filter(Boolean)
+  const setField = (field, value) => setContract(current => ({ ...current, [field]: value }))
+  const lines = value => value.split('\n').map(line => line.trim()).filter(Boolean)
+
+  const saveContract = async e => {
+    e.preventDefault()
+    setSaving(true)
+    setMessage(null)
+    try {
+      await treeApi.saveHandoff(node.id, {
+        ...contract,
+        input_refs: lines(contract.input_refs),
+        acceptance_criteria: lines(contract.acceptance_criteria),
+      })
+      setMessage({ type: 'success', text: 'Подготовка сохранена. Задача теперь находится в очереди.' })
+      await onUpdate()
+    } catch (error) {
+      setMessage({ type: 'error', text: error.message || 'Не удалось сохранить подготовку.' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const createDependency = async e => {
+    e.preventDefault()
+    setCreating(true)
+    setMessage(null)
+    try {
+      await treeApi.createDependency(node.id, dependency)
+      setDependency({ title: '', outcome: '' })
+      setMessage({ type: 'success', text: 'Зависимая задача создана и теперь блокирует эту работу.' })
+      await onUpdate()
+    } catch (error) {
+      setMessage({ type: 'error', text: error.message || 'Не удалось создать зависимую задачу.' })
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const linkExistingDependency = async e => {
+    e.preventDefault()
+    if (!selectedExistingDependency) return
+    setLinkingExistingDependency(true)
+    setMessage(null)
+    try {
+      const result = await treeApi.linkExistingDependency(node.id, selectedExistingDependency)
+      setMessage({ type: 'success', text: result.idempotent ? 'Эта зависимость уже была связана.' : 'Существующая задача теперь блокирует эту работу.' })
+      setSelectedExistingDependency('')
+      await onUpdate()
+    } catch (error) {
+      setMessage({ type: 'error', text: error.message || 'Не удалось связать существующую зависимость.' })
+    } finally {
+      setLinkingExistingDependency(false)
+    }
+  }
+
+  const transition = async status => {
+    setTransitioning(true)
+    setMessage(null)
+    try {
+      const executionPatch = status === 'in_progress' || status === 'waiting_for_review'
+        ? {
+            actor: execution.actor.trim(),
+            started_at: node.execution?.started_at || new Date().toISOString(),
+            handed_off_at: status === 'waiting_for_review' ? new Date().toISOString() : node.execution?.handed_off_at || null,
+          }
+        : undefined
+      await treeApi.update(node.id, { status, ...(executionPatch ? { execution: executionPatch } : {}) }, 'task_progress')
+      setMessage({ type: 'success', text: status === 'in_progress' ? 'Исполнитель назначен, задача начата.' : status === 'waiting_for_review' ? 'Работа передана на независимую проверку.' : 'Статус задачи обновлён.' })
+      await onUpdate()
+    } catch (error) {
+      setMessage({ type: 'error', text: error.message || 'Не удалось изменить статус delivery-задачи.' })
+    } finally {
+      setTransitioning(false)
+    }
+  }
+
+  const verify = async state => {
+    setTransitioning(true)
+    setMessage(null)
+    try {
+      const evidence_refs = lines(execution.evidence)
+      await treeApi.verify(node.id, {
+        state,
+        verified_by: execution.verifier.trim(),
+        evidence_refs,
+        note: execution.note.trim(),
+      })
+      setMessage({ type: 'success', text: state === 'passed' ? 'Независимая проверка пройдена.' : 'Проверка вернула задачу в бэклог.' })
+      await onUpdate()
+    } catch (error) {
+      setMessage({ type: 'error', text: error.message || 'Не удалось записать verdict проверяющего.' })
+    } finally {
+      setTransitioning(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/30 p-4 backdrop-blur-[1px]" role="presentation" onMouseDown={onClose}>
+      <section role="dialog" aria-modal="true" aria-label="Подготовка delivery-задачи" onMouseDown={e => e.stopPropagation()} className="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+        <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-gray-100 bg-white/95 px-5 py-4 backdrop-blur dark:border-gray-800 dark:bg-gray-900/95">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{node.title}</h2>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Сначала зафиксируйте понятный результат и границы, затем создавайте то, без чего нельзя продолжить.</p>
+          </div>
+          <button onClick={onClose} aria-label="Закрыть" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"><X size={16} /></button>
+        </header>
+        <div className="space-y-4 px-5 py-4">
+          <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
+            <button type="button" onClick={() => setActiveView('prepare')} className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium ${activeView === 'prepare' ? 'bg-white text-violet-700 shadow-sm dark:bg-gray-900 dark:text-violet-300' : 'text-gray-500'}`}>Подготовка</button>
+            <button type="button" onClick={() => setActiveView('dependency')} className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium ${activeView === 'dependency' ? 'bg-white text-violet-700 shadow-sm dark:bg-gray-900 dark:text-violet-300' : 'text-gray-500'}`}>Зависимая задача</button>
+            <button type="button" onClick={() => setActiveView('execution')} className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium ${activeView === 'execution' ? 'bg-white text-violet-700 shadow-sm dark:bg-gray-900 dark:text-violet-300' : 'text-gray-500'}`}>Исполнение</button>
+          </div>
+
+          {activeView === 'prepare' && <>
+      <div>
+        <div className="text-xs font-semibold text-violet-700 dark:text-violet-300">Подготовка задачи</div>
+        <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Заполните договор передачи до начала работы: он делает результат и границы понятными всем участникам.</p>
+      </div>
+
+      <div className="rounded-lg border border-gray-100 bg-white/70 px-2.5 py-2 dark:border-gray-800 dark:bg-gray-900/40">
+        <div className="text-xs font-medium text-gray-600 dark:text-gray-300">Что блокирует</div>
+        {blockers.length ? (
+          <ul className="mt-1.5 space-y-1" aria-label="Блокирующие задачи">
+            {blockers.map(blocker => (
+              <li key={blocker.id} className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300">
+                <Lock size={11} className="text-gray-400" />
+                <span className="truncate">{blocker.title}</span>
+                <span className="ml-auto shrink-0 text-gray-400">{STATUS_CFG[blocker.status]?.label || blocker.status}</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="mt-1 text-xs text-gray-400">Нет незавершённых зависимостей.</p>}
+      </div>
+
+      <form className="space-y-2" onSubmit={saveContract}>
+        {HANDOFF_FIELDS.map(([field, label, placeholder]) => (
+          <label key={field} className="block">
+            <span className="mb-0.5 block text-[11px] text-gray-500 dark:text-gray-400">{label}</span>
+            <input value={contract[field]} onChange={e => setField(field, e.target.value)} placeholder={placeholder}
+              className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none placeholder:text-gray-300 focus:border-violet-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" />
+          </label>
+        ))}
+        <label className="block">
+          <span className="mb-0.5 block text-[11px] text-gray-500 dark:text-gray-400">Входные материалы</span>
+          <textarea value={contract.input_refs} onChange={e => setField('input_refs', e.target.value)} placeholder="Одна ссылка или путь в каждой строке" rows={2}
+            className="w-full resize-y rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none placeholder:text-gray-300 focus:border-violet-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" />
+        </label>
+        <label className="block">
+          <span className="mb-0.5 block text-[11px] text-gray-500 dark:text-gray-400">Как проверить результат</span>
+          <textarea value={contract.acceptance_criteria} onChange={e => setField('acceptance_criteria', e.target.value)} placeholder="Один проверяемый критерий в каждой строке" rows={2}
+            className="w-full resize-y rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none placeholder:text-gray-300 focus:border-violet-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" />
+        </label>
+        <button type="submit" disabled={saving} className="rounded-md bg-violet-700 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-60">
+          {saving ? 'Сохраняю…' : 'Сохранить подготовку'}
+        </button>
+      </form>
+          </>}
+
+      {activeView === 'dependency' && <form className="pt-1" onSubmit={createDependency}>
+        <div className="text-xs font-medium text-gray-700 dark:text-gray-200">Создать зависимую задачу</div>
+        <p className="mt-0.5 text-[11px] text-gray-400">Создайте только конкретный результат, без которого нельзя продолжить эту работу.</p>
+        <label className="mt-2 block">
+          <span className="sr-only">Название зависимой задачи</span>
+          <input required value={dependency.title} onChange={e => setDependency(current => ({ ...current, title: e.target.value }))} placeholder="Что нужно сделать"
+            className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none placeholder:text-gray-300 focus:border-violet-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" />
+        </label>
+        <label className="mt-2 block">
+          <span className="sr-only">Ожидаемый результат зависимой задачи</span>
+          <textarea required value={dependency.outcome} onChange={e => setDependency(current => ({ ...current, outcome: e.target.value }))} placeholder="Какой результат нужен, чтобы снять блокировку" rows={2}
+            className="w-full resize-y rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none placeholder:text-gray-300 focus:border-violet-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" />
+        </label>
+        <button type="submit" disabled={creating} className="mt-2 rounded-md border border-violet-200 px-2.5 py-1.5 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-violet-800 dark:text-violet-300 dark:hover:bg-violet-900/30">
+          {creating ? 'Создаю…' : 'Создать зависимую задачу'}
+        </button>
+      </form>}
+
+      {activeView === 'dependency' && <form className="mt-4 border-t border-gray-100 pt-4 dark:border-gray-800" onSubmit={linkExistingDependency}>
+        <div className="text-xs font-medium text-gray-700 dark:text-gray-200">Связать существующую задачу</div>
+        <p className="mt-0.5 text-[11px] text-gray-400">Показываются только delivery-задачи той же approved initiative, которые не создают цикл.</p>
+        <label className="mt-2 block">
+          <span className="sr-only">Существующая зависимость</span>
+          <select value={selectedExistingDependency} onChange={e => setSelectedExistingDependency(e.target.value)} disabled={loadingExistingDependencies || linkingExistingDependency || existingDependencies.length === 0}
+            className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-violet-400 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+            <option value="">{loadingExistingDependencies ? 'Загружаю…' : existingDependencies.length ? 'Выберите задачу' : 'Нет подходящих задач'}</option>
+            {existingDependencies.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.title} · {STATUS_CFG[candidate.status]?.label || candidate.status}</option>)}
+          </select>
+        </label>
+        <button type="submit" disabled={!selectedExistingDependency || linkingExistingDependency} className="mt-2 rounded-md border border-violet-200 px-2.5 py-1.5 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-violet-800 dark:text-violet-300 dark:hover:bg-violet-900/30">
+          {linkingExistingDependency ? 'Связываю…' : 'Связать задачу'}
+        </button>
+      </form>}
+
+      {activeView === 'execution' && <section className="space-y-3" aria-label="Исполнение и независимая проверка">
+        <div>
+          <div className="text-xs font-semibold text-violet-700 dark:text-violet-300">Исполнение и проверка</div>
+          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Управление доступно только через lifecycle: договор → исполнитель → review → независимый verdict.</p>
+        </div>
+        <div className="rounded-lg border border-gray-100 bg-white/70 p-2.5 text-xs dark:border-gray-800 dark:bg-gray-900/40">
+          <div className="flex justify-between gap-3"><span className="text-gray-500">Договор</span><span className={node.handoff_contract ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}>{node.handoff_contract ? 'заполнен' : 'нужно заполнить'}</span></div>
+          <div className="mt-1 flex justify-between gap-3"><span className="text-gray-500">Статус</span><span>{STATUS_CFG[node.status]?.label || node.status}</span></div>
+          <div className="mt-1 flex justify-between gap-3"><span className="text-gray-500">Блокировки</span><span>{blockers.length ? `${blockers.length} незавершённых` : 'нет'}</span></div>
+        </div>
+        <label className="block">
+          <span className="mb-0.5 block text-[11px] text-gray-500 dark:text-gray-400">Исполнитель</span>
+          <input value={execution.actor} onChange={e => setExecution(current => ({ ...current, actor: e.target.value }))} disabled={node.status === 'done'} className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-violet-400 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" />
+        </label>
+        {node.status === 'backlog' && <button type="button" disabled={transitioning || !node.handoff_contract || blockers.length > 0} onClick={() => transition('ready')} className="rounded-md bg-violet-700 px-2.5 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">Подготовить к старту</button>}
+        {['backlog', 'ready', 'scheduled'].includes(node.status) && <button type="button" disabled={transitioning || !node.handoff_contract || blockers.length > 0 || !execution.actor.trim()} onClick={() => transition('in_progress')} className="ml-2 rounded-md bg-violet-700 px-2.5 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">Начать работу</button>}
+        {node.status === 'in_progress' && <button type="button" disabled={transitioning || !execution.actor.trim()} onClick={() => transition('waiting_for_review')} className="rounded-md bg-fuchsia-700 px-2.5 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">Передать на проверку</button>}
+        {node.status === 'waiting_for_review' && <div className="space-y-2 border-t border-gray-100 pt-3 dark:border-gray-800">
+          <label className="block"><span className="mb-0.5 block text-[11px] text-gray-500 dark:text-gray-400">Независимый проверяющий</span><input value={execution.verifier} onChange={e => setExecution(current => ({ ...current, verifier: e.target.value }))} className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-violet-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" /></label>
+          <label className="block"><span className="mb-0.5 block text-[11px] text-gray-500 dark:text-gray-400">Evidence refs</span><textarea value={execution.evidence} onChange={e => setExecution(current => ({ ...current, evidence: e.target.value }))} rows={2} placeholder="Одна ссылка или путь в каждой строке" className="w-full resize-y rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-violet-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" /></label>
+          <label className="block"><span className="mb-0.5 block text-[11px] text-gray-500 dark:text-gray-400">Комментарий проверяющего</span><textarea value={execution.note} onChange={e => setExecution(current => ({ ...current, note: e.target.value }))} rows={2} className="w-full resize-y rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-violet-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" /></label>
+          <button type="button" disabled={transitioning || !execution.verifier.trim() || !lines(execution.evidence).length} onClick={() => verify('passed')} className="rounded-md bg-green-700 px-2.5 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">Подтвердить проверку</button>
+          <button type="button" disabled={transitioning || !execution.verifier.trim() || !lines(execution.evidence).length} onClick={() => verify('failed')} className="ml-2 rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-700 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-900 dark:text-red-300">Вернуть в бэклог</button>
+        </div>}
+      </section>}
+
+      {message && <p aria-live="polite" className={`text-xs ${message.type === 'error' ? 'text-red-500' : 'text-green-600 dark:text-green-400'}`}>{message.text}</p>}
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function DirectInitiativeDialog({ onClose, onCreated }) {
+  const [form, setForm] = useState({ title: '', goal: '', scope: '', expected_effect: '', effect_window: '', user_direction: '' })
+  const [error, setError] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const update = (field, value) => setForm(current => ({ ...current, [field]: value }))
+  const submit = async event => {
+    event.preventDefault()
+    if (Object.values(form).some(value => !value.trim())) {
+      setError('Заполните все шесть полей: initiative требует явного направления, границ и окна проверки.')
+      return
+    }
+    setSaving(true); setError(null)
+    try {
+      const payload = Object.fromEntries(Object.entries(form).map(([key, value]) => [key, value.trim()]))
+      const result = await productIntelligence.createInitiative(payload)
+      onCreated(result.initiative)
+    } catch (requestError) {
+      setError(requestError.message || 'Не удалось создать delivery initiative.')
+    } finally {
+      setSaving(false)
+    }
+  }
+  const fields = [['title', 'Название', 'Коротко назовите initiative'], ['goal', 'Цель', 'Какую пользовательскую цель решаем'], ['scope', 'Границы', 'Что входит и что пока не входит'], ['expected_effect', 'Ожидаемый эффект', 'Какой результат ожидаем'], ['effect_window', 'Окно проверки', 'Когда проверим результат'], ['user_direction', 'Ваше направление', 'Явное направление пользователя']]
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/30 p-4 backdrop-blur-[1px]" role="presentation" onMouseDown={onClose}>
+    <form onSubmit={submit} onMouseDown={event => event.stopPropagation()} className="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+      <div className="flex items-start justify-between gap-4"><div><h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Новая delivery initiative</h2><p className="mt-1 text-xs leading-5 text-gray-500">Создание фиксирует ваше направление и границы. Оно не создаёт work item, расписание или автоматизацию.</p></div><button type="button" onClick={onClose} aria-label="Закрыть" className="rounded p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"><X size={18} /></button></div>
+      <div className="mt-5 space-y-4">{fields.map(([field, label, placeholder]) => <label key={field} className="block text-sm font-medium text-gray-700 dark:text-gray-200">{label}<textarea value={form[field]} onChange={event => update(field, event.target.value)} placeholder={placeholder} className="mt-1 min-h-20 w-full rounded-lg border border-gray-300 bg-white p-2 text-sm font-normal text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100" /></label>)}</div>
+      {error && <p role="alert" className="mt-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
+      <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={onClose} disabled={saving} className="rounded-lg border border-gray-300 px-3 py-2 text-sm">Отмена</button><button type="submit" disabled={saving} className="rounded-lg bg-violet-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Создаю…' : 'Создать initiative'}</button></div>
+    </form>
+  </div>
+}
+
 // ── Outliner row (inside drill-down) ─────────────────────────────────────────
 
 function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onUnblock, onZoom, hideDone }) {
@@ -286,6 +630,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
   const [titleDraft, setTitleDraft] = useState(node.title)
   const [editingDue, setEditingDue] = useState(false)
   const [editingReviewBy, setEditingReviewBy] = useState(false)
+  const [deliveryDialog, setDeliveryDialog] = useState(null)
 
   const isLeaf = node.children.length === 0
   const isDone = node.status === 'done'
@@ -311,7 +656,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
       )
       if (newlyUnblocked.length > 0) onUnblock(newlyUnblocked)
     }
-    await treeApi.update(node.id, { status: s })
+    await treeApi.update(node.id, { status: s }, !isLeaf ? 'goal_progress' : (s === 'done' ? 'task_progress' : null))
     if (s === 'scheduled') setEditingDue(true)
     if (s === 'someday') setEditingReviewBy(true)
     onUpdate()
@@ -368,13 +713,13 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
           {isLeaf && isBlocked
             ? <Lock size={13} className="text-gray-400" />
             : (
-              <button onClick={e => { e.stopPropagation(); setShowStatus(v => !v) }}
+              <button onClick={e => { e.stopPropagation(); node.work_context === 'delivery' ? setDeliveryDialog('execution') : setShowStatus(v => !v) }}
                 className={`flex items-center justify-center ${statusCls}`}>
                 <StatusIcon size={13} />
               </button>
             )
           }
-          {showStatus && (
+          {showStatus && node.work_context !== 'delivery' && (
             <StatusPicker current={node.status} isLeaf={isLeaf} onSelect={handleStatus} onClose={() => setShowStatus(false)} />
           )}
         </div>
@@ -508,7 +853,24 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
               className="text-xs text-gray-600 dark:text-gray-400"
             />
           </div>
+          {node.work_context === 'delivery' && isLeaf && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-violet-100 bg-violet-50/40 px-2.5 py-2 dark:border-violet-900/50 dark:bg-violet-950/10">
+              <div className="min-w-0 text-xs text-gray-500 dark:text-gray-400">
+                <span className="font-medium text-violet-700 dark:text-violet-300">Delivery</span>
+                <span className="ml-1">{STATUS_CFG[node.status]?.label || node.status} · {node.handoff_contract ? 'договор заполнен' : 'договор не заполнен'}</span>
+              </div>
+              <div className="flex shrink-0 gap-1.5">
+                <button onClick={() => setDeliveryDialog('prepare')} className="rounded-md bg-white px-2 py-1 text-xs text-violet-700 shadow-sm hover:bg-violet-100 dark:bg-gray-900 dark:text-violet-300 dark:hover:bg-violet-900/30">Открыть</button>
+                <button onClick={() => setDeliveryDialog('dependency')} className="rounded-md border border-violet-200 px-2 py-1 text-xs text-violet-700 hover:bg-violet-100 dark:border-violet-800 dark:text-violet-300 dark:hover:bg-violet-900/30">Зависимость</button>
+                <button onClick={() => setDeliveryDialog('execution')} className="rounded-md border border-violet-200 px-2 py-1 text-xs text-violet-700 hover:bg-violet-100 dark:border-violet-800 dark:text-violet-300 dark:hover:bg-violet-900/30">Исполнение</button>
+              </div>
+            </div>
+          )}
         </div>
+      )}
+
+      {deliveryDialog && (
+        <DeliveryTaskDialog node={node} nodesMap={nodesMap} onUpdate={onUpdate} initialView={deliveryDialog} onClose={() => setDeliveryDialog(null)} />
       )}
 
       {/* Children */}
@@ -537,6 +899,8 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
 // ── Main Tree component ───────────────────────────────────────────────────────
 
 export default function Tree() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [nodes, setNodes] = useState([])
   const [habitList, setHabitList] = useState([])
   const [loading, setLoading] = useState(true)
@@ -545,6 +909,10 @@ export default function Tree() {
   const [addingRoot, setAddRoot] = useState(false)
   const [addingAtBottom, setAddingAtBottom] = useState(false)
   const [hideDone, setHideDone] = useState(true)
+  const initialParams = new URLSearchParams(location.search)
+  const [context, setContext] = useState(() => initialParams.get('context') === 'delivery' ? 'delivery' : 'personal')
+  const [showInitiativeForm, setShowInitiativeForm] = useState(() => initialParams.get('create') === 'initiative')
+  const [initiativeCreated, setInitiativeCreated] = useState(null)
 
   const addToast = useCallback(items => {
     const id = Date.now()
@@ -569,8 +937,32 @@ export default function Tree() {
 
   useEffect(() => { load() }, [load])
 
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const requestedContext = params.get('context')
+    if (requestedContext === 'personal' || requestedContext === 'delivery') setContext(requestedContext)
+    const target = params.get('task') || params.get('root')
+    if (target && nodes.length) {
+      const targetNode = nodes.find(node => node.id === target)
+      if (targetNode) {
+        setContext(targetNode.work_context || 'personal')
+        setFocusPath(params.get('task') ? parentPath(nodes, target) : [target])
+      }
+    }
+  }, [nodes, location.search])
+
+  const setContextInUrl = nextContext => {
+    const params = new URLSearchParams(location.search)
+    params.set('context', nextContext)
+    params.delete('root')
+    params.delete('task')
+    setContext(nextContext)
+    setFocusPath([])
+    navigate({ pathname: '/goals', search: `?${params.toString()}` })
+  }
+
   const nodesMap = Object.fromEntries(nodes.map(n => [n.id, n]))
-  const roots = buildTree(nodes)
+  const roots = buildTree(nodes).filter(root => (root.work_context || 'personal') === context)
 
   const focusNodeId = focusPath[focusPath.length - 1] || null
   const focusNode = focusNodeId ? findInTree(roots, focusNodeId) : null
@@ -582,14 +974,13 @@ export default function Tree() {
 
   return (
     <>
-      <div className="max-w-3xl mx-auto py-8 px-6">
-        <PageOnboarding pageId="tree" />
+      <div className="goals-page max-w-3xl mx-auto py-8 px-6">
 
         {/* Header / Breadcrumb */}
-        <div className="mb-6 flex items-center justify-between gap-4">
+        <div className="goals-header mb-6 flex items-center justify-between gap-4">
           <div className="min-w-0">
           {focusPath.length === 0 ? (
-            <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Цели</h1>
+            <div><p className="goals-kicker">Life OS · карта направлений</p><h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Цели</h1></div>
           ) : (
             <nav className="flex items-center gap-1.5 flex-wrap">
               <button onClick={() => setFocusPath([])}
@@ -612,6 +1003,10 @@ export default function Tree() {
             </nav>
           )}
           </div>
+          {focusPath.length === 0 && <div className="goals-switcher flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-xs">
+            {[['personal', 'Личное'], ['delivery', 'Delivery']].map(([id, label]) => <button key={id} onClick={() => setContextInUrl(id)} className={`px-2.5 py-1.5 ${context === id ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900' : 'text-gray-500'}`}>{label}</button>)}
+          </div>}
+          {context === 'delivery' && focusPath.length === 0 && <button onClick={() => setShowInitiativeForm(true)} className="rounded-lg bg-violet-700 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-violet-800">+ initiative</button>}
           <button
             onClick={() => setHideDone(v => !v)}
             className={`flex-shrink-0 text-xs px-2.5 py-1 rounded-lg transition-colors ${
@@ -634,12 +1029,12 @@ export default function Tree() {
 
         {/* Overview */}
         {focusPath.length === 0 && (
-          <div className="space-y-3">
+          <div className="goals-overview space-y-3">
             {roots.map(root => (
               <OverviewCard key={root.id} node={root} nodesMap={nodesMap}
                 onEnter={id => setFocusPath([id])} onUpdate={load} />
             ))}
-            {addingRoot ? (
+            {context === 'personal' && (addingRoot ? (
               <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 px-4 py-3">
                 <AddChildInput placeholder="Название области (Здоровье, Финансы...)..." onAdd={async title => {
                   await treeApi.add({ title, parent_id: null, status: null, color: '#6B7280' })
@@ -652,13 +1047,13 @@ export default function Tree() {
                 className="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors px-1 py-1">
                 + новая область
               </button>
-            )}
+            ))}
           </div>
         )}
 
         {/* Drill-down */}
         {focusPath.length > 0 && (
-          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800">
+          <div className="goals-drill bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800">
             {/* Focus node header */}
             {focusNode && (() => {
               const s = leafStats(focusNode, nodesMap)
@@ -733,6 +1128,8 @@ export default function Tree() {
           ))}
         </div>
       )}
+      {showInitiativeForm && <DirectInitiativeDialog onClose={() => setShowInitiativeForm(false)} onCreated={initiative => { setInitiativeCreated(initiative); setShowInitiativeForm(false) }} />}
+      {initiativeCreated && <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-emerald-700 px-4 py-3 text-sm text-white shadow-xl">Initiative «{initiativeCreated.title}» создана. Work item не создавалась автоматически. <a href="/ai-reviews" className="ml-2 font-semibold underline">Открыть AI Reviews</a></div>}
     </>
   )
 }

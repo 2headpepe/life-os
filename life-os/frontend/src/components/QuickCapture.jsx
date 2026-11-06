@@ -96,11 +96,11 @@ export default function QuickCapture({ open, onClose }) {
           notes: value.length > 80 ? value : null,
           parent_id: `root-${sphere}`,
           status: 'undefined',
-        })
+        }, 'capture_saved')
       } else if (kind === 'task' || kind === 'inbox') {
-        await inbox.add(value)
+        await inbox.add(value, [], 'capture_saved')
       } else if (kind === 'memory') {
-        const entry = await memoriesApi.add({ text: value, date: memDate })
+        const entry = await memoriesApi.add({ text: value, date: memDate }, 'capture_saved')
         if (photos.length > 0) await memoriesApi.uploadPhotos(entry.id, photos)
       } else if (kind === 'insight') {
         await insightsApi.add({
@@ -108,9 +108,9 @@ export default function QuickCapture({ open, onClose }) {
           body: value,
           tags: insightTag ? [insightTag] : [],
           subtags: subtags.split(',').map(s => s.trim().replace(/\s+/g, '_')).filter(Boolean),
-        })
+        }, 'capture_saved')
       } else if (kind === 'list') {
-        await listsApi.add(listType, { title: value })
+        await listsApi.add(listType, { title: value }, 'capture_saved')
       }
       onClose()
     } catch (e) {

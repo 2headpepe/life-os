@@ -1,7 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Check, X, Target } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
+import { Check, X, Target, Shield } from 'lucide-react'
 import { habits, tree as treeApi } from '../api'
-import PageOnboarding from '../components/PageOnboarding'
+import { useRecoveryMode } from '../context/RecoveryModeContext'
+import { computeHabitScore, habitIsDone, inTimeWindow } from '../utils/habitScoring'
+import { HabitDynamics } from './Stats'
+
+export { computeHabitScore, habitIsDone, inTimeWindow } from '../utils/habitScoring'
 
 const DAYS_SHORT = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 
@@ -26,47 +31,6 @@ function getWeekStart(dateStr) {
 
 function getWeekDates(weekStart) {
   return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
-}
-
-export function inTimeWindow(tw, value) {
-  if (!value || !tw) return false
-  const crosses = tw.end <= tw.start
-  if (crosses) return value >= tw.start || value <= tw.end
-  return value >= tw.start && value <= tw.end
-}
-
-export function habitIsDone(habit, value) {
-  if (habit.kind === 'toggle') return value === true
-  if (habit.kind === 'counter') {
-    const n = typeof value === 'number' ? value : 0
-    return habit.target === 0 ? n === 0 : n >= habit.target
-  }
-  if (habit.kind === 'cycle') return Boolean(value) && (habit.cycle_scores?.[value] || 0) >= (habit.max_score || 1)
-  if (habit.kind === 'time_window') return inTimeWindow(habit.time_window, value)
-  if (habit.kind === 'bp') return Array.isArray(value) && value.length > 0
-  return false
-}
-
-export function computeHabitScore(allHabits, log) {
-  let score = 0
-  for (const h of allHabits) {
-    const v = log[h.id]
-    if (h.kind === 'toggle' && v === true) score += h.max_score || 1
-    else if (h.kind === 'counter') {
-      const n = typeof v === 'number' ? v : 0
-      if (h.target === 0) score += n === 0 ? (h.max_score || 2) : n === 1 ? 1 : 0
-      else score += n >= h.target ? (h.max_score || 2) : n > 0 ? 1 : 0
-    } else if (h.kind === 'cycle') {
-      score += h.cycle_scores?.[v] || 0
-    } else if (h.kind === 'time_window') {
-      if (!v) score += 0
-      else if (inTimeWindow(h.time_window, v)) score += h.max_score || 2
-      else score += 1
-    } else if (h.kind === 'bp') {
-      score += Array.isArray(v) && v.length > 0 ? (h.max_score || 1) : 0
-    }
-  }
-  return score
 }
 
 // ─── Tracking tab: full-size inputs ────────────────────────────────
@@ -107,23 +71,25 @@ function TrackToggle({ value, onChange }) {
 }
 
 function TrackCounter({ habit, value, onChange }) {
-  const v = typeof value === 'number' ? value : 0
-  const color = habit.target === 0
-    ? (v === 0 ? 'text-green-500' : v === 1 ? 'text-amber-500' : 'text-red-500')
-    : (v >= habit.target ? 'text-green-500' : v > 0 ? 'text-amber-500' : 'text-gray-400')
+  const isNull = value === undefined || value === null
+  const v = isNull ? 0 : (typeof value === 'number' ? value : 0)
+  const color = isNull ? 'text-gray-400'
+    : habit.target === 0
+      ? (v === 0 ? 'text-green-500' : v === 1 ? 'text-amber-500' : 'text-red-500')
+      : (v >= habit.target ? 'text-green-500' : v > 0 ? 'text-amber-500' : 'text-gray-400')
   return (
     <div className="flex items-center gap-2">
       <button
-        onClick={() => onChange(Math.max(0, v - 1))}
-        disabled={v === 0}
+        onClick={() => onChange(isNull ? null : v === 0 ? null : v - 1)}
+        disabled={isNull}
         className="w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 flex items-center justify-center"
       >−</button>
-      <span className={`text-lg font-semibold w-8 text-center ${color}`}>{v}</span>
+      <span className={`text-lg font-semibold w-8 text-center ${color}`}>{isNull ? '—' : v}</span>
       <button
-        onClick={() => onChange(v + 1)}
+        onClick={() => onChange(isNull ? 0 : v + 1)}
         className="w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-center"
       >+</button>
-      {habit.target > 0 && <span className="text-xs text-gray-400">/ {habit.target}</span>}
+      {habit.target > 0 && !isNull && <span className="text-xs text-gray-400">/ {habit.target}</span>}
     </div>
   )
 }
@@ -244,6 +210,7 @@ function HistDot({ habit, value }) {
     return <div className={`w-4 h-4 rounded-full ${color}`} />
   }
   if (habit.kind === 'counter') {
+    if (value === undefined || value === null) return <div className={empty} />
     const v = typeof value === 'number' ? value : 0
     const isGood = habit.target === 0 ? v === 0 : v >= habit.target
     const isBad = habit.target === 0 ? v >= 2 : v === 0
@@ -367,7 +334,19 @@ function buildDefs(categories, todayStr) {
 
 export default function Habits() {
   const todayStr = new Date().toISOString().slice(0, 10)
-  const [tab, setTab] = useState('track')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialTab = searchParams.get('tab') === 'dynamics' ? 'dynamics' : 'track'
+  const [tab, setTabState] = useState(initialTab)
+  const setTab = (next) => {
+    setTabState(next)
+    setSearchParams(next === 'track' ? {} : { tab: next })
+  }
+
+  useEffect(() => {
+    const requested = searchParams.get('tab')
+    if (requested === 'dynamics' && tab !== 'dynamics') setTabState('dynamics')
+    if (!requested && tab === 'dynamics') setTabState('track')
+  }, [searchParams, tab])
   const [treeNodes, setTreeNodes] = useState([])
   const [goalPickerFor, setGoalPickerFor] = useState(null)
   const [collapsedCats, setCollapsedCats] = useState(
@@ -379,6 +358,11 @@ export default function Habits() {
     localStorage.setItem('habitCollapsedCats', JSON.stringify([...next]))
     return next
   })
+  const [recoveryExpanded, setRecoveryExpanded] = useState(new Set())
+  const toggleCatRecovery = (cat) => setRecoveryExpanded(prev => {
+    const next = new Set(prev); next.has(cat) ? next.delete(cat) : next.add(cat); return next
+  })
+  const { isRecoveryMode } = useRecoveryMode()
   const [trackDate, setTrackDate] = useState(todayStr)
   const [histWeekStart, setHistWeekStart] = useState(getWeekStart(todayStr))
 
@@ -482,6 +466,13 @@ export default function Habits() {
     await saveDefs(updated)
   }
 
+  const toggleFoundation = async (habitId) => {
+    const updated = rawCategories.map(c => ({
+      ...c, habits: c.habits.map(h => h.id === habitId ? { ...h, foundation: !h.foundation } : h)
+    }))
+    await saveDefs(updated)
+  }
+
   const submitAddHabit = async () => {
     const { label, categoryId, kind, target } = addForm
     if (!label.trim()) return
@@ -507,7 +498,7 @@ export default function Habits() {
     setDayLog(updatedLog)
     const score = computeHabitScore(defs, updatedLog)
     setDayScore(score)
-    await habits.saveLog(trackDate, { date: trackDate, habits: updatedLog, score, notes: '' })
+    await habits.saveLog(trackDate, { date: trackDate, habits: updatedLog, score, notes: '' }, 'habit_progress')
     const weekDates = getWeekDates(histWeekStart)
     if (weekDates.includes(trackDate)) {
       setWeekLogs(prev => ({ ...prev, [trackDate]: updatedLog }))
@@ -524,11 +515,12 @@ export default function Habits() {
   const histWeekDates = getWeekDates(histWeekStart)
 
   return (
-    <div className="max-w-2xl mx-auto py-8 px-6">
-      <PageOnboarding pageId="habits" />
-      {/* Tabs */}
-      <div className="flex items-center gap-1 mb-6 bg-gray-100 dark:bg-gray-800 rounded-xl p-1 w-fit">
-        {[['track', 'Трекинг'], ['history', 'История'], ['gaps', 'Пропуски']].map(([id, label]) => (
+    <div className="habits-page max-w-2xl mx-auto py-8 px-6">
+      <div className="habits-header">
+        <div><p className="habits-kicker">Life OS · ежедневный ритм</p><h1>Привычки</h1></div>
+        {/* Tabs */}
+        <div className="habits-tabs flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1 w-fit">
+        {[['track', 'Трекинг'], ['history', 'История'], ['dynamics', 'Динамика'], ['gaps', 'Пропуски']].map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -537,12 +529,13 @@ export default function Habits() {
                            : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
           >{label}</button>
         ))}
+        </div>
       </div>
 
       {/* ─── TRACKING TAB ─── */}
       {tab === 'track' && (
         <>
-          <div className="flex items-center gap-3 mb-5">
+          <div className="habits-date-nav flex items-center gap-3 mb-5">
             <button
               onClick={() => setTrackDate(d => addDays(d, -1))}
               className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -565,8 +558,9 @@ export default function Habits() {
           </div>
 
           {/* Score bar */}
-          <div className="flex items-center gap-3 mb-6 px-4 py-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
+          <div className="habits-score flex items-center gap-3 mb-6 px-4 py-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
             <div className="flex-1">
+              <div className="habits-score-label">Ритм дня</div>
               <div className="w-full h-3 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                 <div className={`h-full rounded-full transition-all duration-300 ${barColor}`} style={{ width: `${pct * 100}%` }} />
               </div>
@@ -577,24 +571,65 @@ export default function Habits() {
 
           {/* Habits grouped by category */}
           <div className="space-y-2">
-            {Object.entries(grouped).map(([cat, catHabits]) => {
-              const collapsed = collapsedCats.has(cat)
-              const catDone = catHabits.filter(h => habitIsDone(h, dayLog[h.id])).length
+            {/* Foundation section — always at top */}
+            {(() => {
+              const foundationHabits = defs.filter(h => h.foundation)
+              if (!foundationHabits.length) return null
+              const foundationDone = foundationHabits.filter(h => habitIsDone(h, dayLog[h.id])).length
+              const allDone = foundationDone === foundationHabits.length
               return (
-              <div key={cat} className="card overflow-hidden">
+                <div className={`habits-foundation card overflow-hidden border-2 ${allDone ? 'border-green-200 dark:border-green-800' : 'border-amber-200 dark:border-amber-800/60'}`}>
+                  <div className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider bg-amber-50/50 dark:bg-amber-900/10 border-b border-amber-100 dark:border-amber-800/40">
+                    <span className="text-amber-500 dark:text-amber-400">◈</span>
+                    <span className="flex-1 text-left text-amber-600 dark:text-amber-400">Фундамент</span>
+                    <span className={`normal-case tracking-normal tabular-nums font-medium ${allDone ? 'text-green-500' : 'text-amber-500'}`}>{foundationDone}/{foundationHabits.length}</span>
+                  </div>
+                  {foundationHabits.map((h, idx) => (
+                    <div
+                      key={h.id}
+                      className={`flex items-center gap-4 px-4 py-3 ${idx < foundationHabits.length - 1 ? 'border-b border-gray-50 dark:border-gray-800/50' : ''}`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-gray-800 dark:text-gray-200 font-medium">{h.label}</div>
+                        {h.detail && <div className="text-xs text-gray-400 mt-0.5">{h.detail}</div>}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <TrackInput habit={h} value={dayLog[h.id]} onChange={(val) => updateHabit(h.id, val)} editable={trackDate <= todayStr} />
+                        <button
+                          onClick={() => toggleFoundation(h.id)}
+                          title="Убрать из фундамента"
+                          className="text-amber-400 hover:text-gray-400 transition-colors"
+                        ><Shield size={13} fill="currentColor" /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
+
+            {/* Non-foundation categories */}
+            {Object.entries(grouped)
+              .map(([cat, catHabits]) => {
+                const nonFoundationHabits = catHabits.filter(h => !h.foundation)
+                if (!nonFoundationHabits.length) return null
+                const collapsed = isRecoveryMode ? !recoveryExpanded.has(cat) : collapsedCats.has(cat)
+                const toggleFn = isRecoveryMode ? () => toggleCatRecovery(cat) : () => toggleCat(cat)
+                const catDone = nonFoundationHabits.filter(h => habitIsDone(h, dayLog[h.id])).length
+                return (
+              <div key={cat} className="habits-category card overflow-hidden">
                 <button
-                  onClick={() => toggleCat(cat)}
+                  onClick={toggleFn}
                   className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider bg-gray-50/50 dark:bg-gray-900/30 border-b border-gray-100 dark:border-gray-800 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                 >
                   <span className={`text-gray-300 dark:text-gray-600 transition-transform ${collapsed ? '' : 'rotate-90'}`}>›</span>
                   <span className="flex-1 text-left">{cat}</span>
-                  <span className="normal-case tracking-normal tabular-nums text-gray-400">{catDone}/{catHabits.length}</span>
+                  <span className="normal-case tracking-normal tabular-nums text-gray-400">{catDone}/{nonFoundationHabits.length}</span>
                 </button>
-                {!collapsed && catHabits.map((h, idx) => (
+                {!collapsed && nonFoundationHabits.map((h, idx) => (
                   <div
                     key={h.id}
                     className={`flex items-center gap-4 px-4 py-3
-                      ${idx < catHabits.length - 1 ? 'border-b border-gray-50 dark:border-gray-800/50' : ''}`}
+                      ${idx < nonFoundationHabits.length - 1 ? 'border-b border-gray-50 dark:border-gray-800/50' : ''}`}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="text-sm text-gray-800 dark:text-gray-200 font-medium">{h.label}</div>
@@ -647,6 +682,11 @@ export default function Habits() {
                         className={`transition-colors text-xs leading-none ${h.node_id ? 'text-blue-400 hover:text-blue-500' : 'text-gray-300 dark:text-gray-700 hover:text-blue-400'}`}
                       ><Target size={13} /></button>
                       <button
+                        onClick={() => toggleFoundation(h.id)}
+                        title="Добавить в фундамент (режим восстановления)"
+                        className="text-gray-300 dark:text-gray-700 hover:text-amber-400 transition-colors"
+                      ><Shield size={13} /></button>
+                      <button
                         onClick={() => { setPauseTarget(h.id); setPauseDate(addDays(todayStr, 7)) }}
                         title="Поставить на паузу"
                         className="text-gray-300 dark:text-gray-700 hover:text-amber-400 transition-colors text-xs leading-none"
@@ -655,12 +695,13 @@ export default function Habits() {
                   </div>
                 ))}
               </div>
-            )})}
+              )
+            }).filter(Boolean)}
           </div>
 
           {/* Paused habits */}
           {pausedHabits.length > 0 && (
-            <div className="mt-4">
+            <div className="habits-paused mt-4">
               <div className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-2 px-1">На паузе</div>
               <div className="card overflow-hidden">
                 {pausedHabits.map((h, idx) => (
@@ -677,7 +718,7 @@ export default function Habits() {
           {/* Add habit */}
           <button
             onClick={() => { setAddForm(f => ({ ...f, categoryId: rawCategories[0]?.id || '' })); setShowAddModal(true) }}
-            className="mt-4 w-full py-2.5 text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl transition-colors"
+            className="habits-add mt-4 w-full py-2.5 text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl transition-colors"
           >+ Добавить привычку</button>
         </>
       )}
@@ -715,7 +756,7 @@ export default function Habits() {
             ))}
           </div>
 
-          <div className="card overflow-x-auto">
+          <div className="habits-history card overflow-x-auto">
             {/* Day headers — click to jump to Трекинг for that day */}
             <div className="grid border-b border-gray-100 dark:border-gray-800" style={{ gridTemplateColumns: '1fr repeat(7, 48px)' }}>
               <div className="px-4 py-2" />
@@ -781,6 +822,9 @@ export default function Habits() {
           </div>
         </>
       )}
+
+      {/* ─── DYNAMICS TAB ─── */}
+      {tab === 'dynamics' && <HabitDynamics embedded onOpenTracking={() => setTab('track')} />}
 
       {/* ─── GAPS TAB ─── */}
       {tab === 'gaps' && (
