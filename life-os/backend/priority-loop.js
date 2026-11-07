@@ -1,0 +1,54 @@
+const COVERAGE_WEIGHT = { blocked: 60, uncovered: 50, not_reviewed: 50, partial: 30, stale: 20, not_verifiable: 10, current: 0 }
+
+function evidenceState(zone) {
+  const states = Object.values(zone?.axes || {}).map(axis => axis?.state).filter(Boolean)
+  if (states.includes('blocked')) return 'blocked'
+  if (states.includes('not_reviewed')) return 'uncovered'
+  if (states.includes('partial')) return 'partial'
+  if (states.includes('needs_verification')) return 'stale'
+  if (states.includes('current')) return 'current'
+  return 'not_verifiable'
+}
+
+// This ranks evidence gaps for presentation only. It never writes task priority
+// or creates work; a stable id makes equally ranked candidates reproducible.
+export function buildPriorityCandidates(registry, { limit = 3 } = {}) {
+  const candidates = (registry?.zones || []).map(zone => {
+    const state = evidenceState(zone)
+    const reasons = [`coverage:${state}`]
+    const critical = (COVERAGE_WEIGHT[state] || 0) > 0 ? (zone.kind === 'journey' ? 15 : zone.kind === 'route' ? 10 : 0) : 0
+    if (critical) reasons.unshift(`declared_${zone.kind}`)
+    const score = (COVERAGE_WEIGHT[state] || 0) + critical
+    return {
+      id: `priority:${zone.id}`,
+      zone_id: zone.id,
+      title: zone.id,
+      state,
+      score,
+      reasons,
+      source_refs: [...new Set(Object.values(zone.axes || {}).flatMap(axis => axis?.source_refs || []))],
+      unknowns: state === 'not_verifiable' ? ['Evidence cannot establish a review conclusion.'] : [],
+    }
+  })
+  return candidates
+    .filter(candidate => candidate.score > 0)
+    .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
+    .slice(0, limit)
+}
+
+export function priorityPacket(registry) {
+  const candidates = buildPriorityCandidates(registry)
+  const candidate_set_checksum = candidates.map(candidate => `${candidate.id}:${candidate.score}:${[...candidate.source_refs].sort().join(',')}`).join('|') || 'empty'
+  return {
+    state: candidates.length ? 'awaiting_user_decision' : 'no_follow_up',
+    candidates,
+    candidate_set_checksum,
+    reminder: candidates.length ? {
+      state: 'draft',
+      cadence_days: 7,
+      dismiss_rule: 'Dismiss remains active until the candidate set changes.',
+      message: 'Есть непроверенные зоны; первым показан наиболее важный кандидат.',
+    } : null,
+    limits: ['Ranking is a recommendation, not task priority.', 'No initiative, delivery work, schedule, or product change is created.'],
+  }
+}

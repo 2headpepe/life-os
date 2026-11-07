@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Circle, Clock, CircleDot, CheckCircle2, CircleDashed, CircleMinus, Lock, Sparkles, Repeat } from 'lucide-react'
+import { Circle, Clock, CircleDot, CheckCircle2, CircleDashed, CircleMinus, Lock, Sparkles, Repeat, Star } from 'lucide-react'
 import { tree as treeApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
 
@@ -18,18 +18,22 @@ function formatDue(dueStr) {
 const STATUS_CFG = {
   undefined:   { Icon: Circle,       cls: 'text-red-400',   label: 'Не определено' },
   scheduled:   { Icon: Clock,        cls: 'text-blue-400',  label: 'Запланировано' },
+  needs_grooming: { Icon: Sparkles, cls: 'text-violet-400', label: 'Требует проработки' },
+  backlog:     { Icon: CircleDashed, cls: 'text-slate-400', label: 'Бэклог' },
+  ready:       { Icon: Circle,       cls: 'text-cyan-500',  label: 'Готово к старту' },
   in_progress: { Icon: CircleDot,    cls: 'text-amber-400', label: 'В работе' },
+  waiting_for_review: { Icon: Clock, cls: 'text-fuchsia-500', label: 'На проверке' },
   done:        { Icon: CheckCircle2, cls: 'text-green-400', label: 'Готово' },
   someday:     { Icon: CircleDashed, cls: 'text-gray-400',  label: 'Когда-нибудь' },
   dropped:     { Icon: CircleMinus,  cls: 'text-gray-300',  label: 'Отменено' },
 }
 
-const ACTIVE_STATUSES = ['undefined', 'scheduled', 'in_progress', 'done', 'someday', 'dropped']
+const ACTIVE_STATUSES = ['undefined', 'needs_grooming', 'backlog', 'ready', 'scheduled', 'in_progress', 'waiting_for_review', 'done', 'someday', 'dropped']
 
 const RECURRENCE_OPTS = [[null, 'Нет'], ['daily', 'День'], ['weekly', 'Неделя'], ['monthly', 'Месяц']]
 const RECURRENCE_LABELS = { daily: 'каждый день', weekly: 'каждую неделю', monthly: 'каждый месяц' }
 
-function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecurrenceSave, onDelete, onConsole, compact = false }) {
+function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecurrenceSave, onDelete, onConsole, onCore, compact = false }) {
   const [editingDue, setEditingDue] = useState(false)
   const [editingTime, setEditingTime] = useState(false)
 
@@ -126,6 +130,20 @@ function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecur
           <Sparkles size={12} />
           AI
         </button>
+        {onCore && (
+          <button
+            onClick={onCore}
+            title={node.core ? 'Убрать из ядра' : 'Добавить в ядро — виден в режиме восстановления'}
+            className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg transition-colors ${
+              node.core
+                ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20'
+                : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+            }`}
+          >
+            <Star size={12} fill={node.core ? 'currentColor' : 'none'} />
+            Ядро
+          </button>
+        )}
         <button onClick={onDelete} className="text-xs px-2.5 py-1 rounded-lg text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20">
           Удалить
         </button>
@@ -150,7 +168,7 @@ export default function NodeCard({ node, onUpdate, row = false, draggable: isDra
   const handleDone = async (e) => {
     e.stopPropagation()
     setCompleting(true)
-    await treeApi.update(node.id, { status: 'done' })
+    await treeApi.update(node.id, { status: 'done' }, 'task_progress')
     onUpdate?.()
   }
   const handleStatus = async (s) => { await treeApi.update(node.id, { status: s }); onUpdate?.() }
@@ -177,6 +195,10 @@ export default function NodeCard({ node, onUpdate, row = false, draggable: isDra
     await treeApi.delete(node.id)
     onUpdate?.()
   }
+  const handleCore = async () => {
+    await treeApi.update(node.id, { core: !node.core })
+    onUpdate?.()
+  }
 
   const consoleCtx = `Задача: "${node.title}"\nДомен: ${node.root_title}${node.path?.length ? `\nПуть: ${node.path.join(' › ')}` : ''}${node.due ? `\nДедлайн: ${node.due}` : ''}${node.time ? `\nВремя: ${node.time}` : ''}${node.notes ? `\nЗаметки: ${node.notes}` : ''}`
 
@@ -191,6 +213,7 @@ export default function NodeCard({ node, onUpdate, row = false, draggable: isDra
       onRecurrenceSave={handleRecurrenceSave}
       onDelete={handleDelete}
       onConsole={() => openInConsole(consoleCtx)}
+      onCore={handleCore}
       compact={row}
     />
   )
@@ -230,6 +253,9 @@ export default function NodeCard({ node, onUpdate, row = false, draggable: isDra
 
           {node.recurrence && (
             <Repeat size={11} className="text-gray-400 flex-shrink-0" title={RECURRENCE_LABELS[node.recurrence]} />
+          )}
+          {node.core && (
+            <Star size={10} className="text-amber-400 flex-shrink-0 flex-shrink-0" fill="currentColor" title="Ядро" />
           )}
           {node.time && (
             <span className="text-xs text-gray-400 flex-shrink-0 tabular-nums">{node.time.slice(0, 5)}</span>

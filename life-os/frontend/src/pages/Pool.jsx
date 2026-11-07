@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { tree as treeApi } from '../api'
 import NodeCard from '../components/NodeCard'
+import { SlidersHorizontal, X } from 'lucide-react'
+import { filterAndRank, parseWorkView, workViewSearch } from '../utils/workControlPlane'
 
 const STATUS_TABS = [
   { id: 'all',         label: 'Все' },
@@ -78,7 +81,7 @@ function KanbanBoard({ items, onUpdate }) {
         <KanbanColumn
           key={col.id}
           {...col}
-          items={items.filter(n => (n.status || 'undefined') === col.id)}
+          items={items.filter(n => col.id === 'blocked' ? n.is_blocked : !n.is_blocked && (n.status || 'undefined') === col.id)}
           onUpdate={onUpdate}
         />
       ))}
@@ -107,31 +110,41 @@ function IconKanban() {
 }
 
 export default function Pool({ sphere: rootFilter }) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const initialView = parseWorkView(location.search)
   const [allLeaves, setAllLeaves] = useState([])
   const [roots, setRoots]         = useState([])
-  const [group, setGroup]         = useState('domain')
-  const [filterRoot, setFilterRoot] = useState(null)
-  const [statusTab, setStatusTab]   = useState('all')
+  const [group, setGroup]         = useState(initialView.sort === 'suggested' ? 'flat' : 'domain')
+  const [viewState, setViewState] = useState(initialView)
   const [view, setView]             = useState('list')
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [loading, setLoading]       = useState(true)
 
   const load = async () => {
     const [leaves, nodes] = await Promise.all([treeApi.leaves(), treeApi.all()])
     setAllLeaves(leaves.filter(n => n.status !== 'done' && n.status !== 'dropped' && !n.calendar_id))
-    setRoots(nodes.filter(n => !n.parent_id))
+    setRoots(nodes.filter(n => !n.parent_id && (n.work_context || 'personal') === viewState.context))
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [])
-  useEffect(() => { if (rootFilter) setFilterRoot(rootFilter) }, [rootFilter])
+  useEffect(() => { load() }, [viewState.context])
+  useEffect(() => {
+    const next = parseWorkView(location.search)
+    setViewState(next)
+  }, [location.search])
+  useEffect(() => {
+    const search = workViewSearch(viewState)
+    if (search !== location.search.slice(1)) navigate({ pathname: '/pool', search: search ? `?${search}` : '' }, { replace: true })
+  }, [viewState, location.search, navigate])
+  useEffect(() => { if (rootFilter) setViewState(current => ({ ...current, roots: [rootFilter] })) }, [rootFilter])
 
-  const byDomain = filterRoot
-    ? allLeaves.filter(n => n.root_id === filterRoot)
-    : allLeaves
-
-  const active = statusTab === 'all'
-    ? byDomain
-    : byDomain.filter(n => (n.status || 'undefined') === statusTab)
+  const contextLeaves = allLeaves.filter(n => (n.work_context || 'personal') === viewState.context)
+  const active = filterAndRank(contextLeaves, viewState)
+  const byDomain = active
+  const statusTab = viewState.statuses[0] || 'all'
+  const filterRoot = viewState.roots[0] || null
+  const updateView = patch => setViewState(current => ({ ...current, ...patch }))
 
   const renderGroups = () => {
     if (group === 'domain') {
@@ -163,10 +176,10 @@ export default function Pool({ sphere: rootFilter }) {
   }
 
   return (
-    <div className={view === 'kanban' ? 'py-8 px-6' : 'max-w-3xl mx-auto py-8 px-6'}>
+    <div className={`pool-page ${view === 'kanban' ? 'py-8 px-6' : 'max-w-3xl mx-auto py-8 px-6'}`}>
       {/* Header */}
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
-        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Задачи</h1>
+        <div><p className="pool-kicker">Life OS · рабочий поток</p><h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Задачи</h1></div>
         <div className="flex items-center gap-2">
           {/* View toggle */}
           <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
@@ -182,7 +195,7 @@ export default function Pool({ sphere: rootFilter }) {
               <IconList />
             </button>
             <button
-              onClick={() => setView('kanban')}
+            onClick={() => { setView('kanban'); setFiltersOpen(false) }}
               className={`px-2.5 py-1.5 transition-colors border-l border-gray-200 dark:border-gray-700 ${
                 view === 'kanban'
                   ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900'
@@ -193,37 +206,28 @@ export default function Pool({ sphere: rootFilter }) {
               <IconKanban />
             </button>
           </div>
-          {/* Group select (list only) */}
-          {view === 'list' && (
-            <select
-              value={group}
-              onChange={e => setGroup(e.target.value)}
-              className="text-xs px-2 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 outline-none cursor-pointer"
-            >
-              {GROUP_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-            </select>
-          )}
+          {view === 'list' && <button onClick={() => setFiltersOpen(v => !v)} aria-expanded={filtersOpen} className={`pool-filter-button ${filtersOpen ? 'is-open' : ''}`}><SlidersHorizontal size={14} />Фильтры{statusTab !== 'all' && <span>•</span>}</button>}
         </div>
       </div>
 
       {/* Domain filter pills */}
       <div className="flex flex-wrap gap-1.5 mb-3">
         <button
-          onClick={() => setFilterRoot(null)}
+          onClick={() => updateView({ roots: [] })}
           className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
             !filterRoot ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900' : 'bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200'
           }`}
         >
-          Все ({allLeaves.length})
+          Все ({contextLeaves.length})
         </button>
         {roots.map(root => {
-          const count = allLeaves.filter(n => n.root_id === root.id).length
+          const count = contextLeaves.filter(n => n.root_id === root.id).length
           if (count === 0) return null
           const isActive = filterRoot === root.id
           return (
             <button
               key={root.id}
-              onClick={() => setFilterRoot(isActive ? null : root.id)}
+              onClick={() => updateView({ roots: isActive ? [] : [root.id] })}
               className={`px-3 py-1 rounded-full text-xs font-medium transition-colors flex items-center gap-1.5 ${
                 isActive ? 'text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200'
               }`}
@@ -236,18 +240,19 @@ export default function Pool({ sphere: rootFilter }) {
         })}
       </div>
 
-      {/* Status filter tabs (list only) */}
-      {view === 'list' && (
+      {filtersOpen && <div className="pool-filter-panel space-y-2">{view === 'list' && <label>Группировка<select value={group} onChange={e => setGroup(e.target.value)}>{GROUP_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select></label>}<label className="block text-xs text-gray-500">Контекст<select value={viewState.context} onChange={e => updateView({ context: e.target.value, roots: [], statuses: [], task: '' })}><option value="personal">Личное</option><option value="delivery">Delivery</option></select></label><label className="block text-xs text-gray-500">Поиск<input value={viewState.q} onChange={e => updateView({ q: e.target.value })} className="ml-2 rounded border px-1" /></label>{viewState.context === 'delivery' && <><label className="block text-xs text-gray-500">Исполнитель<input value={viewState.owner} onChange={e => updateView({ owner: e.target.value })} className="ml-2 rounded border px-1" /></label><label className="flex items-center gap-2 text-xs text-gray-500"><input type="checkbox" checked={viewState.ready} onChange={e => updateView({ ready: e.target.checked })} />Только готовые</label><label className="flex items-center gap-2 text-xs text-gray-500"><input type="checkbox" checked={viewState.sort === 'suggested'} onChange={e => updateView({ sort: e.target.checked ? 'suggested' : 'default' })} />Рекомендованный порядок</label></>}<button onClick={() => updateView({ ...parseWorkView(''), context: viewState.context })}><X size={13} />Сбросить</button></div>}
+      {/* Status filter tabs are secondary controls, revealed with Filters. */}
+      {view === 'list' && filtersOpen && (
         <div className="flex gap-1 mb-6 border-b border-gray-100 dark:border-gray-800">
           {STATUS_TABS.map(tab => {
             const count = tab.id === 'all'
               ? byDomain.length
-              : byDomain.filter(n => (n.status || 'undefined') === tab.id).length
+              : tab.id === 'blocked' ? byDomain.filter(n => n.is_blocked).length : byDomain.filter(n => (n.status || 'undefined') === tab.id).length
             if (tab.id !== 'all' && count === 0) return null
             return (
               <button
                 key={tab.id}
-                onClick={() => setStatusTab(tab.id)}
+                onClick={() => updateView({ statuses: tab.id === 'all' ? [] : [tab.id], blocked: tab.id === 'blocked' ? true : null })}
                 className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
                   statusTab === tab.id
                     ? 'border-gray-900 dark:border-white text-gray-900 dark:text-white'
@@ -269,7 +274,7 @@ export default function Pool({ sphere: rootFilter }) {
       ) : active.length === 0 ? (
         <p className="text-sm text-gray-400">Нет задач</p>
       ) : (
-        renderGroups()
+        <>{viewState.context === 'delivery' && viewState.sort === 'suggested' && <div className="mb-4 rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-xs text-cyan-900 dark:border-cyan-900 dark:bg-cyan-950/30 dark:text-cyan-100"><b>Рекомендованный порядок</b><p className="mt-1">Это read-only подсказка: порядок объясняется готовностью, handoff и совпадением с запросом. Она не выбирает и не изменяет задачи.</p></div>}{viewState.task && <div className="mb-4 text-xs text-gray-500">Текущая задача сессии: {active.find(node => node.id === viewState.task)?.title || 'не входит в эту выборку'}. В URL может быть только одна такая задача.</div>}{renderGroups()}</>
       )}
     </div>
   )

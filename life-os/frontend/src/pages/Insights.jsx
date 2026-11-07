@@ -3,7 +3,6 @@ import { ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { insights as insightsApi } from '../api'
 import { useSpheres } from '../SpheresContext'
 import MarkdownContent from '../components/MarkdownContent'
-import PageOnboarding from '../components/PageOnboarding'
 
 const SUBTAG_PALETTES = [
   { bg: 'bg-blue-100 dark:bg-blue-900/40',     text: 'text-blue-700 dark:text-blue-300' },
@@ -62,7 +61,7 @@ function InsightCard({ item, expanded, onToggle, activeSubtag, onSubtagClick, SP
 
   return (
     <div
-      className="card overflow-hidden cursor-pointer hover:shadow-md transition-shadow border-l-[3px]"
+      className="insight-card card overflow-hidden cursor-pointer hover:shadow-md transition-shadow border-l-[3px]"
       style={{ borderLeftColor: accentColor }}
       onClick={onToggle}
     >
@@ -273,10 +272,9 @@ export default function Insights() {
   ]
 
   return (
-    <div>
-      <PageOnboarding pageId="insights" />
+    <div className="insights-page">
       {/* Tab switcher */}
-      <div className="flex gap-1 px-6 pt-6 pb-0">
+      <div className="insights-tabs flex gap-1 px-6 pt-6 pb-0">
         {TABS.map(t => (
           <button
             key={t.id}
@@ -297,9 +295,10 @@ export default function Insights() {
       {tab === 'notes' && <NotesTab />}
 
       {tab === 'insights' && (
-        <div className="max-w-2xl mx-auto px-6 py-8">
-          <div className="flex items-center justify-between mb-6">
+        <div className="insights-content max-w-2xl mx-auto px-6 py-8">
+          <div className="insights-header flex items-center justify-between mb-6">
             <div>
+              <p className="insights-kicker">Life OS · наблюдения</p>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Инсайты</h1>
               <p className="text-sm text-gray-400 mt-0.5">Всё важное, что сохранено, но ещё не стало задачей</p>
             </div>
@@ -371,7 +370,7 @@ export default function Insights() {
             </div>
           )}
 
-          <div className="relative mb-3">
+          <div className="insights-search relative mb-3">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               value={search}
@@ -381,7 +380,7 @@ export default function Insights() {
             />
           </div>
 
-          <div className="flex items-center justify-between gap-2 mb-4">
+          <div className="insights-controls flex items-center justify-between gap-2 mb-4">
             <select
               value={sort}
               onChange={e => setSort(e.target.value)}
@@ -402,7 +401,7 @@ export default function Insights() {
           </div>
 
           {allTopTags.length > 0 && (
-            <div className="flex gap-2 mb-2">
+            <div className="insights-top-tags flex gap-2 mb-2">
               {allTopTags.map(tag => {
                 const s = TOP_TAG_STYLES[tag] || { bg: 'bg-gray-400', text: 'text-white' }
                 const isActive = activeTopTag === tag

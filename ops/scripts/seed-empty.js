@@ -161,6 +161,13 @@ const dirs = [
   'calendars',
 ]
 
+// Product intelligence is an empty, local control-plane.  It is intentionally
+// separate from brain/: no review transcript or personal content is seeded.
+const productIntelligenceFiles = [
+  'opportunities.jsonl', 'initiatives.jsonl', 'review-actions.jsonl',
+  'priority-reminders.jsonl', 'priority-rechecks.jsonl',
+]
+
 async function seed() {
   let created = 0
   let skipped = 0
@@ -181,6 +188,13 @@ async function seed() {
 
   for (const rel of dirs) {
     await fs.mkdir(path.join(CONTENT, rel), { recursive: true })
+  }
+
+  const intelligenceDir = path.join(ROOT, 'ops/product-intelligence')
+  await fs.mkdir(intelligenceDir, { recursive: true })
+  for (const name of productIntelligenceFiles) {
+    const target = path.join(intelligenceDir, name)
+    try { await fs.access(target) } catch { await fs.writeFile(target, '') }
   }
 
   // Empty brain/people and brain/topics dirs

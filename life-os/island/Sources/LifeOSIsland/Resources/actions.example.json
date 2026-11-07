@@ -1,0 +1,44 @@
+{
+  "actions": [
+    {
+      "id": "open-life-os",
+      "title": "Open Life OS",
+      "subtitle": "Open your personal dashboard",
+      "icon": "square.grid.2x2",
+      "kind": "url",
+      "value": "http://localhost:5173"
+    },
+    {
+      "id": "capture",
+      "title": "Capture thought",
+      "subtitle": "Open the inbox",
+      "icon": "square.and.pencil",
+      "kind": "url",
+      "value": "http://localhost:5173/inbox"
+    },
+    {
+      "id": "today",
+      "title": "Today plan",
+      "subtitle": "See the focus for today",
+      "icon": "calendar",
+      "kind": "url",
+      "value": "http://localhost:5173/today"
+    },
+    {
+      "id": "focus",
+      "title": "Start focus",
+      "subtitle": "Open today and choose one task",
+      "icon": "play.circle",
+      "kind": "url",
+      "value": "http://localhost:5173/today"
+    },
+    {
+      "id": "script",
+      "title": "Run script",
+      "subtitle": "Example local command",
+      "icon": "chevron.left.forwardslash.chevron.right",
+      "kind": "command",
+      "value": "open http://localhost:5173"
+    }
+  ]
+}

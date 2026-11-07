@@ -52,6 +52,16 @@ export const tree = {
   add:    (node)      => api.post('/tree', node),
   update: (id, patch) => api.patch(`/tree/${id}`, patch),
   delete: (id)        => fetch(`/api/tree/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  createDependency: (id, payload) => api.post(`/tree/${id}/dependencies`, payload),
+  eligibleExistingDependencies: (id) => api.get(`/tree/${id}/eligible-existing-dependencies`),
+  linkExistingDependency: (id, dependency_id) => api.post(`/tree/${id}/existing-dependencies`, { dependency_id }),
+  saveHandoff: (id, handoff_contract) => api.patch(`/tree/${id}/handoff-contract`, { handoff_contract }),
+  verify: (id, payload) => api.post(`/tree/${id}/verification`, payload),
+}
+
+export const focus = {
+  get: () => api.get('/focus'),
+  action: (component_id, action, payload = {}) => api.post('/focus/action', { component_id, action, ...payload }),
 }
 
 export const config = {
@@ -125,6 +135,17 @@ export const ai = {
     body: JSON.stringify({ task, params }),
   }).then(r => r.json()),
 }
+
+export const aiReviews = {
+  all: () => api.get('/ai-reviews'),
+  action: (action, target_ref) => api.post('/product-intelligence/review-actions', { action, target_ref }),
+  reminder: (action, candidate_set_checksum) => api.post('/product-intelligence/priority-loop/reminder', { action, candidate_set_checksum }),
+  recheck: (action, delivery_task_id, candidate_set_checksum) => api.post('/product-intelligence/priority-loop/recheck-drafts', { action, delivery_task_id, candidate_set_checksum }),
+  createInitiative: (payload) => api.post('/product-intelligence/initiatives', payload),
+  createWorkItem: (initiativeId, payload) => api.post(`/product-intelligence/initiatives/${initiativeId}/work-items`, payload),
+}
+
+export const productIntelligence = aiReviews
 
 export const memories = {
   all: (date = null) => api.get(date ? `/memories?date=${date}` : '/memories'),

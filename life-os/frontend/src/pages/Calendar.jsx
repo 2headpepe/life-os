@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { events as eventsApi, tree as treeApi, sync as syncApi, calendars as calendarsApi } from '../api'
-import PageOnboarding from '../components/PageOnboarding'
 
 const LS_HIDDEN = 'life-os-hidden-calendars'
 const LS_FILTERS = 'life-os-cal-filters'
@@ -153,7 +152,7 @@ function ItemChip({ item, calColor, onToggleWatched, compact }) {
   return (
     <>
       <div ref={chipRef} onMouseEnter={show} onMouseLeave={() => setTip(null)}
-        className={`${cls} rounded truncate mb-0.5 flex items-center gap-0.5 whitespace-nowrap bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-200 border group`}
+        className={`calendar-item-chip ${cls} rounded truncate mb-0.5 flex items-center gap-0.5 whitespace-nowrap bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-200 border group`}
         style={{ borderLeft: `3px solid ${color}`, border: `1px solid ${color}30` }} title={full}>
         {hasCal && (
           <span onClick={e => { e.stopPropagation(); onToggleWatched?.(item) }}
@@ -185,7 +184,7 @@ function ItemChip({ item, calColor, onToggleWatched, compact }) {
 function MonthView({ year, month, allEvents, allTasks, today, onNewEvent, calMap, onToggleWatched }) {
   const days = getMonthDays(year, month)
   return (
-    <div className="card">
+    <div className="calendar-grid card">
       <div className="grid grid-cols-7 border-b border-gray-100 dark:border-gray-800">
         {DOW.map(d => <div key={d} className="py-2 text-center text-xs font-medium text-gray-400">{d}</div>)}
       </div>
@@ -228,7 +227,7 @@ function HourGrid({ dates, allEvents, allTasks, today, onNewEvent, calMap, onTog
   ]
 
   return (
-    <div className="card flex flex-col flex-1 min-h-0 overflow-hidden">
+    <div className="calendar-week-grid card flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Day headers */}
       <div className="grid border-b border-gray-100 dark:border-gray-800" style={{ gridTemplateColumns: `48px repeat(${dates.length}, minmax(0, 1fr))` }}>
         <div className="py-2 px-2 text-xs text-gray-300" />
@@ -354,12 +353,11 @@ export default function Calendar() {
   const weekDates = getWeekDates(pivot)
 
   return (
-    <div className="py-4 px-4 h-full flex flex-col">
-      <PageOnboarding pageId="calendar" />
+    <div className="calendar-page py-4 px-4 h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-2 flex-shrink-0">
-        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Календарь</h1>
-        <div className="flex items-center gap-2 flex-wrap">
+      <div className="calendar-header flex items-center justify-between mb-3 flex-wrap gap-2 flex-shrink-0">
+        <div className="calendar-titleblock"><p>Life OS · планирование</p><h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Календарь</h1></div>
+        <div className="calendar-toolbar flex items-center gap-2 flex-wrap">
           <button onClick={syncToGCal} disabled={gcalStatus === 'syncing'}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors">
             {gcalStatus === 'syncing' ? '⏳ Синхронизация...' : gcalStatus === 'done' ? '✅ Готово' : gcalStatus === 'error' ? '❌ Ошибка' : '📅 Sync GCal'}
@@ -370,14 +368,14 @@ export default function Calendar() {
             ))}
           </div>
           {view === 'month' && (
-            <div className="flex items-center gap-2">
+            <div className="calendar-period flex items-center gap-2">
               <button onClick={prevMonth} className="btn btn-ghost">‹</button>
               <span className="text-sm font-medium text-gray-700 dark:text-gray-300 min-w-[120px] text-center">{MONTH_NAMES[month]} {year}</span>
               <button onClick={nextMonth} className="btn btn-ghost">›</button>
             </div>
           )}
           {(view === 'week' || view === 'day') && (
-            <div className="flex items-center gap-2">
+            <div className="calendar-period flex items-center gap-2">
               <button onClick={() => setPivot(d => addDays(d, view === 'day' ? -1 : -7))} className="btn btn-ghost">‹</button>
               <span className="text-sm font-medium text-gray-700 dark:text-gray-300 min-w-[140px] text-center">
                 {view === 'day' ? new Date(pivot + 'T12:00:00').toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' }) : `${weekDates[0].slice(5).replace('-','.')} – ${weekDates[6].slice(5).replace('-','.')}`}
@@ -390,9 +388,9 @@ export default function Calendar() {
       </div>
 
       {/* Body */}
-      <div className="flex-1 min-h-0 flex gap-3">
+      <div className="calendar-body flex-1 min-h-0 flex gap-3">
         {/* Calendar panel */}
-        <div className="card p-3 min-w-[190px] max-w-[210px] flex-shrink-0 flex flex-col">
+        <div className="calendar-sources card p-3 min-w-[190px] max-w-[210px] flex-shrink-0 flex flex-col">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Календари</span>
             <button onClick={() => setEditCal({})} className="text-lg leading-none text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" title="Добавить">+</button>
@@ -428,7 +426,7 @@ export default function Calendar() {
         </div>
 
         {/* Views */}
-        <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
+        <div className="calendar-view flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
           {view === 'month' && <div className="flex-1 min-h-0 overflow-auto"><MonthView year={year} month={month} allEvents={allEvents} allTasks={visibleTasks} today={today} onNewEvent={setNewEvent} calMap={calMap} onToggleWatched={toggleWatched} /></div>}
           {view === 'week' && <HourGrid dates={weekDates} allEvents={allEvents} allTasks={visibleTasks} today={today} onNewEvent={setNewEvent} calMap={calMap} onToggleWatched={toggleWatched} />}
           {view === 'day' && <HourGrid dates={[pivot]} allEvents={allEvents} allTasks={visibleTasks} today={today} onNewEvent={setNewEvent} calMap={calMap} onToggleWatched={toggleWatched} />}

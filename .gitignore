@@ -15,6 +15,9 @@
 opencode.json
 .opencode/
 
+# Runtime review state is local.  The seed script creates empty files.
+ops/product-intelligence/**
+
 # Личные данные Life OS и локально полученные материалы
 brain/
 life-os/backend/data/news/index.json

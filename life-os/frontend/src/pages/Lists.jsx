@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Star, Check, X } from 'lucide-react'
 import { lists as listsApi, people as peopleApi, tree as treeApi } from '../api'
-import PageOnboarding from '../components/PageOnboarding'
 
 const STATUS_LABELS = { want: 'Хочу', in_progress: 'Смотрю', done: 'Готово', dropped: 'Брошено' }
 
@@ -52,7 +51,7 @@ function ListItem({ item, listId, onUpdate, highlighted, people }) {
 
   return (
     <div
-      className={`card p-4 cursor-pointer transition-all ${highlighted ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''} ${item.status !== 'want' ? 'opacity-60' : ''}`}
+      className={`lists-item card p-4 cursor-pointer transition-all ${highlighted ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''} ${item.status !== 'want' ? 'opacity-60' : ''}`}
       onClick={() => setExpanded(v => !v)}
     >
       <div className="flex items-start justify-between gap-2">
@@ -242,10 +241,9 @@ export default function Lists() {
   )
 
   return (
-    <div className="max-w-2xl mx-auto py-8 px-6">
-      <PageOnboarding pageId="lists" />
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Списки</h1>
+    <div className="lists-page max-w-2xl mx-auto py-8 px-6">
+      <div className="lists-header flex items-center justify-between mb-6">
+        <div><p className="lists-kicker">Life OS · коллекции</p><h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Списки</h1></div>
         <div className="flex items-center gap-2">
           <button
             onClick={randomPick}
@@ -257,7 +255,7 @@ export default function Lists() {
       </div>
 
       {/* Collection tabs */}
-      <div className="flex gap-1 mb-5 flex-wrap">
+      <div className="lists-collections flex gap-1 mb-5 flex-wrap">
         {sortedCollections.map(c => {
           const isEmpty = (collectionCounts[c.id] ?? 0) === 0 && c.id !== active
           return (
@@ -280,7 +278,7 @@ export default function Lists() {
 
       {/* People filter */}
       {activePeople.length > 0 && (
-        <div className="flex gap-1 mb-3 flex-wrap">
+        <div className="lists-people-filter flex gap-1 mb-3 flex-wrap">
           {activePeople.map(p => (
             <button
               key={p.id}
@@ -296,7 +294,7 @@ export default function Lists() {
       )}
 
       {/* Status filter with counts */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="lists-controls flex items-center justify-between mb-4">
         <div className="flex gap-1">
           {Object.entries(STATUS_LABELS).map(([k, v]) => (
             <button

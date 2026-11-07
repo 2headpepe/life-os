@@ -1,599 +1,97 @@
-import { useState, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Check, Circle, X, Minus, AlertTriangle, CalendarRange } from 'lucide-react'
-import { tree as treeApi, habits, inbox } from '../api'
-import NodeCard from '../components/NodeCard'
-import { computeHabitScore, TrackInput, inTimeWindow, CYCLE_COLORS } from './Habits'
-import PageOnboarding from '../components/PageOnboarding'
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, CircleAlert, Clock3, HeartPulse, Layers3, ListTodo, RefreshCw } from 'lucide-react'
+import { habits, memories, tree as treeApi } from '../api'
+import { computeHabitScore, TrackInput } from './Habits'
+import { useRecoveryMode } from '../context/RecoveryModeContext'
+import Surface from '../components/ui/Surface'
+import { Button } from '../components/ui/Button'
 
-const PC = {
-  green: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800',
-  gray:  'bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-100 dark:border-gray-700 hover:border-gray-200 dark:hover:border-gray-600',
-  amber: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800',
-  red:   'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800',
-}
-
-const PILL_ICON = {
-  check:  <Check size={10} />,
-  circle: <Circle size={10} />,
-  minus:  <Minus size={10} />,
-  x:      <X size={10} />,
-}
-
-function getPillState(habit, value) {
-  if (habit.kind === 'toggle') {
-    if (value === true)  return { icon: 'check',  colorClass: PC.green, suffix: null }
-    if (value === false) return { icon: 'x',      colorClass: PC.red,   suffix: null }
-    return { icon: 'circle', colorClass: PC.gray, suffix: null }
-  }
-
-  if (habit.kind === 'counter') {
-    const n = typeof value === 'number' ? value : 0
-    if (habit.target === 0) {
-      if (n === 0) return { icon: 'check', colorClass: PC.green, suffix: null }
-      if (n === 1) return { icon: 'minus', colorClass: PC.amber, suffix: '1' }
-      return { icon: 'x', colorClass: PC.red, suffix: String(n) }
-    }
-    const target = habit.target || 1
-    if (n === 0) return { icon: 'circle', colorClass: PC.gray, suffix: null }
-    if (n >= target) return { icon: 'check', colorClass: PC.green, suffix: `${n}/${target}` }
-    return { icon: 'minus', colorClass: PC.amber, suffix: `${n}/${target}` }
-  }
-
-  if (habit.kind === 'cycle') {
-    if (!value) return { icon: 'circle', colorClass: PC.gray, suffix: null }
-    const score = habit.cycle_scores?.[value] || 0
-    const maxScore = habit.max_score || 1
-    const cycleLabel = habit.cycle_labels?.[value] || value
-    const icon = score >= maxScore ? 'check' : score > 0 ? 'minus' : 'x'
-    return { icon, colorClass: CYCLE_COLORS[value] || PC.green, suffix: cycleLabel }
-  }
-
-  if (habit.kind === 'time_window') {
-    if (!value) return { icon: 'circle', colorClass: PC.gray, suffix: null }
-    const inWin = inTimeWindow(habit.time_window, value)
-    return { icon: inWin ? 'check' : 'minus', colorClass: inWin ? PC.green : PC.amber, suffix: value }
-  }
-
-  return { icon: 'circle', colorClass: PC.gray, suffix: null }
-}
-
-function addDays(dateStr, n) {
-  const d = new Date(dateStr + 'T12:00:00')
-  d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
-}
-
-function formatDate(dateStr) {
-  return new Date(dateStr + 'T12:00:00').toLocaleDateString('ru-RU', {
-    weekday: 'long', day: 'numeric', month: 'long',
-  })
-}
-
-function ringStroke(pct) {
-  return pct >= 0.8 ? '#4ade80' : pct >= 0.5 ? '#fbbf24' : '#d1d5db'
-}
-
-function Ring({ pct, size, strokeWidth, children }) {
-  const r = (size - strokeWidth) / 2
-  const c = 2 * Math.PI * r
-  const offset = c * (1 - Math.min(1, Math.max(0, pct || 0)))
-  return (
-    <div className="relative flex items-center justify-center flex-shrink-0" style={{ width: size, height: size }}>
-      <svg width={size} height={size} className="absolute -rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e5e7eb" strokeWidth={strokeWidth} className="dark:stroke-gray-700" />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none"
-          stroke={ringStroke(pct)} strokeWidth={strokeWidth}
-          strokeDasharray={c} strokeDashoffset={offset}
-          strokeLinecap="round"
-          style={{ transition: 'stroke-dashoffset 0.4s ease' }}
-        />
-      </svg>
-      {children && <div className="relative z-10 flex flex-col items-center leading-none">{children}</div>}
-    </div>
-  )
-}
-
-function SectionHeader({ title, count, link }) {
-  return (
-    <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-50 dark:border-gray-800/60">
-      <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 flex-1">{title}</span>
-      {count > 0 && (
-        <span className="text-xs text-gray-400 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded-full tabular-nums">{count}</span>
-      )}
-      {link && (
-        <Link to={link.to} className="text-xs text-gray-300 dark:text-gray-600 hover:text-gray-500 transition-colors">
-          {link.label} →
-        </Link>
-      )}
-    </div>
-  )
-}
-
-const START_H = 0
-const END_H = 24
-const HOUR_H = 52
-
-function parseHour(t) {
-  if (!t) return null
-  const [h, m] = t.split(':').map(Number)
-  return h + (m || 0) / 60
-}
-
-function DayTimeline({ allTasks, focusTasks, onScheduleTask, onRemoveTime }) {
-  const todayStr = new Date().toISOString().slice(0, 10)
-  const [calDate, setCalDate] = useState(todayStr)
-  const [dragOverHour, setDragOverHour] = useState(null)
-  const scrollRef = useRef()
-
-  const isCalToday = calDate === todayStr
+const dateString = () => {
   const now = new Date()
-  const nowH = now.getHours() + now.getMinutes() / 60
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
 
-  useEffect(() => {
-    if (!isCalToday || !scrollRef.current) return
-    const offset = Math.max(0, (nowH - START_H - 1.5) / (END_H - START_H))
-    scrollRef.current.scrollTop = offset * (END_H - START_H + 1) * HOUR_H
-  }, [isCalToday]) // eslint-disable-line react-hooks/exhaustive-deps
+const addDays = (date, offset) => {
+  const value = new Date(`${date}T12:00:00`)
+  value.setDate(value.getDate() + offset)
+  return value.toISOString().slice(0, 10)
+}
 
-  const hours = Array.from({ length: END_H - START_H + 1 }, (_, i) => i + START_H)
+const formatDate = date => new Date(`${date}T12:00:00`).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })
+const formatShortDate = date => new Date(`${date}T12:00:00`).toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' })
 
-  const timedTasks = allTasks.filter(t => t.due === calDate && t.time && t.status !== 'done' && t.status !== 'dropped')
-  const untimedTasks = allTasks.filter(t => t.due === calDate && !t.time && t.status !== 'done' && t.status !== 'dropped')
-  const positioned = timedTasks
-    .map(t => ({ ...t, startH: parseHour(t.time) }))
-    .filter(t => t.startH != null && t.startH >= START_H && t.startH < END_H)
-
-  const calLabel = isCalToday
-    ? 'Сегодня'
-    : calDate === addDays(todayStr, 1)
-      ? 'Завтра'
-      : new Date(calDate + 'T12:00:00').toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' })
-
-  const handleDrop = (e, h) => {
-    e.preventDefault()
-    setDragOverHour(null)
-    const taskId = e.dataTransfer.getData('taskId')
-    if (taskId) onScheduleTask(taskId, h, calDate)
-  }
-
-  return (
-    <div className="flex-1 min-h-0 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 flex flex-col overflow-hidden">
-      {/* Timeline header with independent day navigation */}
-      <div className="flex items-center gap-1 px-3 py-2.5 border-b border-gray-50 dark:border-gray-800/60 flex-shrink-0">
-        <button onClick={() => setCalDate(d => addDays(d, -1))} className="w-6 h-6 flex items-center justify-center rounded-md text-gray-300 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-base leading-none">‹</button>
-        <span className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-          {calLabel}
-        </span>
-        <button onClick={() => setCalDate(d => addDays(d, 1))} className="w-6 h-6 flex items-center justify-center rounded-md text-gray-300 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-base leading-none">›</button>
-      </div>
-
-      {/* Untimed tasks for this day */}
-      {untimedTasks.length > 0 && (
-        <div className="flex-shrink-0 border-b border-gray-50 dark:border-gray-800 px-2 py-1.5 flex flex-wrap gap-1">
-          {untimedTasks.map(t => (
-            <div
-              key={t.id}
-              draggable
-              onDragStart={e => { e.dataTransfer.setData('taskId', t.id); e.dataTransfer.effectAllowed = 'move' }}
-              className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 cursor-grab active:cursor-grabbing truncate max-w-[160px]"
-              title={t.title}
-            >
-              <span className="truncate">{t.title}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
-        <div className="relative select-none" style={{ height: (END_H - START_H + 1) * HOUR_H }}>
-
-          {hours.map(h => (
-            <div
-              key={h}
-              className={`absolute left-0 right-0 flex transition-colors ${dragOverHour === h ? 'bg-indigo-50/70 dark:bg-indigo-900/20' : ''}`}
-              style={{ top: (h - START_H) * HOUR_H, height: HOUR_H }}
-              onDragOver={e => { e.preventDefault(); setDragOverHour(h) }}
-              onDragLeave={() => setDragOverHour(null)}
-              onDrop={e => handleDrop(e, h)}
-              onClick={() => {}}
-            >
-              {/* Hour label — centered on the border line */}
-              <div className="w-14 flex-shrink-0 pr-3 text-right self-start" style={{ marginTop: -8 }}>
-                <span className="text-[10px] text-gray-300 dark:text-gray-700 tabular-nums leading-none">{h}:00</span>
-              </div>
-
-              {/* Slot area */}
-              <div className="flex-1 border-t border-gray-50 dark:border-gray-800/70 relative hover:bg-gray-50/40 dark:hover:bg-gray-800/20 cursor-pointer transition-colors">
-
-                {/* Timed tasks */}
-                {positioned
-                  .filter(t => Math.floor(t.startH) === h)
-                  .map((t, i) => (
-                    <div
-                      key={t.id}
-                      className="absolute left-1 right-1 rounded-lg bg-indigo-50 dark:bg-indigo-900/25 border border-indigo-200 dark:border-indigo-700/40 px-2 py-1 overflow-hidden cursor-pointer"
-                      style={{ top: Math.round((t.startH - h) * HOUR_H) + 2 + i * 2, height: HOUR_H - 8 }}
-                      onClick={e => { e.stopPropagation(); onRemoveTime(t.id) }}
-                      title="Нажми чтобы убрать время"
-                    >
-                      <p className="text-[11px] font-medium text-indigo-700 dark:text-indigo-300 truncate leading-tight">{t.title}</p>
-                      <p className="text-[9px] text-indigo-400/70">{t.time?.slice(0, 5)}</p>
-                    </div>
-                  ))
-                }
-              </div>
-            </div>
-          ))}
-
-          {/* Current time indicator */}
-          {isCalToday && nowH >= START_H && nowH <= END_H && (
-            <div
-              className="absolute left-0 right-0 pointer-events-none z-10"
-              style={{ top: (nowH - START_H) * HOUR_H }}
-            >
-              <div className="flex items-center">
-                <div className="w-14 flex-shrink-0" />
-                <div className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0 -ml-1" />
-                <div className="flex-1 border-t border-red-400" />
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Drag hint */}
-      <div className="flex-shrink-0 border-t border-gray-50 dark:border-gray-800 px-3 py-2">
-        <p className="text-[9px] text-gray-300 dark:text-gray-600 uppercase tracking-wider">
-          {focusTasks.length > 0 ? 'Перетащи задачу из фокуса на нужное время' : 'Нет задач в фокусе'}
-        </p>
-      </div>
-    </div>
+function activeHabits(definitions, today) {
+  return (definitions?.categories || []).flatMap(category => category.habits || []).filter(habit =>
+    habit.active && (!habit.paused_until || habit.paused_until < today) && (!habit.active_until || habit.active_until >= today),
   )
+}
+
+function personalLeaves(nodes) {
+  const parents = new Set(nodes.filter(node => node.parent_id).map(node => node.parent_id))
+  return nodes.filter(node => !parents.has(node.id) && (node.work_context || 'personal') === 'personal' && node.status !== 'done' && node.status !== 'dropped' && node.status !== 'someday' && !node.calendar_id)
+}
+
+function attentionFor(tasks, today, recoveryMode) {
+  const visible = recoveryMode ? tasks.filter(task => task.core) : tasks
+  const overdue = visible.filter(task => task.due && task.due < today && (task.status === 'scheduled' || task.status === 'undefined' || !task.status))
+  const inProgress = visible.filter(task => task.status === 'in_progress')
+  const scheduledToday = visible.filter(task => task.status === 'scheduled' && task.due === today)
+  const task = overdue[0] || inProgress[0] || scheduledToday[0] || null
+  return { task, kind: task && (overdue.includes(task) ? 'overdue' : inProgress.includes(task) ? 'in_progress' : 'today'), hidden: recoveryMode ? tasks.length - visible.length : 0 }
+}
+
+function AttentionCard({ attention }) {
+  const copy = {
+    overdue: ['Просрочено', 'У этой задачи прошёл срок', CircleAlert, 'text-red-600 dark:text-red-400'],
+    in_progress: ['В работе', 'Задача уже начата', Clock3, 'text-amber-600 dark:text-amber-400'],
+    today: ['Запланировано на сегодня', 'Задача с датой сегодня', CalendarDays, 'text-blue-600 dark:text-blue-400'],
+  }
+  if (!attention.task) return <Surface className="today-attention p-6 sm:p-8" aria-labelledby="attention-heading"><div className="flex gap-3"><CheckCircle2 size={22} className="text-green-600 dark:text-green-400 mt-0.5" /><div><h2 id="attention-heading" className="text-lg font-semibold text-gray-900 dark:text-gray-100">Нет задач, требующих внимания</h2><p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Можно открыть общий список, если хочешь спланировать день.</p><Link to="/pool" className="inline-flex mt-4 items-center text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">Все задачи <ChevronRight size={15} /></Link></div></div></Surface>
+  const [title, detail, Icon, color] = copy[attention.kind]
+  return <Surface className="today-attention p-6 sm:p-8" aria-labelledby="attention-heading"><div className="flex gap-3"><Icon size={22} className={`${color} mt-0.5 flex-shrink-0`} /><div className="min-w-0"><p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Требует внимания</p><p className={`mt-1 text-sm font-medium ${color}`}>{title}</p><h2 id="attention-heading" className="mt-2 text-xl font-semibold text-gray-900 dark:text-gray-100 break-words">{attention.task.title}</h2><p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{detail}</p><div className="mt-5 flex flex-wrap gap-4 items-center"><Link to="/goals" className="ds-button ds-button--primary">Открыть задачу</Link><Link to="/pool" className="today-secondary-link inline-flex items-center text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">Все задачи <ChevronRight size={15} /></Link></div></div></div></Surface>
+}
+
+function ContextStrip({ memory, memoryState, score, maxScore, tomorrowCount }) {
+  const yesterday = memoryState === 'unavailable' ? 'Вчера: данные недоступны' : memory ? 'Вчера: есть запись' : 'Вчера: нет записи'
+  const items = [[yesterday, '/memories'], [`Привычки: ${maxScore ? `${score} из ${maxScore}` : 'нет активных'}`, '/habits'], [`Завтра: ${tomorrowCount ? `${tomorrowCount} ${tomorrowCount === 1 ? 'дело' : 'дела'}` : 'ничего не запланировано'}`, '/calendar']]
+  return <Surface className="today-context divide-y divide-gray-100 dark:divide-gray-800 sm:grid sm:grid-cols-3 sm:divide-x sm:divide-y-0" aria-label="Краткий контекст дня">{items.map(([label, to]) => <Link key={to} to={to} className="flex items-center justify-between gap-2 px-4 py-3.5 text-sm text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-800/40"><span>{label}</span><ChevronRight size={16} /></Link>)}</Surface>
+}
+
+function Detail({ id, title, Icon, open, onToggle, children }) {
+  return <Surface className="today-detail overflow-hidden"><h2><button type="button" onClick={onToggle} aria-expanded={open} aria-controls={id} className="w-full flex items-center gap-3 px-4 py-4 text-left text-base font-semibold text-gray-900 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-800/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"><Icon size={18} className="text-gray-500 dark:text-gray-400" /><span className="flex-1">{title}</span><ChevronDown size={18} className={`text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} /></button></h2>{open && <div id={id} className="border-t border-gray-100 dark:border-gray-800 px-4 py-4">{children}</div>}</Surface>
+}
+
+function SphereDetails({ nodes, tasks, today }) {
+  const byId = new Map(nodes.map(node => [node.id, node]))
+  const roots = nodes.filter(node => !node.parent_id && (node.work_context || 'personal') === 'personal')
+  const rootFor = task => { let current = task; const seen = new Set(); while (current?.parent_id && !seen.has(current.id)) { seen.add(current.id); current = byId.get(current.parent_id) } return current?.parent_id === null ? current : null }
+  const rows = roots.map(root => ({ root, tasks: tasks.filter(task => rootFor(task)?.id === root.id) })).filter(row => row.tasks.length)
+  const unassigned = tasks.filter(task => !rootFor(task))
+  if (!rows.length && !unassigned.length) return <p className="text-sm text-gray-500 dark:text-gray-400">Нет личных задач, которые можно показать по сферам.</p>
+  return <div className="space-y-2">{rows.map(({ root, tasks: ownTasks }) => <div key={root.id} className="flex justify-between gap-3 text-sm"><span className="font-medium text-gray-800 dark:text-gray-200">{root.title}</span><span className="text-right text-gray-500 dark:text-gray-400">{ownTasks.length} {ownTasks.length === 1 ? 'задача' : 'задачи'} · обновлено {ownTasks.map(task => task.updated).sort().at(-1) || today}</span></div>)}{unassigned.length > 0 && <div className="flex justify-between gap-3 text-sm"><span className="font-medium text-gray-800 dark:text-gray-200">Без сферы</span><span className="text-gray-500 dark:text-gray-400">{unassigned.length} {unassigned.length === 1 ? 'задача' : 'задачи'}</span></div>}<p className="pt-2 text-xs text-gray-400 dark:text-gray-500">Источник: личные задачи. Привычки не распределяются по сферам.</p></div>
+}
+
+function YesterdayDetails({ memory, state }) {
+  if (state === 'unavailable') return <p className="text-sm text-amber-700 dark:text-amber-300">Запись за вчера сейчас недоступна. Это не означает, что её нет.</p>
+  if (!memory) return <p className="text-sm text-gray-500 dark:text-gray-400">Записи за вчера нет.</p>
+  return <div className="space-y-2"><p className="text-sm text-gray-700 dark:text-gray-300">Есть запись за вчера{memory.auto ? ' (автоматическая сводка)' : ''}.</p>{memory.auto && <p className="text-xs text-gray-400 dark:text-gray-500">Автоматическая сводка опирается на изменения задач, а не на неизменяемое время завершения.</p>}<Link to="/memories" className="inline-flex items-center text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">Открыть память <ChevronRight size={15} /></Link></div>
+}
+
+function UpcomingDetails({ tasks, today }) {
+  return <div className="grid gap-4 sm:grid-cols-3">{[1, 2, 3].map(offset => { const date = addDays(today, offset); const dayTasks = tasks.filter(task => task.status === 'scheduled' && task.due === date).slice(0, 2); return <div key={date}><p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{formatShortDate(date)}</p>{dayTasks.length ? <ul className="mt-2 space-y-1 text-sm text-gray-700 dark:text-gray-300">{dayTasks.map(task => <li key={task.id} className="truncate">• {task.title}</li>)}</ul> : <p className="mt-2 text-sm text-gray-400 dark:text-gray-500">Нет дел</p>}</div> })}<Link to="/calendar" className="sm:col-span-3 inline-flex items-center text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">Открыть календарь <ChevronRight size={15} /></Link></div>
 }
 
 export default function Today() {
-  const todayStr = new Date().toISOString().slice(0, 10)
-  const [date, setDate] = useState(todayStr)
-  const [showTimeline, setShowTimeline] = useState(() => localStorage.getItem('todayTimeline') === '1')
-  const toggleTimeline = () => setShowTimeline(v => { localStorage.setItem('todayTimeline', v ? '0' : '1'); return !v })
-  const isToday = date === todayStr
-
-  const [allTasks, setAllTasks] = useState([])
-  const [habitDefs, setHabitDefs] = useState([])
-  const [habitLog, setHabitLog] = useState({})
-  const [last6Logs, setLast6Logs] = useState({})
-  const [inboxData, setInboxData] = useState([])
-  const [selectedHabit, setSelectedHabit] = useState(null)
-  const [loading, setLoading] = useState(true)
-
-  const last6Days = Array.from({ length: 6 }, (_, i) => addDays(date, -(6 - i)))
-
-  useEffect(() => {
-    Promise.all([treeApi.leaves(), habits.definitions(), inbox.all()])
-      .then(([leaves, h, ib]) => {
-        setAllTasks(leaves.filter(x => x.status !== 'done' && x.status !== 'dropped' && x.status !== 'someday' && !x.calendar_id))
-        const active = (h.categories || []).flatMap(c =>
-          c.habits.filter(x =>
-            x.active &&
-            (!x.paused_until || x.paused_until < todayStr) &&
-            (!x.active_until || x.active_until >= todayStr)
-          )
-        )
-        setHabitDefs(active)
-        setInboxData(ib.items || [])
-        setLoading(false)
-      })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    habits.log(date).then(data => setHabitLog(data?.habits || {})).catch(() => setHabitLog({}))
-  }, [date])
-
-  useEffect(() => {
-    if (!habitDefs.length) return
-    Promise.allSettled(last6Days.map(d => habits.log(d))).then(results => {
-      const m = {}
-      last6Days.forEach((d, i) => {
-        m[d] = results[i].status === 'fulfilled' ? results[i].value?.habits || {} : {}
-      })
-      setLast6Logs(m)
-    })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, habitDefs.length])
-
-  const updateHabitLog = async (habitId, value) => {
-    const updatedLog = { ...habitLog, [habitId]: value }
-    setHabitLog(updatedLog)
-    const score = computeHabitScore(habitDefs, updatedLog)
-    await habits.saveLog(date, { date, habits: updatedLog, score, notes: '' })
-  }
-
-  const reload = () => {
-    treeApi.leaves().then(leaves =>
-      setAllTasks(leaves.filter(x => x.status !== 'done' && x.status !== 'dropped' && x.status !== 'someday' && !x.calendar_id))
-    )
-    inbox.all().then(ib => setInboxData(ib.items || []))
-  }
-
-  // Data slices
-  const timedTasks = allTasks.filter(t => t.due === date && t.time && t.status !== 'done')
-  const overdueTasks = allTasks.filter(t => t.due && t.due < date && (t.status === 'scheduled' || t.status === 'undefined' || !t.status))
-  const scheduledToday = allTasks.filter(t => t.due === date && !t.time && t.status !== 'in_progress')
-  const inProgressTasks = allTasks.filter(t => t.status === 'in_progress')
-  const focusTasks = [...overdueTasks, ...scheduledToday, ...inProgressTasks]
-  const upcomingTasks = allTasks
-    .filter(t => {
-      if (focusTasks.find(u => u.id === t.id)) return false
-      if (timedTasks.find(u => u.id === t.id)) return false
-      return t.status === 'scheduled' && t.due > date
-    })
-    .sort((a, b) => (a.due || 'z').localeCompare(b.due || 'z'))
-    .slice(0, 8)
-  const undefCount = allTasks.filter(t => (!t.status || t.status === 'undefined') && !t.is_blocked).length
-
-  // Habits
-  const habitTotal = habitDefs.length
-  const habitScore = computeHabitScore(habitDefs, habitLog)
-  const habitMaxScore = habitDefs.reduce((s, h) => s + (h.max_score || 1), 0)
-  const habitPct = habitMaxScore > 0 ? habitScore / habitMaxScore : 0
-
-  // Greeting
-  const summaryParts = []
-  const focusCount = overdueTasks.length + scheduledToday.length + inProgressTasks.length
-  if (focusCount > 0) summaryParts.push(`${focusCount} задач`)
-  if (habitTotal > 0) summaryParts.push(`${habitScore}/${habitMaxScore} привычек`)
-  if (timedTasks.length > 0) summaryParts.push(`${timedTasks.length} в расписании`)
-
-  if (loading) {
-    return (
-      <div className="flex gap-6 px-8 py-8">
-        <div className="flex-1 space-y-4">
-          {[80, 200, 160].map((h, i) => (
-            <div key={i} className="rounded-2xl bg-gray-100 dark:bg-gray-800 animate-pulse" style={{ height: h }} />
-          ))}
-          <div className="grid grid-cols-2 gap-4">
-            {[140, 120].map((h, i) => (
-              <div key={i} className="rounded-2xl bg-gray-100 dark:bg-gray-800 animate-pulse" style={{ height: h }} />
-            ))}
-          </div>
-        </div>
-        {showTimeline && (
-          <div className="w-80 flex-shrink-0 rounded-2xl bg-gray-100 dark:bg-gray-800 animate-pulse" style={{ height: '80vh' }} />
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <>
-      <div style={{ height: 'calc(100vh - 3rem)' }} className="flex flex-col overflow-hidden">
-        <PageOnboarding pageId="today" />
-        {/* Greeting */}
-        <div className="flex-shrink-0 flex items-start justify-between gap-4 px-8 pt-8 pb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 capitalize leading-tight">
-              {formatDate(date)}
-            </h1>
-            {summaryParts.length > 0 && (
-              <p className="text-sm text-gray-400 mt-1">{summaryParts.join(' · ')}</p>
-            )}
-            {!isToday && (
-              <button onClick={() => setDate(todayStr)} className="text-xs text-blue-500 hover:text-blue-600 mt-1">
-                → Сегодня
-              </button>
-            )}
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0 mt-1">
-            <button onClick={toggleTimeline}
-              title={showTimeline ? 'Скрыть расписание' : 'Показать расписание'}
-              className={`flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-xs font-medium transition-colors ${
-                showTimeline
-                  ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900'
-                  : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
-              }`}>
-              <CalendarRange size={13} />
-              Расписание
-            </button>
-            <div className="flex items-center gap-1">
-              <button onClick={() => setDate(d => addDays(d, -1))}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-base">‹</button>
-              <button onClick={() => setDate(d => addDays(d, 1))} disabled={date >= todayStr}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-base disabled:opacity-20">›</button>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex-1 min-h-0 px-8 pb-8 flex gap-6">
-
-          {/* LEFT — main content */}
-          <div className="flex-1 min-w-0 overflow-y-auto">
-          <div className="space-y-4 pb-4">
-
-            {/* Focus */}
-            {focusTasks.length > 0 ? (
-              <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-                <SectionHeader title="Фокус" count={focusTasks.length} />
-                <div className="px-2 py-2">
-                  {overdueTasks.length > 0 && (
-                    <div className="mb-1">
-                      <div className="px-2 py-1 text-[10px] font-semibold text-red-400 uppercase tracking-wider">
-                        Просрочено · {overdueTasks.length}
-                      </div>
-                      <div className="space-y-0.5">
-                        {overdueTasks.map(t => <NodeCard key={t.id} node={t} onUpdate={reload} row draggable />)}
-                      </div>
-                    </div>
-                  )}
-                  {scheduledToday.length > 0 && (
-                    <div className={`mb-1 ${overdueTasks.length > 0 ? 'mt-2 pt-2 border-t border-gray-50 dark:border-gray-800/60' : ''}`}>
-                      <div className="px-2 py-1 text-[10px] font-semibold text-blue-400 uppercase tracking-wider">
-                        Сегодня · {scheduledToday.length}
-                      </div>
-                      <div className="space-y-0.5">
-                        {scheduledToday.map(t => <NodeCard key={t.id} node={t} onUpdate={reload} row draggable />)}
-                      </div>
-                    </div>
-                  )}
-                  {inProgressTasks.length > 0 && (
-                    <div className={`${(overdueTasks.length > 0 || scheduledToday.length > 0) ? 'mt-2 pt-2 border-t border-gray-50 dark:border-gray-800/60' : ''}`}>
-                      <div className={`px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${inProgressTasks.length > 3 ? 'text-red-400' : 'text-amber-400'}`}>
-                        В работе · {inProgressTasks.length}
-                        {inProgressTasks.length > 3 && (
-                          <span className="ml-1.5 normal-case tracking-normal text-red-400/90 font-normal">— слишком много, выбери 3 главные</span>
-                        )}
-                      </div>
-                      <div className="space-y-0.5">
-                        {inProgressTasks.map(t => <NodeCard key={t.id} node={t} onUpdate={reload} row draggable />)}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 px-6 py-6 text-center text-sm text-gray-400">
-                Нет срочных задач
-              </div>
-            )}
-
-            {/* Habits */}
-            {habitDefs.length > 0 && (
-              <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 overflow-hidden">
-                <SectionHeader title="Привычки" link={{ to: '/habits', label: 'Все' }} />
-                <div className="px-4 py-3">
-                  <div className="flex items-end gap-4 mb-4">
-                    <Ring pct={habitPct} size={64} strokeWidth={6}>
-                      <span className="text-base font-bold text-gray-900 dark:text-gray-100 leading-none">{habitScore}</span>
-                      <span className="text-[9px] text-gray-400 leading-none">/{habitMaxScore}</span>
-                    </Ring>
-                    <div className="flex gap-3">
-                      {last6Days.map(d => {
-                        const log = last6Logs[d] || {}
-                        const score = computeHabitScore(habitDefs, log)
-                        const pct = habitMaxScore > 0 ? score / habitMaxScore : 0
-                        const dayNum = d.slice(8)
-                        const dayName = new Date(d + 'T12:00:00').toLocaleDateString('ru-RU', { weekday: 'short' }).slice(0, 2)
-                        return (
-                          <div key={d} className="flex flex-col items-center gap-0.5">
-                            <Ring pct={pct} size={26} strokeWidth={3} />
-                            <span className="text-[9px] font-medium text-gray-500 leading-none">{dayNum}</span>
-                            <span className="text-[8px] text-gray-300 dark:text-gray-600 leading-none capitalize">{dayName}</span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {habitDefs.map(h => {
-                      const { icon, colorClass, suffix } = getPillState(h, habitLog[h.id])
-                      return (
-                        <button
-                          key={h.id}
-                          onClick={() => date <= todayStr && setSelectedHabit(h)}
-                          disabled={date > todayStr}
-                          className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-all border ${colorClass}`}
-                        >
-                          {PILL_ICON[icon]}
-                          <span>{h.label}</span>
-                          {suffix && <span className="opacity-60 font-normal">· {suffix}</span>}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Upcoming + Inbox */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 overflow-hidden">
-                <SectionHeader title="Ближайшие" link={{ to: '/pool', label: 'Все' }} />
-                <div className="px-2 py-2">
-                  {upcomingTasks.length === 0 ? (
-                    <p className="text-sm text-gray-400 px-2 py-1">Нет запланированных</p>
-                  ) : (
-                    <div className="space-y-0.5">
-                      {upcomingTasks.map(t => <NodeCard key={t.id} node={t} onUpdate={reload} row />)}
-                    </div>
-                  )}
-                  {undefCount > 0 && (
-                    <Link to="/goals" className="flex items-center gap-1.5 mt-2 pt-2 mx-2 border-t border-gray-50 dark:border-gray-800 text-xs text-gray-400 hover:text-gray-600 transition-colors">
-                      <AlertTriangle size={11} className="text-amber-400" />
-                      {undefCount} без решения
-                    </Link>
-                  )}
-                </div>
-              </div>
-
-              <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 overflow-hidden">
-                <SectionHeader title="Входящие" count={inboxData.length} link={{ to: '/inbox', label: 'Открыть' }} />
-                <div className="px-4 py-3">
-                  {inboxData.length === 0 ? (
-                    <p className="text-sm text-gray-400">Пусто</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {inboxData.slice(0, 6).map(item => (
-                        <div key={item.id} className="flex items-start gap-2 group">
-                          <p className="flex-1 text-xs text-gray-600 dark:text-gray-400 leading-relaxed min-w-0">{item.text}</p>
-                          <button onClick={() => inbox.delete(item.id).then(reload)}
-                            className="text-gray-200 dark:text-gray-700 hover:text-red-400 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100 mt-0.5">
-                            <X size={12} /></button>
-                        </div>
-                      ))}
-                      {inboxData.length > 6 && (
-                        <p className="text-xs text-gray-300 dark:text-gray-600">+{inboxData.length - 6} ещё</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-          </div>
-
-          {/* RIGHT — timeline, on-demand via the Расписание toggle */}
-          {showTimeline && (
-          <div className="w-80 flex-shrink-0 flex flex-col">
-            <DayTimeline
-              allTasks={allTasks}
-              focusTasks={focusTasks}
-              onScheduleTask={async (taskId, hour, calDate) => {
-                const timeStr = `${String(hour).padStart(2, '0')}:00`
-                await treeApi.update(taskId, { time: timeStr, due: calDate })
-                reload()
-              }}
-              onRemoveTime={async (taskId) => {
-                await treeApi.update(taskId, { time: null })
-                reload()
-              }}
-            />
-          </div>
-          )}
-        </div>
-      </div>
-
-
-      {/* Habit modal */}
-      {selectedHabit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setSelectedHabit(null)}>
-          <div className="absolute inset-0 bg-black/20 dark:bg-black/50 backdrop-blur-sm" />
-          <div className="relative bg-white dark:bg-gray-900 rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-gray-100 dark:border-gray-800" onClick={e => e.stopPropagation()}>
-            <div className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">{selectedHabit.label}</div>
-            {selectedHabit.detail && <div className="text-xs text-gray-400 mb-5">{selectedHabit.detail}</div>}
-            <div className="flex items-center justify-center py-3">
-              <TrackInput
-                habit={selectedHabit}
-                value={habitLog[selectedHabit.id]}
-                onChange={val => updateHabitLog(selectedHabit.id, val)}
-                editable={date <= todayStr}
-              />
-            </div>
-            <button onClick={() => setSelectedHabit(null)} className="w-full mt-4 py-2 text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
-              Готово
-            </button>
-          </div>
-        </div>
-      )}
-    </>
-  )
+  const today = dateString(); const yesterday = addDays(today, -1); const tomorrow = addDays(today, 1)
+  const { isRecoveryMode, toggleRecoveryMode } = useRecoveryMode()
+  const [nodes, setNodes] = useState([]); const [habitDefs, setHabitDefs] = useState([]); const [habitLog, setHabitLog] = useState({}); const [memory, setMemory] = useState(null); const [memoryState, setMemoryState] = useState('loading'); const [loading, setLoading] = useState(true); const [error, setError] = useState(null); const [expanded, setExpanded] = useState({}); const [savingHabit, setSavingHabit] = useState(false)
+  const load = useCallback(async () => { setLoading(true); setError(null); const [treeResult, definitionsResult, logResult, memoryResult] = await Promise.allSettled([treeApi.all(), habits.definitions(), habits.log(today), memories.all(yesterday)]); if (treeResult.status !== 'fulfilled') { setError('Не удалось загрузить задачи. Попробуй обновить страницу.'); setLoading(false); return } setNodes(treeResult.value || []); setHabitDefs(definitionsResult.status === 'fulfilled' ? activeHabits(definitionsResult.value, today) : []); setHabitLog(logResult.status === 'fulfilled' ? logResult.value?.habits || {} : {}); if (memoryResult.status === 'fulfilled') { setMemory(memoryResult.value?.[0] || null); setMemoryState('ready') } else { setMemory(null); setMemoryState('unavailable') } setLoading(false) }, [today, yesterday])
+  useEffect(() => { load() }, [load])
+  const tasks = useMemo(() => personalLeaves(nodes), [nodes]); const attention = useMemo(() => attentionFor(tasks, today, isRecoveryMode), [tasks, today, isRecoveryMode]); const visibleHabits = useMemo(() => isRecoveryMode ? habitDefs.filter(habit => habit.foundation) : habitDefs, [habitDefs, isRecoveryMode]); const maxScore = visibleHabits.reduce((total, habit) => total + (habit.max_score || 1), 0); const score = computeHabitScore(visibleHabits, habitLog); const quickHabit = visibleHabits.find(habit => habit.kind === 'toggle') || visibleHabits[0] || null; const tomorrowCount = tasks.filter(task => task.status === 'scheduled' && task.due === tomorrow).length
+  const saveHabit = async (habitId, value) => { const next = { ...habitLog, [habitId]: value }; setHabitLog(next); setSavingHabit(true); try { await habits.saveLog(today, { date: today, habits: next, score: computeHabitScore(visibleHabits, next), notes: '' }, 'habit_progress') } catch { setHabitLog(habitLog) } finally { setSavingHabit(false) } }
+  const toggle = key => setExpanded(current => ({ ...current, [key]: !current[key] }))
+  if (loading) return <div className="px-8 py-8 space-y-4" aria-busy="true" aria-live="polite"><div className="h-14 w-56 rounded-xl bg-gray-100 dark:bg-gray-800 animate-pulse" /><div className="h-64 rounded-2xl bg-gray-100 dark:bg-gray-800 animate-pulse" /><div className="h-16 rounded-2xl bg-gray-100 dark:bg-gray-800 animate-pulse" /></div>
+  if (error) return <div className="px-8 py-8 max-w-2xl" aria-live="polite"><Surface className="p-6 flex gap-3"><AlertCircle className="text-red-600 dark:text-red-400 mt-0.5" /><div><h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Сегодня</h1><p className="mt-1 text-sm text-gray-600 dark:text-gray-400">{error}</p><Button type="button" onClick={load} variant="primary" className="mt-4 inline-flex items-center gap-2"><RefreshCw size={15} />Обновить</Button></div></Surface></div>
+  return <main className="today-page mx-auto w-full max-w-5xl px-5 sm:px-8 py-8 pb-12"><header className="today-header mb-6"><p className="today-kicker">Life OS · дневной обзор</p><h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Сегодня</h1><p className="mt-1 text-sm text-gray-500 dark:text-gray-400 capitalize">{formatDate(today)} · Статус жизни</p></header>{isRecoveryMode && <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200"><HeartPulse size={17} className="mt-0.5 flex-shrink-0" /><p className="flex-1"><span className="font-medium">Режим восстановления.</span> Показаны только задачи и привычки с отметкой «Ядро» или фундамент.</p><button type="button" onClick={() => toggleRecoveryMode(false)} className="text-sm font-medium underline underline-offset-2">Выйти</button></div>}{attention.hidden > 0 && <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">В режиме восстановления скрыто задач: {attention.hidden}.</p>}<div className="space-y-4"><AttentionCard attention={attention} /><ContextStrip memory={memory} memoryState={memoryState} score={score} maxScore={maxScore} tomorrowCount={tomorrowCount} />{quickHabit && <Surface className="today-habit p-4 sm:flex sm:items-center sm:justify-between gap-4" aria-labelledby="habit-heading"><div><h2 id="habit-heading" className="text-base font-semibold text-gray-900 dark:text-gray-100">Привычка дня</h2><p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{quickHabit.label}</p></div><div className="mt-3 sm:mt-0 flex items-center gap-4"><TrackInput habit={quickHabit} value={habitLog[quickHabit.id]} onChange={value => saveHabit(quickHabit.id, value)} editable={!savingHabit} /><Link to="/habits" className="today-secondary-link text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline">К привычкам</Link></div></Surface>}<section aria-labelledby="details-heading" className="pt-4"><h2 id="details-heading" className="today-details-heading mb-3 text-lg font-semibold text-gray-900 dark:text-gray-100">Подробнее</h2><div className="space-y-3"><Detail id="life-status-spheres" title="Сферы" Icon={Layers3} open={Boolean(expanded.spheres)} onToggle={() => toggle('spheres')}><SphereDetails nodes={nodes} tasks={tasks} today={today} /></Detail><Detail id="life-status-yesterday" title="Вчера" Icon={ListTodo} open={Boolean(expanded.yesterday)} onToggle={() => toggle('yesterday')}><YesterdayDetails memory={memory} state={memoryState} /></Detail><Detail id="life-status-upcoming" title="Ближайшие 3 дня" Icon={CalendarDays} open={Boolean(expanded.upcoming)} onToggle={() => toggle('upcoming')}><UpcomingDetails tasks={tasks} today={today} /></Detail></div><p className="mt-5 text-sm text-gray-500 dark:text-gray-400">Подробное планирование — <Link to="/calendar" className="today-secondary-link font-medium text-blue-600 dark:text-blue-400 hover:underline">в календаре</Link>.</p></section></div></main>
 }

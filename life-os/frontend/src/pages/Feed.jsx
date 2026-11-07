@@ -1,13 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { RefreshCw, Loader2, Sparkles, XCircle } from 'lucide-react'
+import { RefreshCw, Loader2, Sparkles, XCircle, ChevronRight } from 'lucide-react'
 import { feed as feedApi, ai as aiApi, memories as memoriesApi, insights as insightsApi, news as newsApi } from '../api'
 import {
-  NewsCard, PromptCard, MemoryCard, InsightCard, ListPickCard,
+  NewsCard, PromptCard, MemoryCard, InsightCard, ListPickCard, HabitReminderCard,
   StreakCard, OverdueCard, GoalCard, DoneCard, UpcomingCard, HabitsStaleCard,
   InboxPendingCard, StaleInProgressCard, PeopleStalCard, AiNoteCard, NudgeCard,
   ReflectionCard, CelebrationCard, ChallengeCard, PatternCard, EndCard,
 } from './FeedCards'
-import PageOnboarding from '../components/PageOnboarding'
+import { useRecoveryMode } from '../context/RecoveryModeContext'
+import FocusCard from '../components/FocusCard'
+import sleepRoomScene from '../focus-sleep-scene.jpg'
+
+const RECOVERY_HIDDEN_TYPES = new Set([
+  'overdue', 'goal', 'habits_stale', 'stale_inprogress',
+  'inbox_pending', 'upcoming', 'nudge',
+])
 
 export default function Feed() {
   const [data, setData] = useState(null)
@@ -21,9 +28,9 @@ export default function Feed() {
   const [aiStatus, setAiStatus] = useState(null)
   const [aiGenerating, setAiGenerating] = useState(false)
   const scrollRef = useRef(null)
-  const pullStartY = useRef(0)
-  const [pullDist, setPullDist] = useState(0)
-  const PULL_THRESHOLD = 60
+  const focusRef = useRef(null)
+  const [focusDocked, setFocusDocked] = useState(false)
+  const { isRecoveryMode } = useRecoveryMode()
 
   const removeCard = useCallback((ref) => {
     setData(d => d && { ...d, cards: d.cards.filter(c => c.ref !== ref) })
@@ -43,32 +50,32 @@ export default function Feed() {
       setError(e.message)
     } finally {
       if (isRefresh) setRefreshing(false)
-      setPullDist(0)
     }
   }, [])
 
   useEffect(() => { load() }, [load])
 
+  // Keep a compact path back to today's scene after its full card leaves view.
+  useEffect(() => {
+    const root = scrollRef.current
+    const target = focusRef.current
+    if (!root || !target || !window.IntersectionObserver) return undefined
+    const observer = new IntersectionObserver(([entry]) => {
+      setFocusDocked(!entry.isIntersecting && entry.boundingClientRect.top < 0)
+    }, { root, threshold: 0, rootMargin: '-76px 0px 0px' })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [data?.focus])
+
   // keyboard: Shift+R to refresh feed
   useEffect(() => {
     const onKey = (e) => {
-      if (e.shiftKey && e.key === 'R' && !refreshing) load(true)
+      if (e.shiftKey && e.key === 'R' && !refreshing) { load(true); loadAiStatus() }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [load, refreshing])
 
-  // wheel-based pull-to-refresh: scrolling up when already at top (debounced)
-  const wheelCooldown = useRef(false)
-  const onWheel = useCallback((e) => {
-    const el = scrollRef.current
-    if (!el || refreshing || wheelCooldown.current) return
-    if (el.scrollTop <= 0 && e.deltaY < -30) {
-      wheelCooldown.current = true
-      load(true)
-      setTimeout(() => { wheelCooldown.current = false }, 2000)
-    }
-  }, [load, refreshing])
 
   // poll note jobs only when a job was recently submitted
   useEffect(() => {
@@ -122,30 +129,6 @@ export default function Feed() {
     }
   }
 
-  // pull-to-refresh: track touch on the scroll container
-  const onTouchStart = (e) => {
-    const el = scrollRef.current
-    if (el && el.scrollTop === 0) {
-      pullStartY.current = e.touches[0].clientY
-    } else {
-      pullStartY.current = 0
-    }
-  }
-  const onTouchMove = (e) => {
-    if (!pullStartY.current) return
-    const el = scrollRef.current
-    if (el && el.scrollTop > 0) { pullStartY.current = 0; setPullDist(0); return }
-    const dist = Math.max(0, e.touches[0].clientY - pullStartY.current)
-    setPullDist(Math.min(dist, PULL_THRESHOLD * 2))
-  }
-  const onTouchEnd = () => {
-    if (pullDist >= PULL_THRESHOLD && !refreshing) {
-      load(true)
-    } else {
-      setPullDist(0)
-    }
-    pullStartY.current = 0
-  }
 
   const extend = useCallback(async () => {
     if (!data || extending) return
@@ -169,7 +152,7 @@ export default function Feed() {
     setReactions(prev => [...prev, { ref, type, ts, ...extra }])
     removeCard(ref)
     try {
-      await feedApi.react(ref, type, extra)
+      await feedApi.react(ref, type, extra, 'feed_action')
     } catch (e) {
       console.error('Reaction failed:', e)
     }
@@ -232,8 +215,7 @@ export default function Feed() {
     )
   }
 
-  const pullPct = Math.min(pullDist / PULL_THRESHOLD, 1)
-  const pullReady = pullDist >= PULL_THRESHOLD
+
 
   const render = (card) => {
     const ctx = {
@@ -264,6 +246,7 @@ export default function Feed() {
       case 'people_stale':    return <PeopleStalCard card={card} {...ctx} />
       case 'ai_note':         return <AiNoteCard card={card} {...ctx} />
       case 'nudge':           return <NudgeCard card={card} {...ctx} />
+      case 'habit_reminder':  return <HabitReminderCard card={card} {...ctx} />
       case 'reflection':      return <ReflectionCard card={card} {...ctx} />
       case 'celebration':     return <CelebrationCard card={card} {...ctx} />
       case 'challenge':       return <ChallengeCard card={card} {...ctx} />
@@ -272,13 +255,16 @@ export default function Feed() {
     }
   }
 
+  const dailyFocus = data.focus?.sections?.find(section => section.type === 'daily_focus')
+  const dailyScene = data.focus?.sections?.find(section => section.type === 'daily_scene')
+  const openFocusScene = () => window.dispatchEvent(new CustomEvent('life-os:open-focus-scene'))
+
   return (
-    <div className="h-[calc(100vh-3rem)] flex flex-col">
+    <div className="feed-page h-[calc(100vh-3rem)] flex flex-col">
       {/* Fixed header — always visible */}
-      <div className="flex-shrink-0 max-w-2xl mx-auto w-full px-4 pt-5 pb-2 space-y-2">
-        <PageOnboarding pageId="feed" />
+      <div className="feed-header flex-shrink-0 max-w-4xl mx-auto w-full px-5 sm:px-6 pt-5 pb-2 space-y-2">
         <div className="flex items-center justify-between px-1">
-          <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100 tracking-tight">Лента</h1>
+          <div><p className="feed-kicker">Life OS · личный поток</p><h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100 tracking-tight">Лента</h1></div>
           <div className="flex items-center gap-2">
             {lastLoad && (
               <span className="text-[11px] text-gray-300 dark:text-gray-600">
@@ -286,7 +272,7 @@ export default function Feed() {
               </span>
             )}
             <button
-              onClick={() => load(true)}
+              onClick={() => { load(true); loadAiStatus() }}
               disabled={refreshing}
               className="btn btn-ghost !px-2 !py-1 text-xs flex items-center gap-1 disabled:opacity-60"
             >
@@ -297,7 +283,7 @@ export default function Feed() {
         </div>
 
         {/* Status bar: pool size + AI freshness */}
-        <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-gray-50 dark:bg-gray-800/50 text-xs text-gray-500 dark:text-gray-400">
+        <div className="feed-status-rail flex items-center justify-between px-2 py-1.5 rounded-lg bg-gray-50 dark:bg-gray-800/50 text-xs text-gray-500 dark:text-gray-400">
           <div className="flex items-center gap-2">
             {refreshing && (
               <><Loader2 size={11} className="animate-spin" /><span>Обновляем...</span></>
@@ -310,54 +296,70 @@ export default function Feed() {
             {aiStatus?.goal_analysis?.status === 'running' ? (
               <><Loader2 size={11} className="animate-spin text-purple-400" /><span className="text-purple-400">AI генерирует...</span></>
             ) : aiStatus?.goal_analysis?.status === 'error' ? (
-              <><XCircle size={11} className="text-red-400" /><span className="text-red-400">AI ошибка</span></>
+              <>
+                <XCircle size={11} className="text-red-400" />
+                <span className="text-red-400" title={aiStatus.goal_analysis.error || 'Ошибка генерации'}>AI ошибка</span>
+                <button
+                  onClick={() => handleAiGenerate(true)}
+                  disabled={aiGenerating}
+                  className="text-[11px] text-red-400 hover:text-red-500 disabled:opacity-40 px-1 underline underline-offset-2"
+                >
+                  {aiGenerating ? '...' : 'повторить'}
+                </button>
+              </>
             ) : (() => {
-              const today = new Date().toISOString().slice(0, 10)
               const lastGen = aiStatus?.last_generated || data?.ai_last_generated
-              const isToday = lastGen === today
-              const isYesterday = lastGen === new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+              const isCurrentWeek = aiStatus?.goal_analysis?.has_card
               return (
                 <>
-                  <Sparkles size={11} className={isToday ? 'text-purple-400' : 'text-gray-400'} />
-                  <span className={isToday ? 'text-purple-500 dark:text-purple-400' : 'text-gray-400'}>
-                    {isToday ? 'AI сегодня' : isYesterday ? 'AI вчера' : lastGen ? `AI: ${lastGen}` : 'AI не запускался'}
+                  <Sparkles size={11} className={isCurrentWeek ? 'text-purple-400' : 'text-gray-400'} />
+                  <span className={isCurrentWeek ? 'text-purple-500 dark:text-purple-400' : 'text-gray-400'}>
+                    {isCurrentWeek ? 'AI на эту неделю' : lastGen ? `AI: ${lastGen}` : 'AI не запускался'}
                   </span>
                   <button
                     onClick={() => handleAiGenerate(true)}
                     disabled={aiGenerating}
                     className="text-[11px] text-gray-400 hover:text-purple-500 disabled:opacity-40 px-1 underline underline-offset-2"
                   >
-                    {aiGenerating ? '...' : isToday ? 'обновить' : 'запустить'}
+                    {aiGenerating ? '...' : isCurrentWeek ? 'обновить' : 'запустить'}
                   </button>
                 </>
               )
             })()}
           </div>
         </div>
+        {focusDocked && dailyScene && dailyFocus && (
+          <button
+            type="button"
+            onClick={openFocusScene}
+            className="focus-dock group flex w-full items-center gap-3 rounded-xl border border-slate-200/80 bg-white/90 px-2.5 py-2 text-left shadow-sm backdrop-blur dark:border-slate-700/80 dark:bg-slate-900/90"
+          >
+            <img src={sleepRoomScene} alt="" className="h-8 w-12 shrink-0 rounded-lg object-cover" />
+            <span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-gray-800 dark:text-gray-100">{dailyFocus.title}</span><span className="block text-[10px] text-gray-400 dark:text-gray-500">Сцена дня · открыть</span></span>
+            <ChevronRight size={15} className="shrink-0 text-gray-400 transition-transform duration-200 group-hover:translate-x-0.5" />
+          </button>
+        )}
       </div>
 
       {/* Scrollable cards area */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto snap-y snap-mandatory"
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        onWheel={onWheel}
+        className="flex-1 overflow-y-auto"
       >
-        {pullDist > 0 && (
-          <div className="flex items-center justify-center py-2 text-xs text-gray-400 transition-all" style={{ height: pullDist * 0.5 }}>
-            <RefreshCw size={14} className={pullReady ? 'animate-spin' : ''} style={{ transform: `rotate(${pullPct * 360}deg)` }} />
-            <span className="ml-1">{refreshing ? 'Обновление…' : pullReady ? 'Отпустите для обновления' : 'Потяните вниз'}</span>
-          </div>
-        )}
-        <div className={`max-w-2xl mx-auto px-4 pt-2 pb-24 space-y-4 transition-opacity duration-200 ${refreshing ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
-          {(data.cards || []).map(card => (
-            <div key={card.ref} className="snap-start scroll-mt-2">{render(card)}</div>
-          ))}
-          {extraCards.map(card => (
-            <div key={card.ref} className="snap-start scroll-mt-2">{render(card)}</div>
-          ))}
+        <div className={`feed-stack max-w-4xl mx-auto px-5 sm:px-6 pt-4 pb-24 space-y-5 transition-opacity duration-200 ${refreshing ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
+          <div ref={focusRef} className="feed-card-enter" style={{ '--feed-order': 0 }}><FocusCard focus={data.focus} onChange={(focus) => setData(current => current ? { ...current, focus } : current)} /></div>
+          {(data.cards || [])
+            .filter(card => !isRecoveryMode || !RECOVERY_HIDDEN_TYPES.has(card.type))
+            .filter(card => !isRecoveryMode || card.type !== 'streak' || !card.broken)
+            .map((card, index) => (
+              <div key={card.ref} className="feed-card-enter snap-start scroll-mt-2" style={{ '--feed-order': Math.min(index + 1, 7) }}>{render(card)}</div>
+            ))}
+          {extraCards
+            .filter(card => !isRecoveryMode || !RECOVERY_HIDDEN_TYPES.has(card.type))
+            .filter(card => !isRecoveryMode || card.type !== 'streak' || !card.broken)
+            .map((card, index) => (
+              <div key={card.ref} className="feed-card-enter snap-start scroll-mt-2" style={{ '--feed-order': Math.min(index + 1, 7) }}>{render(card)}</div>
+            ))}
           <EndCard onExtend={extend} extending={extending} />
         </div>
       </div>

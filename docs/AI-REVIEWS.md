@@ -24,6 +24,14 @@
 - исходные диалоги Codex/OpenCode, если пользователь не отредактировал их
   вручную перед передачей.
 
+## Data-free review control plane
+
+`/ai-reviews` отображает только review opportunities, явные user decisions,
+initiative/work-item state, coverage-derived priority candidates и безопасные
+provenance IDs. API не читает и не выдаёт transcript, raw session path или
+provider credentials. Priority reminder и recheck остаются локальными
+черновиками: они не меняют порядок задач и не запускают автоматическую работу.
+
 ## Повторяемый порядок ревью
 
 1. Выполните технические проверки:
