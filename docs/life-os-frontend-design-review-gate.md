@@ -1,7 +1,7 @@
 # Frontend design-review gate
 
-status: approved policy, version 1  
-decision owner: user  
+status: approved policy, version 1
+decision owner: user
 scope owner: delivery coordinator
 
 ## Purpose and boundary
