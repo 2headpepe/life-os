@@ -315,6 +315,8 @@ test('managed server launch refuses an endpoint it cannot bind safely', async ()
     assert.equal(response.status, 400)
     const body = await response.json()
     assert.equal(body.code, 'managed_url_invalid')
+    assert.match(body.error, /OPENCODE_SERVER_URL=http:\/\/127\.0\.0\.1:4096/)
+    assert.match(body.error, /не https и не localhost/)
   } finally {
     await stop(backend)
     await fs.rm(root, { recursive: true, force: true })

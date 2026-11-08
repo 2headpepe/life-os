@@ -1514,7 +1514,7 @@ function openCodeFailure(error, requestId) {
     server_url_not_loopback: 'OpenCode server должен быть доступен только по loopback-адресу.',
     server_url_port_required: 'Для запуска OpenCode из Life OS укажи в OPENCODE_SERVER_URL фиксированный ненулевой порт.',
     server_url_launch_unsupported: 'Life OS может открыть `opencode serve` только для HTTP loopback-адреса. HTTPS endpoint запускай и настраивай вручную.',
-    managed_url_invalid: 'Для managed OpenCode задай OPENCODE_SERVER_URL как http://127.0.0.1 с фиксированным портом.',
+    managed_url_invalid: 'Для managed OpenCode задай точный URL: OPENCODE_SERVER_URL=http://127.0.0.1:4096 (только HTTP, 127.0.0.1 и фиксированный ненулевой порт; не https и не localhost).',
     managed_config_change_while_active: 'Нельзя менять адрес или команду OpenCode, пока managed сервер работает.',
     model_missing: 'Укажи OPENCODE_MODEL в формате provider/model, например assistant/assistant.',
     model_invalid: 'OPENCODE_MODEL должен иметь формат provider/model.',
