@@ -44,6 +44,22 @@ life-os/backend/data/news/index.json
 /CLAUDE.md
 /CODEX.md
 
+# Local reviews, runtime evidence and machine-specific automation state.
+/docs/archive/
+/docs/reviews/
+/docs/life-review-*.md
+/ops/agent-registry.json
+/ops/aggregates/
+/ops/ai-improvements/
+/ops/ai-sessions/
+/ops/launchd/
+/ops/life-os-analytics/
+/ops/request-runs/
+/ops/route-promotions/
+/ops/scenario-candidates/
+/ops/warehouse/
+/ops/sports-*.py
+
 # Временные файлы и журналы
 *.log
 .cache/
