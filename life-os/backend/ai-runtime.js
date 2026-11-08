@@ -4,12 +4,27 @@ const RUNTIMES = new Set(['none', 'codex', 'opencode'])
 const SAFE_COMMAND = /^[A-Za-z0-9._/-]+$/
 const OPENCODE_READ_ONLY_CONFIG = JSON.stringify({
   $schema: 'https://opencode.ai/config.json',
-  permission: {
-    edit: 'deny',
-    bash: 'deny',
-    webfetch: 'deny',
-    external_directory: 'deny',
-  },
+  // OpenCode v2 evaluates ordered permission rules. The broad deny rules make
+  // background analysis read-only even when the user's global config is more
+  // permissive.
+  permissions: [
+    { action: 'edit', resource: '*', effect: 'deny' },
+    { action: 'shell', resource: '*', effect: 'deny' },
+    { action: 'webfetch', resource: '*', effect: 'deny' },
+    { action: 'websearch', resource: '*', effect: 'deny' },
+    { action: 'external_directory', resource: '*', effect: 'deny' },
+    { action: 'subagent', resource: '*', effect: 'deny' },
+  ],
+  // Policies are evaluated after agent and saved permission rules, preventing
+  // a permissive user configuration from weakening the background sandbox.
+  policies: [
+    { action: 'tool.use', resource: 'edit:*', effect: 'deny' },
+    { action: 'tool.use', resource: 'shell:*', effect: 'deny' },
+    { action: 'tool.use', resource: 'webfetch:*', effect: 'deny' },
+    { action: 'tool.use', resource: 'websearch:*', effect: 'deny' },
+    { action: 'tool.use', resource: 'external_directory:*', effect: 'deny' },
+    { action: 'tool.use', resource: 'subagent:*', effect: 'deny' },
+  ],
 })
 
 function configuredCommand(value, fallback, variable) {
@@ -71,11 +86,12 @@ export function aiTaskInvocation(prompt, env = process.env) {
   const modelArgs = config.model ? ['--model', config.model] : []
   const args = config.runtime === 'codex'
     ? ['exec', '--ephemeral', '--sandbox', 'read-only', ...modelArgs, prompt]
-    // `--pure` is a global OpenCode option. It must precede `run`: recent
-    // OpenCode releases reject it when it is parsed as a run-subcommand flag.
-    : ['--pure', 'run', ...modelArgs, prompt]
+    // OpenCode v2 runs scripts through the `run` subcommand. Its old `--pure`
+    // flag is unsupported, so read-only protection comes from the temporary
+    // v2 permission rules below instead.
+    : ['run', ...modelArgs, prompt]
   const runtimeEnv = config.runtime === 'opencode'
-    ? { ...env, OPENCODE_PURE: 'true', OPENCODE_CONFIG_CONTENT: OPENCODE_READ_ONLY_CONFIG }
+    ? { ...env, OPENCODE_CONFIG_CONTENT: OPENCODE_READ_ONLY_CONFIG }
     : env
   return { config, args, env: runtimeEnv }
 }

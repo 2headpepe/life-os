@@ -33,11 +33,26 @@ test('chat prompts retain roles and system constraints', () => {
   assert.match(prompt, /Assistant: Здравствуйте/)
 })
 
-test('OpenCode background tasks are launched without write-capable tools', () => {
+test('OpenCode v2 background tasks are launched without write-capable tools', () => {
   const invocation = aiTaskInvocation('Review this', { AI_RUNTIME: 'opencode' })
-  assert.deepEqual(invocation.args.slice(0, 2), ['--pure', 'run'])
+  assert.deepEqual(invocation.args.slice(0, 1), ['run'])
+  assert.ok(!invocation.args.includes('--pure'))
+  assert.equal(invocation.env.OPENCODE_PURE, undefined)
   const config = JSON.parse(invocation.env.OPENCODE_CONFIG_CONTENT)
-  assert.equal(config.permission.edit, 'deny')
-  assert.equal(config.permission.bash, 'deny')
-  assert.equal(config.permission.webfetch, 'deny')
+  assert.deepEqual(config.permissions, [
+    { action: 'edit', resource: '*', effect: 'deny' },
+    { action: 'shell', resource: '*', effect: 'deny' },
+    { action: 'webfetch', resource: '*', effect: 'deny' },
+    { action: 'websearch', resource: '*', effect: 'deny' },
+    { action: 'external_directory', resource: '*', effect: 'deny' },
+    { action: 'subagent', resource: '*', effect: 'deny' },
+  ])
+  assert.deepEqual(config.policies, [
+    { action: 'tool.use', resource: 'edit:*', effect: 'deny' },
+    { action: 'tool.use', resource: 'shell:*', effect: 'deny' },
+    { action: 'tool.use', resource: 'webfetch:*', effect: 'deny' },
+    { action: 'tool.use', resource: 'websearch:*', effect: 'deny' },
+    { action: 'tool.use', resource: 'external_directory:*', effect: 'deny' },
+    { action: 'tool.use', resource: 'subagent:*', effect: 'deny' },
+  ])
 })
