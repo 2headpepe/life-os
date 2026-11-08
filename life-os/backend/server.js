@@ -1384,6 +1384,11 @@ app.post('/api/ai/chat', async (req, res) => {
   const requestId = randomUUID()
   const startedAt = Date.now()
   let pid = null
+  let heartbeat = null
+  req.once('aborted', () => console.warn('[ai/chat] client_aborted', { requestId, pid, durationMs: Date.now() - startedAt }))
+  res.once('close', () => {
+    if (!res.writableEnded) console.warn('[ai/chat] response_closed', { requestId, pid, durationMs: Date.now() - startedAt })
+  })
   try {
     const runtime = aiRuntimeConfig()
     console.info('[ai/chat] started', { requestId, runtime: runtime.runtime, model: runtime.model || 'default' })
@@ -1392,7 +1397,12 @@ app.post('/api/ai/chat', async (req, res) => {
       onStart: ({ pid: childPid }) => {
         pid = childPid
         console.info('[ai/chat] spawned', { requestId, pid })
+        heartbeat = setInterval(() => {
+          console.info('[ai/chat] waiting', { requestId, pid, durationMs: Date.now() - startedAt })
+        }, 30_000)
       },
+      onStderr: message => console.info('[ai/chat] stderr', { requestId, pid, message }),
+      onExit: ({ exitCode, signal }) => console.info('[ai/chat] process_exit', { requestId, pid, exitCode, signal, durationMs: Date.now() - startedAt }),
     })
     console.info('[ai/chat] completed', { requestId, durationMs: Date.now() - startedAt, pid })
     res.json({ text: output })
@@ -1411,6 +1421,8 @@ app.post('/api/ai/chat', async (req, res) => {
       requestId,
       code: diagnostic.code || e.code || 'runtime_error',
     })
+  } finally {
+    clearInterval(heartbeat)
   }
 })
 

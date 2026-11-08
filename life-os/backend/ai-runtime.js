@@ -68,7 +68,7 @@ function runtimeError(message, { code, command, pid, startedAt, stderr = '' }) {
   return error
 }
 
-function run(command, args, { cwd, timeoutMs, env, onStart }) {
+function run(command, args, { cwd, timeoutMs, env, onStart, onStderr, onExit }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, shell: false })
     const startedAt = Date.now()
@@ -83,8 +83,14 @@ function run(command, args, { cwd, timeoutMs, env, onStart }) {
       reject(runtimeError(message, { code, command, pid: child.pid, startedAt, stderr }))
     }
     child.stdout.on('data', chunk => { stdout += chunk })
-    child.stderr.on('data', chunk => { stderr += chunk })
+    child.stderr.on('data', chunk => {
+      const text = String(chunk)
+      stderr += text
+      const diagnostic = diagnosticStderr(text)
+      if (diagnostic) onStderr?.(diagnostic)
+    })
     onStart?.({ pid: child.pid ?? null, command })
+    child.once('exit', (exitCode, signal) => onExit?.({ exitCode, signal }))
     timer = setTimeout(() => {
       child.kill('SIGTERM')
       fail(`AI task timed out after ${timeoutMs}ms`, 'timeout')
@@ -129,9 +135,9 @@ export function aiTaskInvocation(prompt, env = process.env) {
   return { config, args, env: runtimeEnv }
 }
 
-export function runAiTask(prompt, { cwd, timeoutMs = 180_000, env = process.env, onStart } = {}) {
+export function runAiTask(prompt, { cwd, timeoutMs = 180_000, env = process.env, onStart, onStderr, onExit } = {}) {
   const invocation = aiTaskInvocation(prompt, env)
-  return run(invocation.config.command, invocation.args, { cwd, timeoutMs, env: invocation.env, onStart })
+  return run(invocation.config.command, invocation.args, { cwd, timeoutMs, env: invocation.env, onStart, onStderr, onExit })
 }
 
 export function promptFromMessages(messages, system) {
