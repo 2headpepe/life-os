@@ -60,6 +60,36 @@ life-os/backend/data/news/index.json
 /ops/warehouse/
 /ops/sports-*.py
 
+# Legacy migration candidates. Reconcile each source against the public app
+# before removing its rule; do not publish it through a broad `git add .`.
+/docs/README.md
+/docs/ai-session-intelligence-feature-spec.md
+/docs/ai-session-intelligence.md
+/docs/commands/
+/docs/data-schemas.md
+/docs/knowledge-operations.md
+/docs/life-os-*.md
+/docs/life-os-*.docx
+/docs/migration-status.md
+/docs/product-roadmap.md
+/docs/request-observability.md
+/docs/runtime-architecture.md
+/docs/scenarios/
+/life-os/CLAUDE.md
+/life-os/design-surface-manifest.json
+/life-os/frontend/src/components/ClaudeConsole.jsx
+/life-os/frontend/tests/
+/life-os/island/.gitignore
+/ops/.gitignore
+/ops/README.md
+/ops/prompts/
+/ops/schemas/
+/ops/scripts/*
+!/ops/scripts/verify-public-release.mjs
+/ops/sql/
+/ops/ui/
+/prompts/
+
 # Временные файлы и журналы
 *.log
 .cache/
