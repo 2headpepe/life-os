@@ -4,14 +4,24 @@ import fs from 'fs/promises'
 import path from 'path'
 import os from 'os'
 import { exec } from 'child_process'
+import { randomUUID } from 'crypto'
 import { google } from 'googleapis'
 import multer from 'multer'
 import { aiRuntimeConfig, checkAiRuntime, promptFromMessages, runAiTask } from './ai-runtime.js'
+import { productIntelligenceStore } from './product-intelligence.js'
+import { assertDeliveryTransition, handoffIsComplete, hasDependencyCycle, inboundDependencyReferences, isBlocked, workContext } from './task-lifecycle.js'
+import { assertEligibleExecutor, assertEligibleVerifier } from './agent-registry.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
 const VAULT = process.env.VAULT_PATH || path.join(import.meta.dirname, '../../brain/content')
 const WORK_DIR = process.env.WORK_DIR || path.resolve(import.meta.dirname, '../..')
+const productIntelligence = productIntelligenceStore(WORK_DIR)
+const defaultAgents = { agents: [
+  { id: 'life-os-delivery-executor', status: 'active', roles: ['Исполнитель delivery'] },
+  { id: 'life-os-independent-verifier', status: 'active', roles: ['Независимый проверяющий'], can_verify: true },
+] }
+async function agentRegistry() { try { return JSON.parse(await fs.readFile(path.join(WORK_DIR, 'ops/agent-registry.json'), 'utf8')) } catch { return defaultAgents } }
 
 const STALENESS_DAYS = {
   node: 21,
@@ -21,6 +31,7 @@ const STALENESS_DAYS = {
 
 app.use(cors())
 app.use(express.json())
+app.get('/api/agents', async (req, res) => res.json(await agentRegistry()))
 
 // ─── Memories photo upload ───────────────────────────────────────
 const MEMORIES_DIR = path.join(VAULT, 'memories')
@@ -1018,6 +1029,47 @@ async function writeTree(data) {
   await fs.writeFile(TREE_FILE, JSON.stringify(data, null, 2))
 }
 
+// Data-free AI review control plane.  The records are deliberately independent
+// of CLI history: no transcript, raw source path, or provider credential is a
+// valid input or output of these routes.
+app.get('/api/ai-reviews', async (req, res) => {
+  try { res.json(await productIntelligence.readModel()) }
+  catch (error) { res.status(500).json({ error: error.message }) }
+})
+
+app.get('/api/product-intelligence', async (req, res) => {
+  try { res.json(await productIntelligence.readModel()) }
+  catch (error) { res.status(500).json({ error: error.message }) }
+})
+
+app.post('/api/product-intelligence/review-actions', async (req, res) => {
+  try { res.status(201).json(await productIntelligence.action(req.body || {})) }
+  catch (error) { res.status(error.message === 'Review record not found' ? 404 : 400).json({ error: error.message }) }
+})
+
+app.post('/api/product-intelligence/initiatives', async (req, res) => {
+  try { res.status(201).json({ initiative: await productIntelligence.createInitiative(req.body || {}) }) }
+  catch (error) { res.status(400).json({ error: error.message }) }
+})
+
+app.post('/api/product-intelligence/priority-loop/reminder', async (req, res) => {
+  try { res.json(await productIntelligence.priority(req.body?.action, req.body || {})) }
+  catch (error) { res.status(400).json({ error: error.message }) }
+})
+
+app.post('/api/product-intelligence/priority-loop/recheck-drafts', async (req, res) => {
+  const action = req.body?.action === 'dismiss' ? 'dismiss_recheck' : 'create_recheck'
+  try {
+    const task = (await readTree()).nodes.find(node => node.id === req.body?.delivery_task_id)
+    if (!task || task.status !== 'done') return res.status(409).json({ error: 'completed delivery work required for a recheck draft' })
+    const model = await productIntelligence.readModel()
+    const zone_ids = model.priority_loop.candidates.map(candidate => candidate.zone_id).reverse()
+    const result = await productIntelligence.priority(action, { ...(req.body || {}), zone_ids })
+    if (result.idempotent) return res.json(result)
+    res.json({ ok: true, draft: result })
+  } catch (error) { res.status(400).json({ error: error.message }) }
+})
+
 app.get('/api/tree/spheres', async (req, res) => {
   try {
     const data = await readTree()
@@ -1054,7 +1106,7 @@ app.get('/api/tree/leaves', async (req, res) => {
       const blockers = (leaf.blocked_by || [])
         .map(bid => { const b = nodeMap[bid]; return b ? { id: b.id, title: b.title, status: b.status } : null })
         .filter(Boolean)
-      const is_blocked = blockers.some(b => b.status !== 'done')
+      const is_blocked = isBlocked(leaf, new Map(nodes.map(node => [node.id, node])))
       return {
         ...leaf,
         root_id:    root.id,
@@ -1080,8 +1132,110 @@ app.get('/api/tree', async (req, res) => {
   }
 })
 
+function deliveryRoot(tree, today) {
+  let root = tree.nodes.find(node => node.id === 'root-delivery-life-os')
+  if (!root) {
+    root = { id: 'root-delivery-life-os', title: 'Life OS delivery', parent_id: null, color: '#0E7490', status: null, created: today, updated: today }
+    tree.nodes.push(root)
+  }
+  return root
+}
+
+function deliveryNode({ id, title, outcome, parent_id, today }) {
+  return { id, title, outcome, parent_id, work_context: 'delivery', status: 'needs_grooming', blocked_by: [], handoff_contract: null, execution: null, verification: null, created: today, updated: today }
+}
+
+app.post('/api/product-intelligence/initiatives/:id/work-items', async (req, res) => {
+  try {
+    const title = String(req.body?.title || '').trim()
+    const outcome = String(req.body?.outcome || '').trim()
+    if (!title || !outcome) return res.status(400).json({ error: 'title and outcome are required' })
+    const tree = await readTree()
+    const today = new Date().toISOString().slice(0, 10)
+    const root = deliveryRoot(tree, today)
+    const node = deliveryNode({ id: `node-${randomUUID()}`, title, outcome, parent_id: root.id, today })
+    const initiative = await productIntelligence.attachWorkItem(req.params.id, node.id)
+    tree.nodes.push(node)
+    await writeTree(tree)
+    res.status(201).json({ initiative, node })
+  } catch (error) { res.status(409).json({ error: error.message }) }
+})
+
+app.post('/api/tree/:id/dependencies', async (req, res) => {
+  try {
+    const title = String(req.body?.title || '').trim()
+    const outcome = String(req.body?.outcome || '').trim()
+    const tree = await readTree()
+    const source = tree.nodes.find(node => node.id === req.params.id)
+    if (!source) return res.status(404).json({ error: 'node not found' })
+    if (workContext(source) !== 'delivery') return res.status(409).json({ error: 'delivery work required' })
+    if (!title || !outcome) return res.status(400).json({ error: 'title and outcome are required' })
+    const today = new Date().toISOString().slice(0, 10)
+    const dependency = deliveryNode({ id: `node-${randomUUID()}`, title, outcome, parent_id: source.parent_id, today })
+    source.blocked_by = [...new Set([...(source.blocked_by || []), dependency.id])]
+    source.updated = today
+    tree.nodes.push(dependency)
+    await writeTree(tree)
+    res.status(201).json({ source, dependency })
+  } catch (error) { res.status(500).json({ error: error.message }) }
+})
+
+app.get('/api/tree/:id/eligible-existing-dependencies', async (req, res) => {
+  const tree = await readTree()
+  const source = tree.nodes.find(node => node.id === req.params.id)
+  if (!source) return res.status(404).json({ error: 'node not found' })
+  if (workContext(source) !== 'delivery') return res.status(409).json({ error: 'delivery work required' })
+  const candidates = tree.nodes.filter(node => node.id !== source.id && workContext(node) === 'delivery' && !(source.blocked_by || []).includes(node.id) && !hasDependencyCycle(tree.nodes, source.id, node.id)).map(node => ({ id: node.id, title: node.title, status: node.status }))
+  res.json({ candidates })
+})
+
+app.post('/api/tree/:id/existing-dependencies', async (req, res) => {
+  const dependency_id = String(req.body?.dependency_id || '')
+  const tree = await readTree()
+  const source = tree.nodes.find(node => node.id === req.params.id)
+  const dependency = tree.nodes.find(node => node.id === dependency_id)
+  if (!source || !dependency) return res.status(404).json({ error: 'source or dependency not found' })
+  if (workContext(source) !== 'delivery' || workContext(dependency) !== 'delivery' || hasDependencyCycle(tree.nodes, source.id, dependency.id)) return res.status(409).json({ error: 'invalid delivery dependency' })
+  const initiativeRows = await fs.readFile(path.join(WORK_DIR, 'ops/product-intelligence', 'initiatives.jsonl'), 'utf8').catch(() => '')
+  const initiatives = initiativeRows.split('\n').filter(Boolean).map(JSON.parse)
+  const initiativeFor = id => initiatives.find(item => item.state === 'approved' && (item.work_item_ids || []).includes(id))?.id
+  if (!initiativeFor(source.id) || initiativeFor(source.id) !== initiativeFor(dependency.id)) return res.status(409).json({ error: 'delivery dependencies must share an approved initiative' })
+  if ((source.blocked_by || []).includes(dependency.id)) return res.json({ source, dependency, idempotent: true })
+  source.blocked_by = [...new Set([...(source.blocked_by || []), dependency.id])]
+  await writeTree(tree)
+  res.status(201).json({ source, dependency })
+})
+
+app.patch('/api/tree/:id/handoff-contract', async (req, res) => {
+  const tree = await readTree()
+  const node = tree.nodes.find(item => item.id === req.params.id)
+  if (!node) return res.status(404).json({ error: 'node not found' })
+  if (workContext(node) !== 'delivery') return res.status(409).json({ error: 'delivery work required' })
+  if (!handoffIsComplete(req.body?.handoff_contract)) return res.status(400).json({ error: 'handoff contract is incomplete' })
+  node.handoff_contract = req.body.handoff_contract
+  if (node.status === 'needs_grooming') node.status = 'backlog'
+  await writeTree(tree)
+  res.json(node)
+})
+
+app.post('/api/tree/:id/verification', async (req, res) => {
+  const tree = await readTree()
+  const node = tree.nodes.find(item => item.id === req.params.id)
+  if (!node) return res.status(404).json({ error: 'node not found' })
+  if (workContext(node) !== 'delivery' || node.status !== 'waiting_for_review') return res.status(409).json({ error: 'delivery work must wait for review' })
+  const evidence_refs = Array.isArray(req.body?.evidence_refs) ? req.body.evidence_refs.filter(Boolean) : []
+  if (!['passed', 'failed'].includes(req.body?.state) || !req.body?.verified_by || !evidence_refs.length) return res.status(400).json({ error: 'state, verified_by and evidence_refs are required' })
+  assertEligibleVerifier(await agentRegistry(), req.body.verified_by, node.execution?.actor)
+  node.verification = { state: req.body.state, verified_by: req.body.verified_by, evidence_refs, verified_at: new Date().toISOString() }
+  node.status = req.body.state === 'passed' ? 'done' : 'backlog'
+  await writeTree(tree)
+  res.json(node)
+})
+
 app.post('/api/tree', async (req, res) => {
   try {
+    if (req.body?.work_context === 'delivery') return res.status(409).json({ error: 'delivery work must be created from an approved initiative' })
+    if (req.body?.status === 'blocked') return res.status(400).json({ error: 'blocked is derived from blocked_by and cannot be stored' })
     const data = await readTree()
     const today = new Date().toISOString().slice(0, 10)
     const node = {
@@ -1126,6 +1280,10 @@ app.patch('/api/tree/:id', async (req, res) => {
     if (idx === -1) return res.status(404).json({ error: 'node not found' })
     const today = new Date().toISOString().slice(0, 10)
     const oldNode = data.nodes[idx]
+    if (req.body?.status === 'in_progress' || req.body?.status === 'waiting_for_review') {
+      assertEligibleExecutor(await agentRegistry(), req.body?.execution?.actor || oldNode.execution?.actor, oldNode.handoff_contract?.target_role)
+    }
+    assertDeliveryTransition(oldNode, req.body?.status ?? oldNode.status, { ...oldNode, ...req.body })
     data.nodes[idx] = { ...oldNode, ...req.body, updated: today }
     const newNode = data.nodes[idx]
 
@@ -1193,6 +1351,13 @@ app.delete('/api/tree/:id', async (req, res) => {
       data.nodes.filter(n => n.parent_id === id).forEach(n => collect(n.id))
     }
     collect(req.params.id)
+    const inbound = inboundDependencyReferences(data.nodes, toDelete)
+    if (inbound.length) {
+      const operationsFile = path.join(WORK_DIR, 'ops/product-intelligence', 'delivery-operations.jsonl')
+      await fs.mkdir(path.dirname(operationsFile), { recursive: true })
+      await fs.appendFile(operationsFile, `${JSON.stringify({ id: `delivery-operation:${randomUUID()}`, state: 'rejected', reason: 'referenced_dependency', inbound_refs: inbound, created_at: new Date().toISOString() })}\n`)
+      return res.status(409).json({ error: 'cannot delete a delivery dependency while referenced', inbound_refs: inbound, blocked_by: inbound })
+    }
     const gcalIds = data.nodes
       .filter(n => toDelete.has(n.id) && n.gcal_event_id)
       .map(n => n.gcal_event_id)

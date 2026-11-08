@@ -4,7 +4,7 @@ import {
   Newspaper, Image as ImageIcon, Lightbulb, Flame, AlertTriangle, Target, CheckCircle2, PartyPopper, HelpCircle, Sparkles, CalendarDays, Activity,
   Inbox, Clock, Users, MessageSquare, Pencil,
 } from 'lucide-react'
-import { inbox, news as newsApi, memories as memoriesApi, insights as insightsApi, lists as listsApi, tree as treeApi, feed as feedApi } from '../api'
+import { inbox, news as newsApi, memories as memoriesApi, insights as insightsApi, lists as listsApi, tree as treeApi, feed as feedApi, habits as habitsApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
 
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
@@ -14,9 +14,9 @@ function serializeCardContext(card) {
     case 'news':
       return `[Новость] "${card.item?.title}"${card.item?.source_name ? ` — ${card.item.source_name}` : ''}${card.item?.rating ? `, оценка ${card.item.rating}/10` : ''}`
     case 'memory':
-      return `[Воспоминание] ${card.entry?.date || ''} — "${(card.entry?.text || '').slice(0, 120)}"`
+      return `[Воспоминание] ${card.entry?.date || ''} — "${card.entry?.text || ''}"`
     case 'insight':
-      return `[Инсайт] "${card.insight?.title}"${card.insight?.body ? `: ${card.insight.body.slice(0, 80)}` : ''}`
+      return `[Инсайт] "${card.insight?.title}"${card.insight?.body ? `: ${card.insight.body}` : ''}`
     case 'list_pick':
       return `[Подборка · ${card.list_label || ''}] "${card.item?.title}"${card.item?.year ? ` (${card.item.year})` : ''}`
     case 'prompt':
@@ -40,17 +40,19 @@ function serializeCardContext(card) {
     case 'people_stale':
       return `[Люди] ${(card.people || []).slice(0, 5).map(p => `${p.name} (${p.days} дн. назад)`).join(', ')}`
     case 'ai_note':
-      return `[AI наблюдение] "${card.title}"${card.body ? `: ${card.body.slice(0, 80)}` : ''}`
+      return `[AI наблюдение] "${card.title}"${card.body ? `: ${card.body}` : ''}`
     case 'nudge':
       return `[Наблюдение] ${card.message}${card.detail ? ` — ${card.detail}` : ''}`
     case 'reflection':
       return `[Рефлексия] "${card.question}"${card.context ? ` — ${card.context}` : ''}`
     case 'celebration':
-      return `[Победа] "${card.title}"${card.body ? ` — ${card.body.slice(0, 80)}` : ''}`
+      return `[Победа] "${card.title}"${card.body ? ` — ${card.body}` : ''}`
     case 'challenge':
-      return `[Вызов] "${card.title}"${card.description ? ` — ${card.description.slice(0, 80)}` : ''}`
+      return `[Вызов] "${card.title}"${card.description ? ` — ${card.description}` : ''}`
     case 'pattern':
-      return `[Паттерн] "${card.title}"${card.observation ? ` — ${card.observation.slice(0, 80)}` : ''}`
+      return `[Паттерн] "${card.title}"${card.observation ? ` — ${card.observation}` : ''}`
+    case 'habit_reminder':
+      return `[Напоминание о привычке] ${card.habit_label || card.habit_id}`
     default:
       return `[Карточка: ${card.type}] ref=${card.ref}`
   }
@@ -291,7 +293,7 @@ function CardActions({ liked, onLike, onDismiss, note, onNote, hideDismiss, onEd
         {card && (
           <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/30">
             <div className="flex items-center gap-1.5 mb-1">
-              <span className="text-[10px] text-gray-300 dark:text-gray-600">💬 Набросок → открыть AI</span>
+              <span className="text-[10px] text-gray-300 dark:text-gray-600">💬 Набросок → открыть AI-консоль</span>
             </div>
             <div className="flex items-center gap-1.5">
               <input
@@ -617,7 +619,7 @@ export function MemoryCard({ card, liked, onLike, onDismiss, onSaved, note, onNo
 // ─── Insight ───────────────────────────────────────────────────────
 
 export function InsightCard({ card, onDismiss, onSaved, note, onNote, onQuickReply, onEdit }) {
-  const { insight, when, meta } = card
+  const { insight, when, meta, card_label } = card
   const [done, setDone] = useState(null)
 
   const answer = async (val) => {
@@ -639,7 +641,7 @@ export function InsightCard({ card, onDismiss, onSaved, note, onNote, onQuickRep
 
   return (
     <div className="card p-4">
-      <CardHeader icon={Lightbulb} label={`Инсайт · ${when}`} iconClass="text-amber-500" trace={card.trace} />
+      <CardHeader icon={Lightbulb} label={card_label || `Инсайт · ${when}`} iconClass={card_label ? 'text-violet-500' : 'text-amber-500'} trace={card.trace} />
       <MetaSubtitle meta={meta} />
       <p className="font-medium text-gray-900 dark:text-gray-100">{insight.title}</p>
       {insight.body && (
@@ -1180,6 +1182,74 @@ export function NudgeCard({ card, onDismiss, note, onNote, onQuickReply }) {
       </div>
       <GenerationTrace trace={card.trace} meta={card.meta} />
       <CardActions note={note} onNote={onNote} onQuickReply={onQuickReply} card={card} hideDismiss />
+    </div>
+  )
+}
+
+// ─── Habit reminder ────────────────────────────────────────────────
+// Generic: driven by habit.show_reminder + habit.label/detail in definitions.json
+
+export function HabitReminderCard({ card, onDismiss, onSaved, note, onNote, onQuickReply }) {
+  const { habit_id, habit_label, habit_detail } = card
+  const [text, setText] = useState('')
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const save = async () => {
+    if (!text.trim() || saving) return
+    setSaving(true)
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      await memoriesApi.add({ text: `${habit_label}:\n${text.trim()}`, date: today })
+      const logData = await habitsApi.log(today).catch(() => ({ date: today, habits: {} }))
+      const log = logData?.habits ? logData : { date: today, habits: {} }
+      log.habits[habit_id] = true
+      await habitsApi.saveLog(today, log)
+      await feedApi.react(card.ref, 'done')
+      setSaved(true)
+      onSaved?.()
+    } catch (e) {
+      console.error('Habit reminder save failed:', e)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (saved) {
+    return (
+      <div className="card p-4 ring-1 ring-emerald-200 dark:ring-emerald-900">
+        <CardHeader icon={CheckCircle2} label="Записано" iconClass="text-emerald-500" trace={card.trace} />
+        <p className="text-sm text-emerald-600 dark:text-emerald-400">Сохранено в воспоминания и привычка отмечена ✓</p>
+        <div className="mt-3 flex justify-end">
+          <Link to="/memories" className="btn btn-ghost text-xs">Воспоминания →</Link>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="card p-4 ring-1 ring-emerald-200 dark:ring-emerald-900">
+      <CardHeader icon={Sparkles} label={habit_label} iconClass="text-emerald-500" trace={card.trace} />
+      {habit_detail && <p className="mt-1 text-sm text-gray-400">{habit_detail}</p>}
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) save() }}
+        placeholder="Запиши пару слов..."
+        className="mt-3 w-full bg-gray-50 dark:bg-gray-800/60 rounded-lg text-sm text-gray-900 dark:text-gray-100 resize-none outline-none
+                   placeholder-gray-400 dark:placeholder-gray-500 p-3 min-h-[70px] focus:ring-1 focus:ring-emerald-300 dark:focus:ring-emerald-700"
+      />
+      <div className="mt-2 flex items-center justify-between">
+        <span className="text-xs text-gray-300 dark:text-gray-600">⌘Enter · воспоминание + привычка</span>
+        <div className="flex gap-2">
+          <button onClick={onDismiss} className="btn btn-ghost text-xs">Позже</button>
+          <button onClick={save} disabled={!text.trim() || saving} className="btn btn-primary text-xs">
+            {saving ? '...' : 'Записать'}
+          </button>
+        </div>
+      </div>
+      <GenerationTrace trace={card.trace} />
+      <CardActions onDismiss={onDismiss} note={note} onNote={onNote} onQuickReply={onQuickReply} card={card} />
     </div>
   )
 }

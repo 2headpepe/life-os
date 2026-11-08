@@ -21,6 +21,7 @@ const ALL_NAV = [
   { to: '/insights', label: 'Инсайты',    Icon: Lightbulb },
   { to: '/memories', label: 'Воспоминания', Icon: ImageIcon },
   { to: '/news',     label: 'Новости',     Icon: Newspaper },
+  { to: '/ai-reviews', label: 'AI Reviews', Icon: Sparkles },
 ]
 
 export default function Sidebar({ onCapture, onSearch, sphere, setSphere }) {
