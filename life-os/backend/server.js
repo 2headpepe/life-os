@@ -1381,11 +1381,36 @@ const AI_SYSTEM_PROMPT = 'Ты личный ассистент в Life OS — с
 app.post('/api/ai/chat', async (req, res) => {
   const { messages, system } = req.body
   if (!messages?.length) return res.status(400).json({ error: 'messages required' })
+  const requestId = randomUUID()
+  const startedAt = Date.now()
+  let pid = null
   try {
-    const output = await runAiTask(promptFromMessages(messages, system || AI_SYSTEM_PROMPT), { cwd: WORK_DIR })
+    const runtime = aiRuntimeConfig()
+    console.info('[ai/chat] started', { requestId, runtime: runtime.runtime, model: runtime.model || 'default' })
+    const output = await runAiTask(promptFromMessages(messages, system || AI_SYSTEM_PROMPT), {
+      cwd: WORK_DIR,
+      onStart: ({ pid: childPid }) => {
+        pid = childPid
+        console.info('[ai/chat] spawned', { requestId, pid })
+      },
+    })
+    console.info('[ai/chat] completed', { requestId, durationMs: Date.now() - startedAt, pid })
     res.json({ text: output })
   } catch (e) {
-    res.status(503).json({ error: e.message })
+    const diagnostic = e.aiDiagnostic || {}
+    console.error('[ai/chat] failed', {
+      requestId,
+      durationMs: Date.now() - startedAt,
+      pid: diagnostic.pid ?? pid,
+      code: diagnostic.code || e.code || 'runtime_error',
+      stderr: diagnostic.stderr || undefined,
+      message: e.message,
+    })
+    res.status(503).json({
+      error: `AI не ответил (${diagnostic.code || e.code || 'runtime_error'}). Код диагностики: ${requestId}`,
+      requestId,
+      code: diagnostic.code || e.code || 'runtime_error',
+    })
   }
 })
 

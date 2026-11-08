@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { aiRuntimeConfig, aiTaskInvocation, promptFromMessages } from '../ai-runtime.js'
+import { aiRuntimeConfig, aiTaskInvocation, promptFromMessages, runAiTask } from '../ai-runtime.js'
 
 test('AI runtime defaults to no AI', () => {
   assert.deepEqual(aiRuntimeConfig({}), { runtime: 'none', command: 'opencode', model: undefined })
@@ -55,4 +55,17 @@ test('OpenCode v2 background tasks are launched without write-capable tools', ()
     { action: 'tool.use', resource: 'external_directory:*', effect: 'deny' },
     { action: 'tool.use', resource: 'subagent:*', effect: 'deny' },
   ])
+})
+
+test('AI runtime reports a bounded, redacted diagnostic when its executable cannot start', async () => {
+  await assert.rejects(
+    runAiTask('test', { cwd: process.cwd(), timeoutMs: 100, env: { AI_RUNTIME: 'opencode', OPENCODE_COMMAND: 'missing-opencode-binary' } }),
+    error => {
+      assert.equal(error.code, 'spawn_error')
+      assert.equal(error.aiDiagnostic.code, 'spawn_error')
+      assert.equal(error.aiDiagnostic.command, 'missing-opencode-binary')
+      assert.equal(typeof error.aiDiagnostic.durationMs, 'number')
+      return true
+    },
+  )
 })

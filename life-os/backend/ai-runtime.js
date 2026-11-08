@@ -47,22 +47,55 @@ export function aiRuntimeConfig(env = process.env) {
   }
 }
 
-function run(command, args, { cwd, timeoutMs, env }) {
+function diagnosticStderr(stderr) {
+  return stderr
+    .replace(/\b(bearer|token|api[_-]?key|authorization|password)\b\s*[:=]?\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/\b[A-Za-z0-9_-]{40,}\b/g, '[redacted]')
+    .trim()
+    .slice(0, 600)
+}
+
+function runtimeError(message, { code, command, pid, startedAt, stderr = '' }) {
+  const error = new Error(message)
+  error.code = code
+  error.aiDiagnostic = {
+    code,
+    command,
+    pid: pid ?? null,
+    durationMs: Date.now() - startedAt,
+    stderr: diagnosticStderr(stderr),
+  }
+  return error
+}
+
+function run(command, args, { cwd, timeoutMs, env, onStart }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, shell: false })
+    const startedAt = Date.now()
     let stdout = ''
     let stderr = ''
+    let settled = false
+    let timer
+    const fail = (message, code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(runtimeError(message, { code, command, pid: child.pid, startedAt, stderr }))
+    }
     child.stdout.on('data', chunk => { stdout += chunk })
     child.stderr.on('data', chunk => { stderr += chunk })
-    const timer = setTimeout(() => {
+    onStart?.({ pid: child.pid ?? null, command })
+    timer = setTimeout(() => {
       child.kill('SIGTERM')
-      reject(new Error(`AI task timed out after ${timeoutMs}ms`))
+      fail(`AI task timed out after ${timeoutMs}ms`, 'timeout')
     }, timeoutMs)
-    child.once('error', error => { clearTimeout(timer); reject(error) })
+    child.once('error', error => fail(error.message, 'spawn_error'))
     child.once('close', code => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
       if (code === 0) return resolve(stdout)
-      reject(new Error(`${command} exited ${code}: ${stderr.slice(0, 300)}`))
+      reject(runtimeError(`${command} exited ${code}: ${diagnosticStderr(stderr)}`, { code: 'nonzero_exit', command, pid: child.pid, startedAt, stderr }))
     })
   })
 }
@@ -96,9 +129,9 @@ export function aiTaskInvocation(prompt, env = process.env) {
   return { config, args, env: runtimeEnv }
 }
 
-export function runAiTask(prompt, { cwd, timeoutMs = 180_000, env = process.env } = {}) {
+export function runAiTask(prompt, { cwd, timeoutMs = 180_000, env = process.env, onStart } = {}) {
   const invocation = aiTaskInvocation(prompt, env)
-  return run(invocation.config.command, invocation.args, { cwd, timeoutMs, env: invocation.env })
+  return run(invocation.config.command, invocation.args, { cwd, timeoutMs, env: invocation.env, onStart })
 }
 
 export function promptFromMessages(messages, system) {
