@@ -292,6 +292,7 @@ function CliOnboarding({ cliCommand, onDone }) {
 export default function Onboarding({ onDone }) {
   const navigate = useNavigate()
   const [hasAi, setHasAi] = useState(null)
+  const [hasExistingData, setHasExistingData] = useState(null)
   const [cliCommand, setCliCommand] = useState('codex')
   const [aiRuntime, setAiRuntime] = useState('none')
   const [openCodeServer, setOpenCodeServer] = useState(null)
@@ -335,6 +336,7 @@ export default function Onboarding({ onDone }) {
 
   useEffect(() => {
     void refreshConfig()
+    treeApi.all().then(nodes => setHasExistingData(nodes.some(node => node.parent_id !== null))).catch(() => setHasExistingData(false))
     return () => pollAbortRef.current?.abort()
     // Configuration is intentionally refreshed after an explicit server action.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -621,11 +623,11 @@ export default function Onboarding({ onDone }) {
     try {
       const response = await fetch('/api/setup/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation: resetConfirmation }) })
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Не удалось удалить данные.')
-      localStorage.removeItem('life-os:setup-completed'); setResetPreview(null); setResetConfirmation(''); setStep(0)
+      localStorage.removeItem('life-os:setup-completed'); setResetPreview(null); setResetConfirmation(''); setHasExistingData(false); setStep(0)
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
 
-  if (hasAi === null) return null
+  if (hasAi === null || hasExistingData === null) return null
 
   const isOpenCode = aiRuntime === 'opencode'
   const openCodeState = serverLifecycle(openCodeServer)
@@ -635,6 +637,10 @@ export default function Onboarding({ onDone }) {
   )
   const showServerStatus = isOpenCode && (serverUnavailable || openCodeServer?.managed === true || openCodeServer?.owned === true)
   const activeSessionBlocksInput = ['running', 'permission_required', 'needs_attention'].includes(activeSession?.state)
+
+  if (hasExistingData) {
+    return <div className="onboarding-page min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-4"><div className="w-full max-w-lg onboarding-card bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-8 text-center space-y-5"><div className="onboarding-appearance onboarding-appearance--welcome"><div><p>Оформление</p><span>Можно поменять в любой момент</span></div><ThemeSwitcher /></div><div><h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Life OS уже настроен</h1><p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Сферы или другие данные уже существуют. Открой систему или осознанно удали данные, чтобы пройти настройку заново.</p></div><button onClick={finish} className="w-full rounded-xl bg-gray-900 py-3 text-sm font-medium text-white dark:bg-white dark:text-gray-900">Открыть Life OS</button><button type="button" onClick={startReset} className="text-xs text-red-500 hover:text-red-600">Удалить все данные Life OS…</button>{resetPreview && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-left text-xs text-red-900"><p>{resetPreview.deletes.join(', ')} будут удалены.</p><input value={resetConfirmation} onChange={event => setResetConfirmation(event.target.value)} placeholder="СТЕРЕТЬ ВСЕ ДАННЫЕ" className="mt-3 w-full rounded border p-2 text-gray-900" /><div className="mt-2 flex gap-2"><button onClick={() => setResetPreview(null)}>Отмена</button><button disabled={loading || resetConfirmation !== 'СТЕРЕТЬ ВСЕ ДАННЫЕ'} onClick={confirmReset} className="font-medium disabled:opacity-40">Удалить</button></div></div>}</div></div>
+  }
 
   // No-AI: show CLI onboarding screen
   if (!hasAi && !isOpenCode) {
