@@ -22,6 +22,28 @@ ops/product-intelligence/**
 brain/
 life-os/backend/data/news/index.json
 
+# Personal workspace artifacts. They stay beside the app locally but are never public source.
+/.agents/
+/.claude/
+/.codex/
+/.obsidian/
+/areas/
+/graphify-out/
+/output/
+/sites/
+/.presentation-build-*/
+/geostatistics-ch6-handoff-*/
+/research-handoff-*/
+/20??-??-??.md
+/ai-brain.md
+/orbcloud.txt
+/pamyatka.html
+/conversation-*.txt
+/*.canvas
+/AGENTS.md
+/CLAUDE.md
+/CODEX.md
+
 # Временные файлы и журналы
 *.log
 .cache/

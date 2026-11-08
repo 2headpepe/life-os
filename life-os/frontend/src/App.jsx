@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { SpheresProvider } from './SpheresContext'
+import { ThemeProvider } from './context/ThemeContext'
 import Sidebar from './components/Sidebar'
 import QuickCapture from './components/QuickCapture'
 import AiConsole from './components/AiConsole'
@@ -143,9 +144,11 @@ function AppContent() {
 export default function App() {
   return (
     <SpheresProvider>
-      <BrowserRouter>
-        <AppContent />
-      </BrowserRouter>
+      <ThemeProvider>
+        <BrowserRouter>
+          <AppContent />
+        </BrowserRouter>
+      </ThemeProvider>
     </SpheresProvider>
   )
 }
