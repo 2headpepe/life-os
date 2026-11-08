@@ -24,6 +24,7 @@ import Memories from './pages/Memories'
 import Onboarding from './pages/Onboarding'
 import AiReviews from './pages/AiReviews'
 import NotificationBell from './components/NotificationBell'
+import ThemeSwitcher from './components/ui/ThemeSwitcher'
 import { tree as treeApi } from './api'
 
 function AppContent() {
@@ -36,9 +37,6 @@ function AppContent() {
   const [aiContextMessage, setAiContextMessage] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [sphere, setSphere] = useState(null)
-  const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
-
-  useEffect(() => { document.documentElement.classList.toggle('dark', dark) }, [dark])
 
   // Check if onboarding needed (skip if already on /setup)
   useEffect(() => {
@@ -98,9 +96,7 @@ function AppContent() {
       <main className="flex-1 overflow-y-auto">
         <div className="sticky top-0 z-10 flex items-center justify-end gap-2 px-6 py-3 bg-gray-50/80 dark:bg-gray-950/80 backdrop-blur border-b border-gray-100 dark:border-gray-800">
           <NotificationBell />
-          <button onClick={() => setDark(v => !v)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-sm" title="Тема">
-            {dark ? '☀︎' : '☽'}
-          </button>
+          <ThemeSwitcher />
         </div>
         <Routes>
           <Route path="/"         element={<Feed />} />
