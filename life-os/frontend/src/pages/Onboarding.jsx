@@ -720,9 +720,12 @@ export default function Onboarding({ onDone }) {
           {/* Step 2: Confirm spheres */}
           {step === 2 && (
             <div className="p-6 space-y-4">
-              <div>
-                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Твои сферы жизни</p>
-                <p className="text-xs text-gray-400 mt-1">Нажми на название чтобы изменить. Можешь убрать лишние.</p>
+              <div className="flex items-start gap-3">
+                <button type="button" onClick={() => setStep(1)} aria-label="Назад к рассказу о себе" className="mt-0.5 -ml-1 rounded-lg px-1.5 py-1 text-sm text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200">←</button>
+                <div>
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Твои сферы жизни</p>
+                  <p className="text-xs text-gray-400 mt-1">Нажми на название чтобы изменить. Можешь убрать лишние.</p>
+                </div>
               </div>
               <div className="space-y-2">
                 {['primary', 'optional'].map(kind => {
@@ -753,7 +756,6 @@ export default function Onboarding({ onDone }) {
               </div>
               <button type="button" onClick={addSphere} className="text-xs text-blue-500 hover:text-blue-600">+ Добавить свою сферу</button>
               {error && <p className="text-xs text-red-500">{error}</p>}
-              <button type="button" onClick={() => setStep(1)} className="text-xs text-gray-400 hover:text-gray-600">← Назад</button>
               <button onClick={createSpheres} disabled={loading || spheres.length === 0}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
               >
