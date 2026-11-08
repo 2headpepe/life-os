@@ -45,7 +45,7 @@ function AppContent() {
     if (location.pathname === '/setup') { setReady(true); return }
     treeApi.all().then(nodes => {
       const hasUserNodes = nodes.some(n => n.parent_id !== null)
-      if (!hasUserNodes) navigate('/setup', { replace: true })
+      if (!hasUserNodes && localStorage.getItem('life-os:setup-completed') !== '1') navigate('/setup', { replace: true })
       setReady(true)
     }).catch(() => setReady(true))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps

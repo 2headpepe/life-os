@@ -360,13 +360,17 @@ export default function Onboarding({ onDone }) {
       }
       setSpheres(parsed.spheres.map((sphere, i) => ({ ...sphere, kind: sphere.kind === 'optional' ? 'optional' : 'primary', color: sphere.color || SPHERE_COLORS[i % SPHERE_COLORS.length] })))
       setStep(2)
-    } else {
+    } else if (kind === 'tasks') {
       if (!parsed?.tasks?.length) {
         setError('AI не вернул список задач. Попробуй описать подробнее.')
         return false
       }
       setTasks(parsed.tasks)
       setStep(4)
+    } else {
+      if (!parsed?.habits?.length) { setError('AI не вернул привычки. Их можно добавить вручную или пропустить.'); return false }
+      setHabits(parsed.habits.map((habit, index) => ({ ...habit, id: habit.id || `onboarding-${Date.now()}-${index}`, kind: habit.kind || 'toggle', active: true, max_score: 1 })))
+      setStep(5)
     }
     setHistory(previous => [...previous, { role: 'user', content: sourceText }])
     setPendingRequest(null)
@@ -575,7 +579,12 @@ export default function Onboarding({ onDone }) {
     setLoading(false)
   }
 
-  const finish = () => { onDone?.(); navigate('/') }
+  const finish = () => { localStorage.setItem('life-os:setup-completed', '1'); onDone?.(); navigate('/') }
+  const suggestHabits = async () => {
+    if (!spheresWithIds.length && !tasks.length) return
+    const text = `Сферы: ${spheresWithIds.map(s => s.title).join(', ') || 'нет'}. Задачи: ${tasks.map(t => t.title).join(', ') || 'нет'}.`
+    await submitSetupPrompt('habits', text, [{ role: 'user', content: `${text}\nПредложи 1–3 простых привычки, поддерживающих эти сферы и задачи. Верни JSON {"habits":[{"label":"...","kind":"toggle","reason":"..."}]}.` }], text)
+  }
 
   const addSphere = () => setSpheres(previous => [...previous, {
     id: `root-custom-${Date.now()}`, title: 'Новая сфера', color: SPHERE_COLORS[previous.length % SPHERE_COLORS.length], kind: 'primary',
@@ -612,7 +621,7 @@ export default function Onboarding({ onDone }) {
     try {
       const response = await fetch('/api/setup/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation: resetConfirmation }) })
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Не удалось удалить данные.')
-      setResetPreview(null); setResetConfirmation(''); setStep(0)
+      localStorage.removeItem('life-os:setup-completed'); setResetPreview(null); setResetConfirmation(''); setStep(0)
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
 
@@ -837,7 +846,7 @@ export default function Onboarding({ onDone }) {
 
           {/* Step 5: Optional habits */}
           {step === 5 && (
-            <div className="p-6 space-y-4"><div><p className="text-sm font-medium text-gray-900 dark:text-gray-100">Привычки — по желанию</p><p className="text-xs text-gray-400 mt-1">Добавь 1–3 простых действия для старта или пропусти этот шаг.</p></div><div className="flex gap-2"><input value={habitInput} onChange={event => setHabitInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addHabit() } }} placeholder="Например: 20 минут движения" className="flex-1 rounded-xl bg-gray-50 px-3 py-2 text-sm outline-none dark:bg-gray-800"/><button type="button" onClick={addHabit} className="text-sm text-blue-500">Добавить</button></div><div className="space-y-2">{habits.map(habit => <div key={habit.id} className="flex justify-between rounded-xl bg-gray-50 px-3 py-2 text-sm dark:bg-gray-800"><span>{habit.label}</span><button onClick={() => setHabits(previous => previous.filter(item => item.id !== habit.id))}>✕</button></div>)}</div>{error && <p className="text-xs text-red-500">{error}</p>}<button onClick={createHabits} disabled={loading} className="w-full rounded-xl bg-gray-900 py-3 text-sm font-medium text-white dark:bg-white dark:text-gray-900">{habits.length ? 'Сохранить привычки' : 'Пропустить'}</button><button type="button" onClick={() => setStep(4)} className="text-xs text-gray-400">← К задачам</button></div>
+            <div className="p-6 space-y-4"><div><p className="text-sm font-medium text-gray-900 dark:text-gray-100">Привычки — по желанию</p><p className="text-xs text-gray-400 mt-1">AI может предложить 1–3 привычки из выбранных сфер и задач; их всегда можно заменить или пропустить.</p></div>{(spheres.length || tasks.length) > 0 && <button type="button" onClick={suggestHabits} disabled={loading || activeSessionBlocksInput} className="w-full rounded-xl border border-violet-200 py-2.5 text-sm font-medium text-violet-600 hover:bg-violet-50 disabled:opacity-40 dark:border-violet-900">{loading ? 'AI подбирает привычки…' : 'Предложить привычки с AI'}</button>}<div className="flex gap-2"><input value={habitInput} onChange={event => setHabitInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addHabit() } }} placeholder="Например: 20 минут движения" className="flex-1 rounded-xl bg-gray-50 px-3 py-2 text-sm outline-none dark:bg-gray-800"/><button type="button" onClick={addHabit} className="text-sm text-blue-500">Добавить</button></div><div className="space-y-2">{habits.map(habit => <div key={habit.id} className="flex justify-between rounded-xl bg-gray-50 px-3 py-2 text-sm dark:bg-gray-800"><span>{habit.label}</span><button onClick={() => setHabits(previous => previous.filter(item => item.id !== habit.id))}>✕</button></div>)}</div>{error && <p className="text-xs text-red-500">{error}</p>}<button onClick={createHabits} disabled={loading} className="w-full rounded-xl bg-gray-900 py-3 text-sm font-medium text-white dark:bg-white dark:text-gray-900">{habits.length ? 'Сохранить привычки' : 'Пропустить'}</button><button type="button" onClick={() => setStep(4)} className="text-xs text-gray-400">← К задачам</button></div>
           )}
 
           {/* Step 6: Done */}
