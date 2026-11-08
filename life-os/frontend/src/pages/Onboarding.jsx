@@ -13,7 +13,7 @@ const SETUP_SYSTEM = `Ты помощник по настройке Life OS — 
 
 Когда просят предложить сферы жизни — верни ТОЛЬКО JSON-блок в таком формате, без лишнего текста до/после:
 \`\`\`json
-{"spheres":[{"id":"root-health","title":"Здоровье","color":"#3B82F6"},{"id":"root-work","title":"Работа","color":"#22C55E"}]}
+{"spheres":[{"id":"root-health","title":"Здоровье и спорт","color":"#3B82F6","kind":"primary","reason":"баскетбол и желание быть активнее"},{"id":"root-leisure","title":"Отдых и хобби","color":"#F59E0B","kind":"optional","reason":"дополняет картину жизни"}]}
 \`\`\`
 
 Когда просят предложить задачи — верни ТОЛЬКО JSON-блок:
@@ -21,7 +21,7 @@ const SETUP_SYSTEM = `Ты помощник по настройке Life OS — 
 {"tasks":[{"title":"Название задачи","parent_id":"root-health","status":"in_progress"}]}
 \`\`\`
 
-id сфер должны быть в формате root-{slug} (латиница, дефисы).`
+Сфера — это широкая область жизни, а не отдельное занятие: баскетбол относится к «Здоровью и спорту», чтение — к «Отдыху и хобби». Верни 2–4 primary только когда они прямо следуют из текста, и 3–4 optional как полезное, разнообразное покрытие. id сфер должны быть в формате root-{slug} (латиница, дефисы).`
 
 const CLI_ONBOARDING_PROMPT = `Ты настраиваешь Life OS — личную систему управления жизнью — для нового пользователя.
 
@@ -304,6 +304,10 @@ export default function Onboarding({ onDone }) {
   const [spheres, setSpheres] = useState([])
   const [editingSphere, setEditingSphere] = useState(null)
   const [tasks, setTasks] = useState([])
+  const [habits, setHabits] = useState([])
+  const [habitInput, setHabitInput] = useState('')
+  const [resetPreview, setResetPreview] = useState(null)
+  const [resetConfirmation, setResetConfirmation] = useState('')
   const [openCodeSessionId, setOpenCodeSessionId] = useState(null)
   const [activeSession, setActiveSession] = useState(null)
   const [pendingRequest, setPendingRequest] = useState(null)
@@ -354,7 +358,7 @@ export default function Onboarding({ onDone }) {
         setError('AI не вернул список сфер. Попробуй описать подробнее.')
         return false
       }
-      setSpheres(parsed.spheres.map((sphere, i) => ({ ...sphere, color: sphere.color || SPHERE_COLORS[i % SPHERE_COLORS.length] })))
+      setSpheres(parsed.spheres.map((sphere, i) => ({ ...sphere, kind: sphere.kind === 'optional' ? 'optional' : 'primary', color: sphere.color || SPHERE_COLORS[i % SPHERE_COLORS.length] })))
       setStep(2)
     } else {
       if (!parsed?.tasks?.length) {
@@ -573,6 +577,45 @@ export default function Onboarding({ onDone }) {
 
   const finish = () => { onDone?.(); navigate('/') }
 
+  const addSphere = () => setSpheres(previous => [...previous, {
+    id: `root-custom-${Date.now()}`, title: 'Новая сфера', color: SPHERE_COLORS[previous.length % SPHERE_COLORS.length], kind: 'primary',
+  }])
+  const addTask = () => setTasks(previous => [...previous, { title: 'Новая задача', parent_id: spheresWithIds[0]?.id || '', status: 'undefined' }])
+  const addHabit = () => {
+    const label = habitInput.trim()
+    if (!label) return
+    setHabits(previous => [...previous, { id: `onboarding-${Date.now()}`, label, kind: 'toggle', active: true, max_score: 1 }])
+    setHabitInput('')
+  }
+  const createHabits = async () => {
+    if (!habits.length) { setStep(6); return }
+    setLoading(true); setError(null)
+    try {
+      const current = await fetch('/api/content/habits/definitions.json').then(response => response.ok ? response.json() : { categories: [] })
+      const categories = current.categories || []
+      const index = categories.findIndex(category => category.id === 'onboarding')
+      const category = { id: 'onboarding', label: 'Мой старт', habits }
+      if (index >= 0) categories[index] = { ...categories[index], habits: [...(categories[index].habits || []), ...habits] }
+      else categories.push(category)
+      await fetch('/api/content/habits/definitions.json', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ categories }) })
+      setStep(6)
+    } catch (e) { setError(e.message || 'Не удалось сохранить привычки.') }
+    setLoading(false)
+  }
+  const startReset = async () => {
+    const response = await fetch('/api/setup/reset-preview', { method: 'POST' })
+    if (response.ok) setResetPreview(await response.json())
+  }
+  const confirmReset = async () => {
+    if (!resetPreview || resetConfirmation !== 'СТЕРЕТЬ ВСЕ ДАННЫЕ') return
+    setLoading(true)
+    try {
+      const response = await fetch('/api/setup/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: resetPreview.token, confirmation: resetConfirmation }) })
+      if (!response.ok) throw new Error('Подтверждение устарело. Начни сброс заново.')
+      setResetPreview(null); setResetConfirmation(''); setStep(0)
+    } catch (e) { setError(e.message) } finally { setLoading(false) }
+  }
+
   if (hasAi === null) return null
 
   const isOpenCode = aiRuntime === 'opencode'
@@ -602,7 +645,7 @@ export default function Onboarding({ onDone }) {
   return (
     <div className="onboarding-page min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
-        <StepDots step={Math.min(step, 5)} total={6} />
+        <StepDots step={Math.min(step, 6)} total={7} />
 
         <div className="onboarding-card mt-8 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden">
 
@@ -633,6 +676,12 @@ export default function Onboarding({ onDone }) {
               >
                 Начать настройку <ArrowRight size={15} />
               </button>
+              <button type="button" onClick={startReset} className="text-xs text-gray-400 hover:text-red-500">Начать с чистых данных…</button>
+              {resetPreview && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-left text-xs text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                <p className="font-medium">Это необратимо удалит: {resetPreview.deletes.join(', ')}.</p><p className="mt-1">Сохранятся: {resetPreview.preserves.join(', ')}.</p>
+                <input value={resetConfirmation} onChange={event => setResetConfirmation(event.target.value)} placeholder="СТЕРЕТЬ ВСЕ ДАННЫЕ" className="mt-3 w-full rounded border border-red-200 bg-white px-2 py-1.5 text-xs text-gray-900" />
+                <div className="mt-2 flex gap-2"><button type="button" onClick={() => { setResetPreview(null); setResetConfirmation('') }}>Отмена</button><button type="button" disabled={loading || resetConfirmation !== 'СТЕРЕТЬ ВСЕ ДАННЫЕ'} onClick={confirmReset} className="font-medium disabled:opacity-40">Удалить данные</button></div>
+              </div>}
             </div>
           )}
 
@@ -676,7 +725,11 @@ export default function Onboarding({ onDone }) {
                 <p className="text-xs text-gray-400 mt-1">Нажми на название чтобы изменить. Можешь убрать лишние.</p>
               </div>
               <div className="space-y-2">
-                {spheres.map((s, i) => (
+                {['primary', 'optional'].map(kind => {
+                  const title = kind === 'primary' ? 'Выделено из твоего рассказа' : 'Дополнительные варианты — можно оставить или убрать'
+                  const entries = spheres.map((sphere, index) => ({ sphere, index })).filter(({ sphere }) => sphere.kind === kind)
+                  if (!entries.length) return null
+                  return <div key={kind} className="space-y-2"><p className="pt-1 text-[11px] font-medium text-gray-400">{title}</p>{entries.map(({ sphere: s, index: i }) => (
                   <div key={i} className="flex items-center gap-3 bg-gray-50 dark:bg-gray-800 rounded-xl px-3 py-2.5">
                     <input type="color" value={s.color}
                       onChange={e => setSpheres(prev => prev.map((x, j) => j === i ? { ...x, color: e.target.value } : x))}
@@ -690,13 +743,17 @@ export default function Onboarding({ onDone }) {
                         className="flex-1 bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none border-b border-gray-300 dark:border-gray-600"
                       />
                     ) : (
-                      <button onClick={() => setEditingSphere(i)} className="flex-1 text-left text-sm text-gray-800 dark:text-gray-200">{s.title}</button>
+                      <button onClick={() => setEditingSphere(i)} className="flex-1 text-left text-sm text-gray-800 dark:text-gray-200"><span>{s.title}</span>{s.reason && <span className="block mt-0.5 text-[10px] text-gray-400">{s.reason}</span>}</button>
                     )}
+                    <button type="button" title="Сделать основной/дополнительной" onClick={() => setSpheres(prev => prev.map((x, j) => j === i ? { ...x, kind: x.kind === 'optional' ? 'primary' : 'optional' } : x))} className="text-[10px] text-gray-400">{s.kind === 'optional' ? 'необяз.' : 'основная'}</button>
                     <button onClick={() => setSpheres(prev => prev.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-400 text-xs px-1">✕</button>
                   </div>
-                ))}
+                ))}</div>
+                })}
               </div>
+              <button type="button" onClick={addSphere} className="text-xs text-blue-500 hover:text-blue-600">+ Добавить свою сферу</button>
               {error && <p className="text-xs text-red-500">{error}</p>}
+              <button type="button" onClick={() => setStep(1)} className="text-xs text-gray-400 hover:text-gray-600">← Назад</button>
               <button onClick={createSpheres} disabled={loading || spheres.length === 0}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
               >
@@ -735,6 +792,7 @@ export default function Onboarding({ onDone }) {
                 {loading ? <Loader2 size={15} className="animate-spin" /> : <><ArrowUp size={15} /> Отправить</>}
               </button>
               <button onClick={() => setStep(5)} className="w-full text-xs text-gray-400 hover:text-gray-600 py-1">Пропустить</button>
+              <button type="button" onClick={() => setStep(2)} className="text-xs text-gray-400 hover:text-gray-600">← К сферам</button>
             </div>
           )}
 
@@ -763,6 +821,7 @@ export default function Onboarding({ onDone }) {
                   )
                 })}
               </div>
+              <button type="button" onClick={addTask} className="text-xs text-blue-500 hover:text-blue-600">+ Добавить задачу</button>
               {error && <p className="text-xs text-red-500">{error}</p>}
               <button onClick={createTasks} disabled={loading || tasks.length === 0}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
@@ -770,11 +829,17 @@ export default function Onboarding({ onDone }) {
                 {loading ? <Loader2 size={15} className="animate-spin" /> : <><CheckCircle2 size={15} /> Добавить задачи</>}
               </button>
               <button onClick={() => setStep(5)} className="w-full text-xs text-gray-400 hover:text-gray-600 py-1">Пропустить</button>
+              <button type="button" onClick={() => setStep(3)} className="text-xs text-gray-400 hover:text-gray-600">← К описанию задач</button>
             </div>
           )}
 
-          {/* Step 5: Done */}
+          {/* Step 5: Optional habits */}
           {step === 5 && (
+            <div className="p-6 space-y-4"><div><p className="text-sm font-medium text-gray-900 dark:text-gray-100">Привычки — по желанию</p><p className="text-xs text-gray-400 mt-1">Добавь 1–3 простых действия для старта или пропусти этот шаг.</p></div><div className="flex gap-2"><input value={habitInput} onChange={event => setHabitInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addHabit() } }} placeholder="Например: 20 минут движения" className="flex-1 rounded-xl bg-gray-50 px-3 py-2 text-sm outline-none dark:bg-gray-800"/><button type="button" onClick={addHabit} className="text-sm text-blue-500">Добавить</button></div><div className="space-y-2">{habits.map(habit => <div key={habit.id} className="flex justify-between rounded-xl bg-gray-50 px-3 py-2 text-sm dark:bg-gray-800"><span>{habit.label}</span><button onClick={() => setHabits(previous => previous.filter(item => item.id !== habit.id))}>✕</button></div>)}</div>{error && <p className="text-xs text-red-500">{error}</p>}<button onClick={createHabits} disabled={loading} className="w-full rounded-xl bg-gray-900 py-3 text-sm font-medium text-white dark:bg-white dark:text-gray-900">{habits.length ? 'Сохранить привычки' : 'Пропустить'}</button><button type="button" onClick={() => setStep(4)} className="text-xs text-gray-400">← К задачам</button></div>
+          )}
+
+          {/* Step 6: Done */}
+          {step === 6 && (
             <div className="p-8 text-center space-y-5">
               <div className="w-12 h-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto">
                 <CheckCircle2 size={24} className="text-green-600 dark:text-green-400" />
@@ -783,7 +848,7 @@ export default function Onboarding({ onDone }) {
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Готово!</h2>
                 <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                   Создали <span className="font-medium text-gray-700 dark:text-gray-300">{spheres.length} сфер</span> и{' '}
-                  <span className="font-medium text-gray-700 dark:text-gray-300">{tasks.length} задач</span>.
+                  <span className="font-medium text-gray-700 dark:text-gray-300">{tasks.length} задач</span>{habits.length ? ` и ${habits.length} привычек` : ''}.
                   Зайди в «Привычки» чтобы настроить трекинг, в «Сегодня» чтобы увидеть план дня.
                 </p>
               </div>

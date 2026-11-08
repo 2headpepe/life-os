@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-ro
 import { Plus } from 'lucide-react'
 import { SpheresProvider } from './SpheresContext'
 import { ThemeProvider } from './context/ThemeContext'
+import { RecoveryModeProvider } from './context/RecoveryModeContext'
 import Sidebar from './components/Sidebar'
 import QuickCapture from './components/QuickCapture'
 import AiConsole from './components/AiConsole'
@@ -145,9 +146,11 @@ export default function App() {
   return (
     <SpheresProvider>
       <ThemeProvider>
-        <BrowserRouter>
-          <AppContent />
-        </BrowserRouter>
+        <RecoveryModeProvider>
+          <BrowserRouter>
+            <AppContent />
+          </BrowserRouter>
+        </RecoveryModeProvider>
       </ThemeProvider>
     </SpheresProvider>
   )

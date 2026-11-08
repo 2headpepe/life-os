@@ -1083,6 +1083,60 @@ async function writeTree(data) {
   await fs.writeFile(TREE_FILE, JSON.stringify(data, null, 2))
 }
 
+// Setup reset is intentionally a server-side, two-step operation.  Opening
+// /setup never mutates anything: a short-lived token and the exact phrase are
+// both required before personal content is removed.
+const SETUP_RESET_PHRASE = 'СТЕРЕТЬ ВСЕ ДАННЫЕ'
+const setupResetTokens = new Map()
+
+function setupResetSummary() {
+  return [
+    'сферы, цели и задачи', 'привычки и их отметки', 'inbox и инсайты',
+    'воспоминания и фотографии', 'списки', 'люди и их заметки', 'реакции и AI-карточки ленты',
+  ]
+}
+
+app.post('/api/setup/reset-preview', requireLifeOsUiOrigin, async (req, res) => {
+  const token = randomUUID()
+  setupResetTokens.set(token, Date.now() + 10 * 60 * 1000)
+  res.json({ token, expires_in_seconds: 600, deletes: setupResetSummary(), preserves: ['тема интерфейса', 'настройки и подключение OpenCode'] })
+})
+
+app.post('/api/setup/reset', requireLifeOsUiOrigin, async (req, res) => {
+  const token = String(req.body?.token || '')
+  const expiresAt = setupResetTokens.get(token)
+  setupResetTokens.delete(token)
+  if (!expiresAt || expiresAt < Date.now() || req.body?.confirmation !== SETUP_RESET_PHRASE) {
+    return res.status(400).json({ error: 'explicit reset confirmation required' })
+  }
+  try {
+    const listsIndex = JSON.parse(await fs.readFile(path.join(VAULT, 'lists/_index.json'), 'utf8').catch(() => '{"collections":[]}'))
+    await writeTree({ _type: 'tree', updated: new Date().toISOString().slice(0, 10), nodes: [] })
+    await fs.writeFile(path.join(VAULT, 'habits/definitions.json'), JSON.stringify({ categories: [] }, null, 2))
+    await fs.writeFile(path.join(VAULT, 'inbox/current.json'), JSON.stringify({ _type: 'inbox', updated: new Date().toISOString().slice(0, 10), items: [] }, null, 2))
+    await fs.writeFile(path.join(VAULT, 'insights/index.json'), JSON.stringify({ updated: new Date().toISOString().slice(0, 10), insights: [] }, null, 2))
+    await fs.writeFile(path.join(VAULT, 'memories/index.json'), JSON.stringify({ entries: [] }, null, 2))
+    await fs.writeFile(PEOPLE_INDEX, JSON.stringify({ people: [] }, null, 2))
+    await Promise.all((listsIndex.collections || []).map(collection => {
+      const id = path.basename(String(collection.id || ''))
+      return id ? fs.writeFile(path.join(VAULT, 'lists', `${id}.json`), JSON.stringify({ items: [] }, null, 2)) : Promise.resolve()
+    }))
+    await Promise.all([
+      fs.rm(path.join(VAULT, 'habits/log'), { recursive: true, force: true }),
+      fs.rm(path.join(VAULT, 'memories/photos'), { recursive: true, force: true }),
+      fs.rm(path.join(BRAIN_DIR, 'people'), { recursive: true, force: true }),
+      fs.rm(path.join(VAULT, 'feed/reactions.json'), { force: true }),
+      fs.rm(path.join(VAULT, 'feed/ai-cards.json'), { force: true }),
+      fs.rm(path.join(VAULT, 'feed/note-jobs.json'), { force: true }),
+    ])
+    await fs.mkdir(path.join(VAULT, 'habits/log'), { recursive: true })
+    await fs.mkdir(path.join(VAULT, 'memories/photos'), { recursive: true })
+    await fs.mkdir(path.join(BRAIN_DIR, 'people'), { recursive: true })
+    await fs.writeFile(PEOPLE_INDEX, JSON.stringify({ people: [] }, null, 2))
+    res.json({ ok: true })
+  } catch (error) { res.status(500).json({ error: error.message }) }
+})
+
 // Data-free AI review control plane.  The records are deliberately independent
 // of CLI history: no transcript, raw source path, or provider credential is a
 // valid input or output of these routes.
@@ -1146,7 +1200,8 @@ app.get('/api/tree/leaves', async (req, res) => {
     const nodeMap = {}
     nodes.forEach(n => (nodeMap[n.id] = n))
     const childIds = new Set(nodes.map(n => n.parent_id).filter(Boolean))
-    const leaves = nodes.filter(n => !childIds.has(n.id))
+    // A root is a domain, never an actionable leaf even if it currently has no children.
+    const leaves = nodes.filter(n => n.parent_id !== null && !childIds.has(n.id))
 
     const enriched = leaves.map(leaf => {
       let cur = leaf
@@ -1292,8 +1347,17 @@ app.post('/api/tree', async (req, res) => {
     if (req.body?.status === 'blocked') return res.status(400).json({ error: 'blocked is derived from blocked_by and cannot be stored' })
     const data = await readTree()
     const today = new Date().toISOString().slice(0, 10)
+    if (req.body?.id && data.nodes.some(item => item.id === req.body.id)) {
+      return res.status(409).json({ error: 'node id already exists' })
+    }
+    if (req.body?.parent_id && !data.nodes.some(item => item.id === req.body.parent_id)) {
+      return res.status(400).json({ error: 'parent node not found' })
+    }
+    if (req.body?.parent_id === null && req.body?.status != null) {
+      return res.status(400).json({ error: 'a root domain cannot have a task status' })
+    }
     const node = {
-      id: `node-${Date.now()}`,
+      id: `node-${randomUUID()}`,
       title: '',
       outcome: null,
       parent_id: null,
