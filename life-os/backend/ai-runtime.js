@@ -2,6 +2,7 @@ import { spawn } from 'child_process'
 
 const RUNTIMES = new Set(['none', 'codex', 'opencode'])
 const SAFE_COMMAND = /^[A-Za-z0-9._/-]+$/
+export const DEFAULT_OPENCODE_SERVER_URL = 'http://127.0.0.1:4096'
 const OPENCODE_READ_ONLY_CONFIG = JSON.stringify({
   $schema: 'https://opencode.ai/config.json',
   // OpenCode v2 evaluates ordered permission rules. The broad deny rules make
@@ -38,13 +39,26 @@ function configuredCommand(value, fallback, variable) {
 export function aiRuntimeConfig(env = process.env) {
   const runtime = (env.AI_RUNTIME || 'none').toLowerCase()
   if (!RUNTIMES.has(runtime)) throw new Error('AI_RUNTIME must be none, codex, or opencode')
-  return {
+  const config = {
     runtime,
     command: runtime === 'codex'
       ? configuredCommand(env.CODEX_COMMAND, 'codex', 'CODEX_COMMAND')
       : configuredCommand(env.OPENCODE_COMMAND, 'opencode', 'OPENCODE_COMMAND'),
-    model: runtime === 'codex' ? env.CODEX_MODEL : env.OPENCODE_MODEL,
+    model: runtime === 'codex'
+      ? env.CODEX_MODEL
+      : (runtime === 'opencode' ? (env.OPENCODE_MODEL || 'assistant/assistant') : undefined),
   }
+  // The OpenCode session bridge uses the normal build agent. Its setup/chat
+  // contract is pinned to assistant/assistant; agent selection controls only
+  // OpenCode's workflow and permission policy, not the provider/model.
+  if (runtime === 'opencode') {
+    return {
+      ...config,
+      serverUrl: env.OPENCODE_SERVER_URL || DEFAULT_OPENCODE_SERVER_URL,
+      agent: 'build',
+    }
+  }
+  return config
 }
 
 function diagnosticStderr(stderr) {

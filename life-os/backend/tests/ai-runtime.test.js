@@ -11,7 +11,9 @@ test('Codex and OpenCode select only their own configuration', () => {
   })
   assert.deepEqual(aiRuntimeConfig({ AI_RUNTIME: 'opencode', OPENCODE_COMMAND: 'my-opencode', OPENCODE_MODEL: 'local/test' }), {
     runtime: 'opencode', command: 'my-opencode', model: 'local/test',
+    serverUrl: 'http://127.0.0.1:4096', agent: 'build',
   })
+  assert.equal(aiRuntimeConfig({ AI_RUNTIME: 'opencode' }).model, 'assistant/assistant')
 })
 test('AI runtime rejects an arbitrary command runtime', () => {
   assert.throws(() => aiRuntimeConfig({ AI_RUNTIME: 'claude' }), /none, codex, or opencode/)

@@ -8,6 +8,8 @@ import { randomUUID } from 'crypto'
 import { google } from 'googleapis'
 import multer from 'multer'
 import { aiRuntimeConfig, checkAiRuntime, promptFromMessages, runAiTask } from './ai-runtime.js'
+import { LifeOsOpenCodeSessionBridge, LifeOsOpenCodeSessionError, openCodeAttachCommand, openCodeServeCommand } from './opencode-session-bridge.js'
+import { OpenCodeServerError } from './opencode-server.js'
 import { productIntelligenceStore } from './product-intelligence.js'
 import { assertDeliveryTransition, handoffIsComplete, hasDependencyCycle, inboundDependencyReferences, isBlocked, workContext } from './task-lifecycle.js'
 import { assertEligibleExecutor, assertEligibleVerifier } from './agent-registry.js'
@@ -16,7 +18,12 @@ const app = express()
 const PORT = process.env.PORT || 3001
 const VAULT = process.env.VAULT_PATH || path.join(import.meta.dirname, '../../brain/content')
 const WORK_DIR = process.env.WORK_DIR || path.resolve(import.meta.dirname, '../..')
+const LOCAL_UI_ORIGINS = new Set((process.env.LIFE_OS_UI_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173,http://[::1]:5173')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean))
 const productIntelligence = productIntelligenceStore(WORK_DIR)
+const openCodeBridge = new LifeOsOpenCodeSessionBridge({ runtime: () => aiRuntimeConfig() })
 const defaultAgents = { agents: [
   { id: 'life-os-delivery-executor', status: 'active', roles: ['Исполнитель delivery'] },
   { id: 'life-os-independent-verifier', status: 'active', roles: ['Независимый проверяющий'], can_verify: true },
@@ -32,6 +39,18 @@ const STALENESS_DAYS = {
 app.use(cors())
 app.use(express.json())
 app.get('/api/agents', async (req, res) => res.json(await agentRegistry()))
+
+// Launching a terminal is a local privileged action. Global CORS is retained
+// for the ordinary local-data API, but these routes require a browser request
+// from the configured Life OS UI origin so another web page cannot trigger a
+// terminal launch in the background.
+function requireLifeOsUiOrigin(req, res, next) {
+  const origin = req.get('origin')
+  if (!origin || !LOCAL_UI_ORIGINS.has(origin)) {
+    return res.status(403).json({ error: 'This terminal action must come from the local Life OS interface.' })
+  }
+  next()
+}
 
 // ─── Memories photo upload ───────────────────────────────────────
 const MEMORIES_DIR = path.join(VAULT, 'memories')
@@ -1378,9 +1397,42 @@ app.delete('/api/tree/:id', async (req, res) => {
 
 const AI_SYSTEM_PROMPT = 'Ты личный ассистент в Life OS — системе управления жизнью пользователя. Помогай разбирать задачи, декомпозировать цели, планировать день. Отвечай кратко и по делу на русском языке. Используй markdown для форматирования когда уместно.'
 
+function openCodeFailure(error, requestId) {
+  const code = error?.code || 'opencode_server_error'
+  const descriptions = {
+    server_unreachable: 'OpenCode server недоступен. Запусти `opencode serve` в терминале и повтори попытку.',
+    server_url_missing: 'Не задан адрес OpenCode server.',
+    server_url_invalid: 'Адрес OpenCode server в .env задан некорректно.',
+    server_url_not_loopback: 'OpenCode server должен быть доступен только по loopback-адресу.',
+    model_missing: 'Укажи OPENCODE_MODEL в формате provider/model, например assistant/assistant.',
+    model_invalid: 'OPENCODE_MODEL должен иметь формат provider/model.',
+    model_not_allowed: 'Для setup и встроенного чата Life OS OPENCODE_MODEL должен быть assistant/assistant.',
+    missing_provider: 'Настроенный провайдер не найден в работающем OpenCode server.',
+    missing_model: 'Настроенная модель не найдена у провайдера OpenCode.',
+    session_unknown: 'Эта сессия больше не известна текущему серверу Life OS. Открой OpenCode вручную или начни новый запрос.',
+    session_model_changed: 'Настройки модели изменились. Начни новый чат, чтобы не смешивать контексты.',
+    empty_response: 'OpenCode завершил сессию без текстового ответа. Открой эту сессию в терминале для диагностики.',
+  }
+  const action = ['server_unreachable', 'server_url_missing', 'server_url_invalid', 'server_url_not_loopback'].includes(code)
+    ? 'start_server'
+    : 'open_terminal'
+  return {
+    error: `${descriptions[code] || 'OpenCode не смог обработать сессию.'} Код диагностики: ${requestId}`,
+    requestId,
+    code,
+    action,
+  }
+}
+
+function openCodeStatusFor(error) {
+  if (['messages_missing', 'prompt_missing', 'session_invalid'].includes(error?.code)) return 400
+  if (error?.code === 'session_unknown') return 404
+  return 503
+}
+
 app.post('/api/ai/chat', async (req, res) => {
-  const { messages, system } = req.body
-  if (!messages?.length) return res.status(400).json({ error: 'messages required' })
+  const { messages, system, session_id: sessionId, prompt } = req.body || {}
+  if (!messages?.length && !(sessionId && prompt)) return res.status(400).json({ error: 'messages required' })
   const requestId = randomUUID()
   const startedAt = Date.now()
   let pid = null
@@ -1392,6 +1444,24 @@ app.post('/api/ai/chat', async (req, res) => {
   try {
     const runtime = aiRuntimeConfig()
     console.info('[ai/chat] started', { requestId, runtime: runtime.runtime, model: runtime.model || 'default' })
+    if (runtime.runtime === 'opencode') {
+      const result = sessionId
+        ? await openCodeBridge.continue(sessionId, {
+          prompt: typeof prompt === 'string'
+            ? prompt
+            : [...(messages || [])].reverse().find(message => message?.role === 'user')?.content,
+          system,
+        })
+        : await openCodeBridge.start({ messages, system: system || AI_SYSTEM_PROMPT })
+      console.info('[ai/chat] session_started', {
+        requestId,
+        sessionId: result.session_id,
+        model: result.model,
+        agent: result.agent,
+        durationMs: Date.now() - startedAt,
+      })
+      return res.status(202).json({ ...result, requestId })
+    }
     const output = await runAiTask(promptFromMessages(messages, system || AI_SYSTEM_PROMPT), {
       cwd: WORK_DIR,
       onStart: ({ pid: childPid }) => {
@@ -1407,6 +1477,11 @@ app.post('/api/ai/chat', async (req, res) => {
     console.info('[ai/chat] completed', { requestId, durationMs: Date.now() - startedAt, pid })
     res.json({ text: output })
   } catch (e) {
+    if (e instanceof OpenCodeServerError || e instanceof LifeOsOpenCodeSessionError) {
+      const failure = openCodeFailure(e, requestId)
+      console.error('[ai/chat] opencode_failed', { requestId, code: failure.code, durationMs: Date.now() - startedAt })
+      return res.status(openCodeStatusFor(e)).json(failure)
+    }
     const diagnostic = e.aiDiagnostic || {}
     console.error('[ai/chat] failed', {
       requestId,
@@ -1428,7 +1503,36 @@ app.post('/api/ai/chat', async (req, res) => {
 
 app.get('/api/config', async (req, res) => {
   const runtime = await checkAiRuntime({ cwd: WORK_DIR })
-  res.json({ aiRuntime: runtime.runtime, cliCommand: runtime.command, hasAi: runtime.available, aiReason: runtime.reason || null })
+  const openCodeServer = runtime.runtime === 'opencode' ? await openCodeBridge.availability() : null
+  res.json({
+    aiRuntime: runtime.runtime,
+    cliCommand: runtime.command,
+    hasAi: runtime.runtime === 'opencode' ? Boolean(runtime.available || openCodeServer?.available) : runtime.available,
+    aiReason: runtime.reason || openCodeServer?.reason || null,
+    ...(openCodeServer ? { openCodeServer } : {}),
+  })
+})
+
+app.get('/api/ai/sessions/:sessionId', async (req, res) => {
+  const requestId = randomUUID()
+  try {
+    if (aiRuntimeConfig().runtime !== 'opencode') return res.status(404).json({ error: 'OpenCode sessions are disabled for this runtime.' })
+    res.json(await openCodeBridge.inspect(req.params.sessionId))
+  } catch (e) {
+    const failure = openCodeFailure(e, requestId)
+    res.status(openCodeStatusFor(e)).json(failure)
+  }
+})
+
+app.post('/api/ai/sessions/:sessionId/abort', async (req, res) => {
+  const requestId = randomUUID()
+  try {
+    if (aiRuntimeConfig().runtime !== 'opencode') return res.status(404).json({ error: 'OpenCode sessions are disabled for this runtime.' })
+    res.json(await openCodeBridge.abort(req.params.sessionId))
+  } catch (e) {
+    const failure = openCodeFailure(e, requestId)
+    res.status(openCodeStatusFor(e)).json(failure)
+  }
 })
 
 app.get('/api/profile', async (req, res) => {
@@ -1448,67 +1552,90 @@ app.put('/api/profile', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
-app.post('/api/ai/open', async (req, res) => {
-  const { prompt } = req.body || {}
-  const { runtime, command: cliCmd } = aiRuntimeConfig()
-  if (runtime === 'none') return res.status(503).json({ error: 'AI is disabled. Choose codex or opencode in .env.' })
-  const platform = process.platform
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`
+}
 
-  try {
-    if (platform === 'win32') {
-      // Windows: write prompt to a temp file, copy via PowerShell, open cmd
-      const scriptPath = path.join(os.tmpdir(), 'life-os-cli.bat')
-      const promptPath = path.join(os.tmpdir(), 'life-os-prompt.txt')
-      let script = `@echo off\ncd /d "${WORK_DIR}"\n`
-      if (prompt) {
-        await fs.writeFile(promptPath, prompt, 'utf-8')
-        script += `powershell -Command "Get-Content '${promptPath}' -Raw -Encoding UTF8 | Set-Clipboard"\n`
-        script += `echo.\n`
-        script += `echo ==========================================\n`
-        script += `echo  Life OS - prompt copied to clipboard\n`
-        script += `echo  Paste your first message: Ctrl+V\n`
-        script += `echo ==========================================\n`
-        script += `echo.\n`
-      }
-      script += `${cliCmd}\n`
-      await fs.writeFile(scriptPath, script, 'utf-8')
-      exec(`start cmd /k "${scriptPath}"`)
-    } else {
-      // macOS / Linux: write a .sh, copy prompt, open terminal
-      const scriptPath = path.join(os.tmpdir(), 'life-os-cli.sh')
-      let script = `#!/bin/bash\ncd "${WORK_DIR}"\n`
-      if (prompt) {
-        const escapedPrompt = prompt.replace(/'/g, "'\\''")
-        if (platform === 'darwin') {
-          script += `echo '${escapedPrompt}' | pbcopy\n`
-          script += `echo ""\n`
-          script += `echo "══════════════════════════════════════════"\n`
-          script += `echo " Life OS — инструкции скопированы в буфер"\n`
-          script += `echo " Вставь первое сообщение: ⌘V (Cmd+V)"\n`
-          script += `echo "══════════════════════════════════════════"\n`
-          script += `echo ""\n`
-        } else {
-          // Linux: try xclip, fall back to xsel
-          script += `echo '${escapedPrompt}' | xclip -selection clipboard 2>/dev/null || echo '${escapedPrompt}' | xsel --clipboard --input 2>/dev/null || true\n`
-          script += `echo ""\n`
-          script += `echo "══════════════════════════════════════════"\n`
-          script += `echo " Life OS — prompt copied to clipboard"\n`
-          script += `echo " Paste your first message: Ctrl+Shift+V"\n`
-          script += `echo "══════════════════════════════════════════"\n`
-          script += `echo ""\n`
-        }
-      }
-      script += `${cliCmd}\n`
-      await fs.writeFile(scriptPath, script)
-      await fs.chmod(scriptPath, 0o755)
-      if (platform === 'darwin') {
-        exec(`osascript -e 'tell application "Terminal" to do script "${scriptPath}"' -e 'tell application "Terminal" to activate'`)
-      } else {
-        // Linux: try common terminal emulators
-        exec(`x-terminal-emulator -e "${scriptPath}" 2>/dev/null || gnome-terminal -- bash "${scriptPath}" 2>/dev/null || xterm -e "${scriptPath}" 2>/dev/null`)
-      }
+function appleScriptQuote(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+async function openAiTerminal({ commandLine, prompt = '' }) {
+  const platform = process.platform
+  const safePrompt = typeof prompt === 'string' ? prompt : ''
+  const scriptId = randomUUID()
+
+  if (platform === 'win32') {
+    // Windows: write prompt to a temp file, copy via PowerShell, open cmd.
+    const scriptPath = path.join(os.tmpdir(), `life-os-cli-${scriptId}.bat`)
+    const promptPath = path.join(os.tmpdir(), `life-os-prompt-${scriptId}.txt`)
+    let script = `@echo off\ncd /d "${WORK_DIR.replace(/"/g, '""')}"\n`
+    if (safePrompt) {
+      await fs.writeFile(promptPath, safePrompt, 'utf-8')
+      script += `powershell -Command "Get-Content '${promptPath}' -Raw -Encoding UTF8 | Set-Clipboard"\n`
+      script += `echo.\necho ==========================================\necho  Life OS - prompt copied to clipboard\necho  Paste your first message: Ctrl+V\necho ==========================================\necho.\n`
     }
-    res.json({ ok: true })
+    script += `${commandLine}\n`
+    await fs.writeFile(scriptPath, script, 'utf-8')
+    exec(`start cmd /k "${scriptPath}"`)
+    return
+  }
+
+  // macOS / Linux: write a .sh, copy any user-provided prompt, open terminal.
+  const scriptPath = path.join(os.tmpdir(), `life-os-cli-${scriptId}.sh`)
+  let script = `#!/bin/bash\ncd ${shellQuote(WORK_DIR)}\n`
+  if (safePrompt) {
+    const escapedPrompt = safePrompt.replace(/'/g, "'\\''")
+    if (platform === 'darwin') {
+      script += `echo '${escapedPrompt}' | pbcopy\n`
+      script += `echo ""\necho "══════════════════════════════════════════"\necho " Life OS — инструкции скопированы в буфер"\necho " Вставь первое сообщение: ⌘V (Cmd+V)"\necho "══════════════════════════════════════════"\necho ""\n`
+    } else {
+      // Linux: try xclip, fall back to xsel.
+      script += `echo '${escapedPrompt}' | xclip -selection clipboard 2>/dev/null || echo '${escapedPrompt}' | xsel --clipboard --input 2>/dev/null || true\n`
+      script += `echo ""\necho "══════════════════════════════════════════"\necho " Life OS — prompt copied to clipboard"\necho " Paste your first message: Ctrl+Shift+V"\necho "══════════════════════════════════════════"\necho ""\n`
+    }
+  }
+  script += `${commandLine}\n`
+  await fs.writeFile(scriptPath, script)
+  await fs.chmod(scriptPath, 0o755)
+  if (platform === 'darwin') {
+    const escapedScriptPath = appleScriptQuote(scriptPath)
+    exec(`osascript -e 'tell application "Terminal" to do script "${escapedScriptPath}"' -e 'tell application "Terminal" to activate'`)
+  } else {
+    // Linux: try common terminal emulators.
+    exec(`x-terminal-emulator -e ${shellQuote(scriptPath)} 2>/dev/null || gnome-terminal -- bash ${shellQuote(scriptPath)} 2>/dev/null || xterm -e ${shellQuote(scriptPath)} 2>/dev/null`)
+  }
+}
+
+app.post('/api/ai/sessions/:sessionId/open', requireLifeOsUiOrigin, async (req, res) => {
+  const requestId = randomUUID()
+  try {
+    const runtime = aiRuntimeConfig()
+    if (runtime.runtime !== 'opencode') return res.status(404).json({ error: 'OpenCode sessions are disabled for this runtime.' })
+    // Only a session created by this backend can be attached from the browser.
+    openCodeBridge.getRecord(req.params.sessionId)
+    await openAiTerminal({ commandLine: openCodeAttachCommand(runtime, req.params.sessionId) })
+    res.json({
+      ok: true,
+      session_id: req.params.sessionId,
+    })
+  } catch (e) {
+    res.status(openCodeStatusFor(e)).json(openCodeFailure(e, requestId))
+  }
+})
+
+app.post('/api/ai/open', requireLifeOsUiOrigin, async (req, res) => {
+  const { prompt, action } = req.body || {}
+  const runtime = aiRuntimeConfig()
+  if (runtime.runtime === 'none') return res.status(503).json({ error: 'AI is disabled. Choose codex or opencode in .env.' })
+  if (action && action !== 'start_opencode_server') return res.status(400).json({ error: 'Unknown AI terminal action.' })
+  if (action === 'start_opencode_server' && runtime.runtime !== 'opencode') {
+    return res.status(409).json({ error: 'OpenCode server is available only when AI_RUNTIME=opencode.' })
+  }
+  try {
+    const commandLine = action === 'start_opencode_server' ? openCodeServeCommand(runtime) : runtime.command
+    await openAiTerminal({ commandLine, prompt })
+    res.json({ ok: true, ...(action ? { action } : {}) })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }

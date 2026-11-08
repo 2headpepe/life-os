@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, ArrowUp, Loader2, CheckCircle2, Sparkles, Terminal, RefreshCw } from 'lucide-react'
+import { AlertCircle, ArrowRight, ArrowUp, Loader2, CheckCircle2, Sparkles, Terminal, RefreshCw, X } from 'lucide-react'
 import { ai, config as configApi, tree as treeApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
+import { pollAiSession } from '../utils/aiSession'
 import ThemeSwitcher from '../components/ui/ThemeSwitcher'
 
 const SPHERE_COLORS = ['#3B82F6', '#22C55E', '#EF4444', '#06B6D4', '#EC4899', '#F59E0B', '#8B5CF6', '#F97316']
@@ -65,6 +66,80 @@ function StepDots({ step, total }) {
       {Array.from({ length: total }).map((_, i) => (
         <div key={i} className={`h-1.5 rounded-full transition-all ${i === step ? 'w-5 bg-gray-900 dark:bg-white' : 'w-1.5 bg-gray-200 dark:bg-gray-700'}`} />
       ))}
+    </div>
+  )
+}
+
+function OpenCodeServerRecovery({ server, busy, onStart, onRefresh }) {
+  const configurationIssue = ['model_missing', 'model_not_allowed', 'missing_provider', 'missing_model'].includes(server?.reason)
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" role="status" aria-live="polite">
+      <div className="flex gap-2">
+        <AlertCircle size={15} className="mt-0.5 flex-shrink-0" />
+        <div className="space-y-1.5">
+          <p className="font-medium">{configurationIssue ? 'Проверь настройку OpenCode' : 'Локальный OpenCode server недоступен'}</p>
+          <p className="leading-relaxed">{configurationIssue
+            ? 'Для setup и чата нужен доступный assistant/assistant в уже запущенном OpenCode server.'
+            : 'Life OS не запускает его в фоне. Открой сервер в терминале, затем проверь соединение.'}</p>
+          {server?.reason && <p className="text-[11px] opacity-80">{server.reason}</p>}
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {!configurationIssue && <button type="button" onClick={onStart} disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-900 px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:bg-amber-200 dark:text-amber-950">
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <Terminal size={12} />} Открыть opencode serve
+        </button>}
+        <button type="button" onClick={onRefresh} disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:hover:bg-amber-900/40">
+          <RefreshCw size={12} /> Проверить соединение
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function OpenCodeSessionStatus({ session, busy, onOpen, onCancel, onCheck, actionRef }) {
+  if (!session) return null
+  const state = session.state || 'running'
+  const needsTerminal = state === 'permission_required' || state === 'needs_attention'
+  const copy = {
+    running: ['OpenCode обрабатывает запрос', 'Ответ появится здесь. Life OS не подтверждает никакие действия за тебя.'],
+    permission_required: ['OpenCode ждёт твоего разрешения', 'Life OS не отвечает на permission-запросы. Открой эту же сессию в терминале и реши вопрос там.'],
+    needs_attention: ['Нужна проверка сессии', 'Ответ не появился вовремя. Продолжи эту же сессию в терминале или отмени запрос.'],
+    failed: ['OpenCode не завершил запрос', session.error || 'Проверь сессию в терминале или попробуй отправить запрос снова.'],
+    cancelled: ['Запрос отменён', 'Можно сформулировать запрос заново.'],
+  }[state] || ['OpenCode обрабатывает запрос', 'Ответ появится здесь.']
+
+  return (
+    <div className={`rounded-xl border p-3 text-xs ${needsTerminal ? 'border-violet-200 bg-violet-50 text-violet-900 dark:border-violet-900/60 dark:bg-violet-950/30 dark:text-violet-200' : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-gray-800 dark:bg-gray-800 dark:text-gray-300'}`} role="status" aria-live="polite">
+      <div className="flex gap-2">
+        {state === 'running' && <Loader2 size={15} className="mt-0.5 animate-spin flex-shrink-0" />}
+        {state !== 'running' && <AlertCircle size={15} className="mt-0.5 flex-shrink-0" />}
+        <div className="space-y-1">
+          <p className="font-medium">{copy[0]}</p>
+          <p className="leading-relaxed">{copy[1]}</p>
+        </div>
+      </div>
+      {(state === 'running' || needsTerminal || state === 'failed') && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {state === 'running' || needsTerminal || state === 'failed' ? (
+            <button ref={actionRef} type="button" onClick={onOpen} disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:bg-white dark:text-gray-900">
+              <Terminal size={12} /> Открыть эту сессию
+            </button>
+          ) : null}
+          {needsTerminal ? (
+            <button type="button" onClick={onCheck} disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-current/25 px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/10">
+              <RefreshCw size={12} /> Проверить ответ
+            </button>
+          ) : null}
+          <button type="button" onClick={onCancel} disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-current/25 px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/10">
+            <X size={12} /> Отменить
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -170,73 +245,230 @@ export default function Onboarding({ onDone }) {
   const navigate = useNavigate()
   const [hasAi, setHasAi] = useState(null)
   const [cliCommand, setCliCommand] = useState('codex')
+  const [aiRuntime, setAiRuntime] = useState('none')
+  const [openCodeServer, setOpenCodeServer] = useState(null)
   const [step, setStep] = useState(0)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [errorCode, setErrorCode] = useState(null)
   const [history, setHistory] = useState([])
   const [spheres, setSpheres] = useState([])
   const [editingSphere, setEditingSphere] = useState(null)
   const [tasks, setTasks] = useState([])
+  const [openCodeSessionId, setOpenCodeSessionId] = useState(null)
+  const [activeSession, setActiveSession] = useState(null)
+  const [pendingRequest, setPendingRequest] = useState(null)
+  const [serverActionLoading, setServerActionLoading] = useState(false)
+  const pollAbortRef = useRef(null)
+  const terminalActionRef = useRef(null)
+
+  const refreshConfig = async () => {
+    try {
+      const c = await configApi.get()
+      setHasAi(!!c.hasAi)
+      setCliCommand(c.cliCommand || 'codex')
+      setAiRuntime(c.aiRuntime || 'none')
+      setOpenCodeServer(c.openCodeServer || null)
+      if (c.openCodeServer?.available && errorCode?.startsWith('server_')) {
+        setError(null)
+        setErrorCode(null)
+      }
+      return c
+    } catch {
+      setHasAi(false)
+      return null
+    }
+  }
 
   useEffect(() => {
-    configApi.get()
-      .then(c => { setHasAi(!!c.hasAi); setCliCommand(c.cliCommand || 'codex') })
-      .catch(() => setHasAi(false))
+    void refreshConfig()
+    return () => pollAbortRef.current?.abort()
+    // Configuration is intentionally refreshed after an explicit server action.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (activeSession?.state === 'permission_required' || activeSession?.state === 'needs_attention') {
+      window.setTimeout(() => terminalActionRef.current?.focus(), 0)
+    }
+  }, [activeSession?.state])
 
   const spheresWithIds = spheres.map((s, i) => ({
     ...s,
     id: s.id || `root-sphere-${i}`,
   }))
 
+  const applySetupReply = (kind, text, sourceText) => {
+    const parsed = extractJson(text || '')
+    if (kind === 'spheres') {
+      if (!parsed?.spheres?.length) {
+        setError('AI не вернул список сфер. Попробуй описать подробнее.')
+        return false
+      }
+      setSpheres(parsed.spheres.map((sphere, i) => ({ ...sphere, color: sphere.color || SPHERE_COLORS[i % SPHERE_COLORS.length] })))
+      setStep(2)
+    } else {
+      if (!parsed?.tasks?.length) {
+        setError('AI не вернул список задач. Попробуй описать подробнее.')
+        return false
+      }
+      setTasks(parsed.tasks)
+      setStep(4)
+    }
+    setHistory(previous => [...previous, { role: 'user', content: sourceText }])
+    setPendingRequest(null)
+    setActiveSession(null)
+    setError(null)
+    setErrorCode(null)
+    return true
+  }
+
+  const submitOpenCodeAwareChat = async ({ messages, prompt }) => {
+    const reuseSession = aiRuntime === 'opencode' ? openCodeSessionId : null
+    const response = await ai.chat(messages, SETUP_SYSTEM, {
+      sessionId: reuseSession,
+      // The first request retains the full, backwards-compatible transcript.
+      // Subsequent OpenCode requests carry only their new prompt and keep the
+      // prior context inside the same local OpenCode session.
+      prompt: reuseSession ? prompt : undefined,
+    })
+    if (response.error) {
+      const failure = new Error(response.error)
+      failure.code = response.code
+      throw failure
+    }
+    if (!response.session_id) return response
+
+    setOpenCodeSessionId(response.session_id)
+    setActiveSession({ session_id: response.session_id, state: response.state || 'running' })
+    pollAbortRef.current?.abort()
+    const controller = new AbortController()
+    pollAbortRef.current = controller
+    const snapshot = await pollAiSession(response.session_id, {
+      signal: controller.signal,
+      onUpdate: setActiveSession,
+    })
+    if (pollAbortRef.current === controller) pollAbortRef.current = null
+    return snapshot
+  }
+
+  const resumeActiveSession = async () => {
+    if (!activeSession?.session_id || loading) return
+    setLoading(true)
+    setError(null)
+    setErrorCode(null)
+    pollAbortRef.current?.abort()
+    const controller = new AbortController()
+    pollAbortRef.current = controller
+    try {
+      const snapshot = await pollAiSession(activeSession.session_id, {
+        signal: controller.signal,
+        onUpdate: setActiveSession,
+      })
+      if (snapshot.state === 'completed' && pendingRequest) {
+        applySetupReply(pendingRequest.kind, snapshot.text, pendingRequest.sourceText)
+      } else if (snapshot.state === 'failed') {
+        setError(snapshot.error || 'OpenCode не завершил запрос.')
+        setErrorCode(snapshot.code || 'session_failed')
+      }
+    } catch (e) {
+      setError(e.message || 'Не удалось проверить сессию OpenCode.')
+      setErrorCode(e.code || 'session_status_error')
+    } finally {
+      if (pollAbortRef.current === controller) pollAbortRef.current = null
+      setLoading(false)
+    }
+  }
+
+  const openActiveSession = async () => {
+    if (!activeSession?.session_id) return
+    try {
+      const result = await ai.openSession(activeSession.session_id)
+      if (result.error) throw new Error(result.error)
+    } catch (e) {
+      setError(e.message || 'Не удалось открыть сессию OpenCode в терминале.')
+    }
+  }
+
+  const cancelActiveSession = async () => {
+    if (!activeSession?.session_id) return
+    pollAbortRef.current?.abort()
+    setLoading(true)
+    try {
+      const result = await ai.abortSession(activeSession.session_id)
+      if (result.error) throw new Error(result.error)
+      setActiveSession(previous => ({ ...previous, state: 'cancelled' }))
+      setOpenCodeSessionId(null)
+      setPendingRequest(null)
+    } catch (e) {
+      setError(e.message || 'Не удалось отменить сессию OpenCode.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const startOpenCodeServer = async () => {
+    setServerActionLoading(true)
+    try {
+      const result = await ai.openServer()
+      if (result.error) throw new Error(result.error)
+      setError('OpenCode server открыт в терминале. Дождись строки о запуске и проверь соединение.')
+      setErrorCode('server_start_requested')
+    } catch (e) {
+      setError(e.message || 'Не удалось открыть OpenCode server в терминале.')
+      setErrorCode('server_start_failed')
+    } finally {
+      setServerActionLoading(false)
+    }
+  }
+
+  const submitSetupPrompt = async (kind, text, messages, prompt) => {
+    setInput('')
+    setLoading(true)
+    setError(null)
+    setErrorCode(null)
+    setPendingRequest({ kind, sourceText: text })
+    try {
+      const reply = await submitOpenCodeAwareChat({ messages, prompt })
+      if (!reply.state || reply.state === 'completed') {
+        applySetupReply(kind, reply.text, text)
+      } else if (reply.state === 'failed') {
+        setError(reply.error || 'OpenCode не завершил запрос.')
+        setErrorCode(reply.code || 'session_failed')
+      }
+    } catch (e) {
+      setError(e.message || 'Не удалось отправить запрос AI.')
+      setErrorCode(e.code || 'chat_error')
+      setPendingRequest(null)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleDescribeSelf = async () => {
     const text = input.trim()
-    if (!text || loading) return
-    setInput(''); setLoading(true); setError(null)
+    if (!text || loading || ['running', 'permission_required', 'needs_attention'].includes(activeSession?.state)) return
     const msgs = [
       ...history,
       { role: 'user', content: text },
       { role: 'user', content: 'На основе моего описания предложи 5–6 сфер жизни. Верни только JSON-блок с сферами.' },
     ]
-    try {
-      const reply = await ai.chat(msgs, SETUP_SYSTEM)
-      if (reply.error) throw new Error(reply.error)
-      const parsed = extractJson(reply.text)
-      if (parsed?.spheres?.length) {
-        setSpheres(parsed.spheres.map((s, i) => ({ ...s, color: s.color || SPHERE_COLORS[i % SPHERE_COLORS.length] })))
-        setHistory([...history, { role: 'user', content: text }])
-        setStep(2)
-      } else {
-        setError('AI не вернул список сфер. Попробуй описать подробнее.')
-      }
-    } catch (e) { setError(e.message) }
-    setLoading(false)
+    const prompt = `${text}\n\nНа основе моего описания предложи 5–6 сфер жизни. Верни только JSON-блок с сферами.`
+    await submitSetupPrompt('spheres', text, msgs, prompt)
   }
 
   const handleDescribeGoals = async () => {
     const text = input.trim()
-    if (!text || loading) return
-    setInput(''); setLoading(true); setError(null)
+    if (!text || loading || ['running', 'permission_required', 'needs_attention'].includes(activeSession?.state)) return
     const sphereList = spheresWithIds.map(s => `${s.id} = "${s.title}"`).join(', ')
     const msgs = [
       ...history,
       { role: 'user', content: text },
       { role: 'user', content: `Мои сферы: ${sphereList}. Предложи 4–6 конкретных задач. Каждая — в одну из сфер (parent_id). Верни только JSON-блок с задачами.` },
     ]
-    try {
-      const reply = await ai.chat(msgs, SETUP_SYSTEM)
-      if (reply.error) throw new Error(reply.error)
-      const parsed = extractJson(reply.text)
-      if (parsed?.tasks?.length) {
-        setTasks(parsed.tasks)
-        setHistory([...history, { role: 'user', content: text }])
-        setStep(4)
-      } else {
-        setError('AI не вернул список задач. Попробуй описать подробнее.')
-      }
-    } catch (e) { setError(e.message) }
-    setLoading(false)
+    const prompt = `${text}\n\nМои сферы: ${sphereList}. Предложи 4–6 конкретных задач. Каждая — в одну из сфер (parent_id). Верни только JSON-блок с задачами.`
+    await submitSetupPrompt('tasks', text, msgs, prompt)
   }
 
   const createSpheres = async () => {
@@ -267,8 +499,12 @@ export default function Onboarding({ onDone }) {
 
   if (hasAi === null) return null
 
+  const isOpenCode = aiRuntime === 'opencode'
+  const serverUnavailable = isOpenCode && (openCodeServer?.available === false || errorCode?.startsWith('server_'))
+  const activeSessionBlocksInput = ['running', 'permission_required', 'needs_attention'].includes(activeSession?.state)
+
   // No-AI: show CLI onboarding screen
-  if (!hasAi) {
+  if (!hasAi && !isOpenCode) {
     return (
       <div className="onboarding-page min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-4">
         <div className="w-full max-w-lg">
@@ -330,17 +566,20 @@ export default function Onboarding({ onDone }) {
                 <textarea
                   autoFocus
                   value={input}
+                  disabled={activeSessionBlocksInput}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleDescribeSelf() } }}
                   placeholder="Например: я студентка, хочу следить за здоровьем, читать больше, развивать творческие навыки…"
                   rows={4}
-                  className="w-full bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none resize-none placeholder-gray-400"
+                  className="w-full bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none resize-none placeholder-gray-400 disabled:opacity-50"
                 />
               </div>
+              {serverUnavailable && <OpenCodeServerRecovery server={openCodeServer} busy={serverActionLoading} onStart={startOpenCodeServer} onRefresh={refreshConfig} />}
+              <OpenCodeSessionStatus session={activeSession} busy={loading} onOpen={openActiveSession} onCancel={cancelActiveSession} onCheck={resumeActiveSession} actionRef={terminalActionRef} />
               {error && <p className="text-xs text-red-500">{error}</p>}
               <button
                 onClick={handleDescribeSelf}
-                disabled={!input.trim() || loading}
+                disabled={!input.trim() || loading || activeSessionBlocksInput}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
               >
                 {loading ? <Loader2 size={15} className="animate-spin" /> : <><ArrowUp size={15} /> Отправить</>}
@@ -398,16 +637,18 @@ export default function Onboarding({ onDone }) {
                 ))}
               </div>
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
-                <textarea autoFocus value={input}
+                <textarea autoFocus value={input} disabled={activeSessionBlocksInput}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleDescribeGoals() } }}
                   placeholder="Например: хочу начать ходить в зал, дочитать книгу по дизайну, разобраться с курсовой…"
                   rows={4}
-                  className="w-full bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none resize-none placeholder-gray-400"
+                  className="w-full bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none resize-none placeholder-gray-400 disabled:opacity-50"
                 />
               </div>
+              {serverUnavailable && <OpenCodeServerRecovery server={openCodeServer} busy={serverActionLoading} onStart={startOpenCodeServer} onRefresh={refreshConfig} />}
+              <OpenCodeSessionStatus session={activeSession} busy={loading} onOpen={openActiveSession} onCancel={cancelActiveSession} onCheck={resumeActiveSession} actionRef={terminalActionRef} />
               {error && <p className="text-xs text-red-500">{error}</p>}
-              <button onClick={handleDescribeGoals} disabled={!input.trim() || loading}
+              <button onClick={handleDescribeGoals} disabled={!input.trim() || loading || activeSessionBlocksInput}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
               >
                 {loading ? <Loader2 size={15} className="animate-spin" /> : <><ArrowUp size={15} /> Отправить</>}

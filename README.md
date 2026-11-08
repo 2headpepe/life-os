@@ -104,14 +104,17 @@ AI не обязателен. Если он нужен, установите и 
 а затем измените `life-os/backend/.env`.
 
 - Для Codex используйте [официальную инструкцию установки](https://learn.chatgpt.com/docs/codex/cli), затем выполните `codex` и войдите в аккаунт.
-- Для OpenCode используйте [официальную инструкцию установки](https://opencode.ai/docs/), затем выполните `opencode auth login`.
+- Для OpenCode используйте [официальную инструкцию установки](https://opencode.ai/docs/). Если ваш провайдер уже задан в `opencode.json` с токеном, отдельный OAuth-логин в Life OS не нужен: он остаётся задачей самого OpenCode только для провайдеров, которым он требуется.
 
 ```env
 # Вариант 1: Codex CLI
 AI_RUNTIME=codex
 
-# Вариант 2: OpenCode CLI
-# AI_RUNTIME=opencode
+# Вариант 2: OpenCode — модель и токен остаются в конфиге OpenCode
+AI_RUNTIME=opencode
+OPENCODE_MODEL=assistant/assistant
+# Необязательно: это значение уже используется по умолчанию.
+OPENCODE_SERVER_URL=http://127.0.0.1:4096
 ```
 
 Авторизация и токены остаются в локальной среде выбранного CLI; в репозиторий
@@ -125,6 +128,24 @@ node ops/scripts/doctor.mjs
 `read-only`, OpenCode — с запретом изменения файлов и запуска команд. Кнопка
 «Открыть в консоли» запускает отдельную интерактивную сессию: любые изменения
 в ней вы подтверждаете сами.
+
+### OpenCode server для настройки и чата
+
+При `AI_RUNTIME=opencode` настройка и встроенный чат используют не одноразовый
+`opencode run`, а явную локальную сессию. В отдельном терминале из папки
+проекта запустите:
+
+```bash
+opencode serve
+```
+
+Сервер по умолчанию слушает только `127.0.0.1:4096`. Не запускайте его с
+`--auto`. Life OS обращается к нему только через свой backend, проверяет
+`assistant/assistant`, показывает состояние сессии и не отвечает на permission
+запросы. Если OpenCode хочет прочитать файл, выполнить команду или внести
+изменение, интерфейс предложит открыть **эту же** сессию в терминале; решение
+останется за вами. При отсутствии server интерфейс не крутит вечный spinner, а
+показывает кнопку явного открытия `opencode serve`.
 
 ## Где лежат данные
 
@@ -153,7 +174,10 @@ brain/content/
 |---|---:|---|
 | `AI_RUNTIME` | `none` | `none`, `codex` или `opencode` |
 | `CODEX_COMMAND`, `OPENCODE_COMMAND` | имя команды | Путь или имя выбранного CLI |
-| `CODEX_MODEL`, `OPENCODE_MODEL` | — | Необязательная модель CLI |
+| `CODEX_MODEL` | — | Необязательная модель Codex CLI |
+| `OPENCODE_MODEL` | `assistant/assistant` | Для session bridge setup/chat используется только `assistant/assistant` |
+| `OPENCODE_SERVER_URL` | `http://127.0.0.1:4096` | Только loopback-адрес user-managed `opencode serve` |
+| `LIFE_OS_UI_ORIGIN` | `localhost:5173`, `127.0.0.1:5173`, `[::1]:5173` | Разрешённый origin для явного открытия Terminal; несколько значений через запятую |
 | `PORT` | `3001` | Порт бэкенда |
 | `VAULT_PATH` | `../../brain/content` | Внешняя папка для личных данных |
 | `WORK_DIR` | корень репозитория | Папка для интерактивной консоли |

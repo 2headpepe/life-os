@@ -128,7 +128,16 @@ export const feed = {
 }
 
 export const ai = {
-  chat: (messages, system) => api.post('/ai/chat', { messages, ...(system ? { system } : {}) }),
+  chat: (messages, system, { sessionId, prompt } = {}) => api.post('/ai/chat', {
+    messages,
+    ...(system ? { system } : {}),
+    ...(sessionId ? { session_id: sessionId } : {}),
+    ...(prompt ? { prompt } : {}),
+  }),
+  session: (id) => api.get(`/ai/sessions/${encodeURIComponent(id)}`),
+  abortSession: (id) => api.post(`/ai/sessions/${encodeURIComponent(id)}/abort`, {}),
+  openSession: (id) => api.post(`/ai/sessions/${encodeURIComponent(id)}/open`, {}),
+  openServer: () => api.post('/ai/open', { action: 'start_opencode_server' }),
   run: (task, params = {}) => fetch('/api/ai/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -93,8 +93,11 @@ GET/POST/PATCH /api/memories/*   работа с воспоминаниями и
 GET/POST/PATCH /api/sync/*       Google Calendar
 
 GET    /api/config               состояние выбранного AI runtime
-POST   /api/ai/chat              read-only AI-ответ
-POST   /api/ai/open              открыть выбранный CLI в терминале
+POST   /api/ai/chat              read-only AI-ответ; для OpenCode создаёт асинхронную локальную сессию
+GET    /api/ai/sessions/:id      reconcile состояния OpenCode-сессии через status/history
+POST   /api/ai/sessions/:id/abort отменить OpenCode-сессию
+POST   /api/ai/sessions/:id/open явно открыть ту же OpenCode-сессию в терминале
+POST   /api/ai/open              открыть выбранный CLI или, по явному действию, `opencode serve`
 ```
 
 Все ответы API возвращают JSON. Ошибка имеет вид `{ "error": "..." }`.
@@ -107,6 +110,15 @@ POST   /api/ai/open              открыть выбранный CLI в тер
 - Codex получает `--sandbox read-only`;
 - OpenCode получает временную конфигурацию с запретом edit, shell, webfetch и
   доступа за пределы рабочей папки.
+
+Для setup и встроенного чата при `AI_RUNTIME=opencode` используется отдельный
+`opencode-session-bridge.js`: он соединяется только с user-managed loopback
+`opencode serve`, создаёт сессию с выбранными `assistant/assistant` и `build`,
+и задаёт session-level permission `ask` для всех действий. Backend никогда не
+отвечает на permission API. Browser опрашивает только Life OS API; SSE от
+OpenCode служит лучшим усилием, а `status` и история сообщений — источником
+истины. По явному клику пользователь может открыть `opencode attach` к той же
+сессии и принять решение в TUI. Codex этот bridge не использует.
 
 Не добавляйте ключи провайдеров в `.env.example`, исходный код или Git.
 
