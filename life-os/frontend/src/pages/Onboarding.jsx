@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, ArrowRight, ArrowUp, Loader2, CheckCircle2, Sparkles, Terminal, RefreshCw, X } from 'lucide-react'
+import { AlertCircle, ArrowRight, ArrowUp, ExternalLink, Loader2, CheckCircle2, Play, Sparkles, Terminal, RefreshCw, X } from 'lucide-react'
 import { ai, config as configApi, tree as treeApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
 import { pollAiSession } from '../utils/aiSession'
@@ -70,43 +70,77 @@ function StepDots({ step, total }) {
   )
 }
 
-const SERVER_CONFIGURATION_ISSUES = [
+const SERVER_CONFIGURATION_ISSUES = new Set([
   'model_missing', 'model_not_allowed', 'missing_provider', 'missing_model',
-  'server_invalid_response', 'server_url_missing', 'server_url_invalid', 'server_url_not_loopback',
-  'server_url_port_required', 'server_url_launch_unsupported',
-]
+  'server_url_missing', 'server_url_invalid', 'server_url_not_loopback',
+  'server_url_port_required', 'server_protocol_unsupported',
+])
 
-function OpenCodeServerRecovery({ server, errorCode, busy, onStart, onRefresh }) {
-  const reason = SERVER_CONFIGURATION_ISSUES.includes(errorCode) ? errorCode : server?.reason
-  const wrongService = reason === 'server_invalid_response'
-  const configurationIssue = SERVER_CONFIGURATION_ISSUES.includes(reason)
-  const title = wrongService
-    ? 'По указанному адресу не OpenCode server'
-    : (configurationIssue ? 'Проверь настройку OpenCode' : 'Локальный OpenCode server недоступен')
-  const detail = wrongService
-    ? 'На адресе из OPENCODE_SERVER_URL ответил другой локальный сервис. Проверь URL и порт: освободи порт либо измени адрес для OpenCode server.'
-    : (configurationIssue
-        ? 'Для setup и чата нужен доступный assistant/assistant в уже запущенном OpenCode server.'
-        : 'Life OS не запускает его в фоне. Открой сервер в терминале, затем проверь соединение.')
+function serverLifecycle(server) {
+  return server?.state || server?.status || server?.lifecycle || server?.managed?.state || (server?.available ? 'ready' : 'stopped')
+}
+
+function OpenCodeServerRecovery({ server, errorCode, busy, onStart, onStop, onRefresh }) {
+  const state = serverLifecycle(server)
+  const reason = errorCode || server?.reason || null
+  const isManaged = server?.managed === true || server?.owned === true || server?.managed?.owned === true
+  const copy = (() => {
+    if (state === 'ready') return {
+      title: 'OpenCode готов',
+      detail: 'Life OS подключён к локальному OpenCode. Для действий агент всё равно спросит разрешение.',
+    }
+    if (state === 'starting') return {
+      title: 'OpenCode запускается',
+      detail: 'Life OS ждёт подтверждённый ответ OpenCode. Пароль сервера не передаётся в браузер.',
+    }
+    if (state === 'endpoint_occupied') return {
+      title: 'Порт OpenCode уже занят',
+      detail: 'Life OS не станет подключаться к неизвестному процессу и не остановит его. Освободи порт или измени настройку.',
+    }
+    if (reason === 'server_v2_auth_required' || reason === 'server_auth_required') return {
+      title: 'Найден OpenCode v2, но нужен доступ',
+      detail: 'Это не ошибка провайдера. Сервер защищён паролем, которым Life OS не располагает. Запусти управляемый сервер из Life OS или настрой отдельное подключение.',
+    }
+    if (reason === 'server_invalid_response') return {
+      title: 'На адресе ответил не OpenCode',
+      detail: 'Проверка v2 не распознала OpenCode. HTML на старом v1-адресе сам по себе не является такой ошибкой.',
+    }
+    if (SERVER_CONFIGURATION_ISSUES.has(reason)) return {
+      title: 'Проверь настройку OpenCode',
+      detail: 'Для setup и чата нужен доступный assistant/assistant в OpenCode.',
+    }
+    if (state === 'failed') return {
+      title: 'OpenCode не запустился',
+      detail: 'Проверь диагностику и попробуй запустить сервер ещё раз.',
+    }
+    return {
+      title: 'OpenCode не запущен',
+      detail: 'Life OS запускает отдельный локальный сервер только после явного нажатия кнопки.',
+    }
+  })()
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" role="status" aria-live="polite">
       <div className="flex gap-2">
         <AlertCircle size={15} className="mt-0.5 flex-shrink-0" />
         <div className="space-y-1.5">
-          <p className="font-medium">{title}</p>
-          <p className="leading-relaxed">{detail}</p>
+          <p className="font-medium">{copy.title}</p>
+          <p className="leading-relaxed">{copy.detail}</p>
           {reason && <p className="text-[11px] opacity-80">{reason}</p>}
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        {!configurationIssue && <button type="button" onClick={onStart} disabled={busy}
+        {state !== 'starting' && state !== 'ready' && <button type="button" onClick={onStart} disabled={busy}
           className="inline-flex items-center gap-1.5 rounded-lg bg-amber-900 px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:bg-amber-200 dark:text-amber-950">
-          {busy ? <Loader2 size={12} className="animate-spin" /> : <Terminal size={12} />} Открыть opencode serve
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Запустить OpenCode
         </button>}
         <button type="button" onClick={onRefresh} disabled={busy}
           className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:hover:bg-amber-900/40">
           <RefreshCw size={12} /> Проверить соединение
         </button>
+        {isManaged && state === 'ready' && <button type="button" onClick={onStop} disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:hover:bg-amber-900/40">
+          <X size={12} /> Остановить
+        </button>}
       </div>
     </div>
   )
@@ -118,9 +152,9 @@ function OpenCodeSessionStatus({ session, busy, onOpen, onCancel, onCheck, actio
   const needsTerminal = state === 'permission_required' || state === 'needs_attention'
   const copy = {
     running: ['OpenCode обрабатывает запрос', 'Ответ появится здесь. Life OS не подтверждает никакие действия за тебя.'],
-    permission_required: ['OpenCode ждёт твоего разрешения', 'Life OS не отвечает на permission-запросы. Открой эту же сессию в терминале и реши вопрос там.'],
-    needs_attention: ['Нужна проверка сессии', 'Ответ не появился вовремя. Продолжи эту же сессию в терминале или отмени запрос.'],
-    failed: ['OpenCode не завершил запрос', session.error || 'Проверь сессию в терминале или попробуй отправить запрос снова.'],
+    permission_required: ['OpenCode ждёт твоего разрешения', 'Life OS не отвечает на permission-запросы. Открой эту сессию в OpenCode и прими решение там.'],
+    needs_attention: ['Нужна проверка сессии', 'Ответ не появился вовремя. Открой сессию в OpenCode или отмени запрос.'],
+    failed: ['OpenCode не завершил запрос', session.error || 'Проверь сессию в OpenCode или попробуй отправить запрос снова.'],
     cancelled: ['Запрос отменён', 'Можно сформулировать запрос заново.'],
   }[state] || ['OpenCode обрабатывает запрос', 'Ответ появится здесь.']
 
@@ -139,7 +173,7 @@ function OpenCodeSessionStatus({ session, busy, onOpen, onCancel, onCheck, actio
           {state === 'running' || needsTerminal || state === 'failed' ? (
             <button ref={actionRef} type="button" onClick={onOpen} disabled={busy}
               className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:bg-white dark:text-gray-900">
-              <Terminal size={12} /> Открыть эту сессию
+              <ExternalLink size={12} /> {session.can_open_terminal ? 'Открыть в терминале' : 'Открыть OpenCode Web'}
             </button>
           ) : null}
           {needsTerminal ? (
@@ -398,10 +432,10 @@ export default function Onboarding({ onDone }) {
   const openActiveSession = async () => {
     if (!activeSession?.session_id) return
     try {
-      const result = await ai.openSession(activeSession.session_id)
+      const result = await ai.openSession(activeSession.session_id, { legacyTerminal: activeSession.can_open_terminal === true })
       if (result.error) throw new Error(result.error)
     } catch (e) {
-      setError(e.message || 'Не удалось открыть сессию OpenCode в терминале.')
+      setError(e.message || 'Не удалось открыть сессию в OpenCode.')
     }
   }
 
@@ -424,14 +458,42 @@ export default function Onboarding({ onDone }) {
 
   const startOpenCodeServer = async () => {
     setServerActionLoading(true)
+    setError(null)
+    setErrorCode(null)
     try {
-      const result = await ai.openServer()
-      if (result.error) throw new Error(result.error)
-      setError('OpenCode server открыт в терминале. Дождись строки о запуске и проверь соединение.')
-      setErrorCode('server_start_requested')
+      const result = await ai.startOpenCodeServer()
+      if (result.error) {
+        const failure = new Error(result.error)
+        failure.code = result.code
+        throw failure
+      }
+      setOpenCodeServer(result.openCodeServer || result.server || result)
+      await refreshConfig()
     } catch (e) {
-      setError(e.message || 'Не удалось открыть OpenCode server в терминале.')
-      setErrorCode('server_start_failed')
+      setError(e.message || 'Не удалось запустить OpenCode.')
+      setErrorCode(e.code || 'server_start_failed')
+    } finally {
+      setServerActionLoading(false)
+    }
+  }
+
+  const stopOpenCodeServer = async () => {
+    setServerActionLoading(true)
+    try {
+      const result = await ai.stopOpenCodeServer()
+      if (result.error) {
+        const failure = new Error(result.error)
+        failure.code = result.code
+        throw failure
+      }
+      setOpenCodeServer(result.openCodeServer || result.server || result)
+      setOpenCodeSessionId(null)
+      setActiveSession(null)
+      setPendingRequest(null)
+      await refreshConfig()
+    } catch (e) {
+      setError(e.message || 'Не удалось остановить OpenCode.')
+      setErrorCode(e.code || 'server_stop_failed')
     } finally {
       setServerActionLoading(false)
     }
@@ -514,7 +576,12 @@ export default function Onboarding({ onDone }) {
   if (hasAi === null) return null
 
   const isOpenCode = aiRuntime === 'opencode'
-  const serverUnavailable = isOpenCode && (openCodeServer?.available === false || errorCode?.startsWith('server_'))
+  const openCodeState = serverLifecycle(openCodeServer)
+  const serverUnavailable = isOpenCode && (
+    openCodeState !== 'ready' || openCodeServer?.available === false ||
+    errorCode?.startsWith('server_') || SERVER_CONFIGURATION_ISSUES.has(errorCode)
+  )
+  const showServerStatus = isOpenCode && (serverUnavailable || openCodeServer?.managed === true || openCodeServer?.owned === true)
   const activeSessionBlocksInput = ['running', 'permission_required', 'needs_attention'].includes(activeSession?.state)
 
   // No-AI: show CLI onboarding screen
@@ -588,7 +655,7 @@ export default function Onboarding({ onDone }) {
                   className="w-full bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none resize-none placeholder-gray-400 disabled:opacity-50"
                 />
               </div>
-              {serverUnavailable && <OpenCodeServerRecovery server={openCodeServer} errorCode={errorCode} busy={serverActionLoading} onStart={startOpenCodeServer} onRefresh={refreshConfig} />}
+              {showServerStatus && <OpenCodeServerRecovery server={openCodeServer} errorCode={errorCode} busy={serverActionLoading} onStart={startOpenCodeServer} onStop={stopOpenCodeServer} onRefresh={refreshConfig} />}
               <OpenCodeSessionStatus session={activeSession} busy={loading} onOpen={openActiveSession} onCancel={cancelActiveSession} onCheck={resumeActiveSession} actionRef={terminalActionRef} />
               {error && <p className="text-xs text-red-500">{error}</p>}
               <button
@@ -659,7 +726,7 @@ export default function Onboarding({ onDone }) {
                   className="w-full bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none resize-none placeholder-gray-400 disabled:opacity-50"
                 />
               </div>
-              {serverUnavailable && <OpenCodeServerRecovery server={openCodeServer} errorCode={errorCode} busy={serverActionLoading} onStart={startOpenCodeServer} onRefresh={refreshConfig} />}
+              {showServerStatus && <OpenCodeServerRecovery server={openCodeServer} errorCode={errorCode} busy={serverActionLoading} onStart={startOpenCodeServer} onStop={stopOpenCodeServer} onRefresh={refreshConfig} />}
               <OpenCodeSessionStatus session={activeSession} busy={loading} onOpen={openActiveSession} onCancel={cancelActiveSession} onCheck={resumeActiveSession} actionRef={terminalActionRef} />
               {error && <p className="text-xs text-red-500">{error}</p>}
               <button onClick={handleDescribeGoals} disabled={!input.trim() || loading || activeSessionBlocksInput}

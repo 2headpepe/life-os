@@ -50,7 +50,7 @@ export async function pollAiSession(sessionId, {
       const attention = {
         ...last,
         state: 'needs_attention',
-        error: 'OpenCode ещё не вернул ответ. Продолжи эту же сессию в терминале или отмени запрос.',
+        error: 'OpenCode ещё не вернул ответ. Продолжи эту же сессию в OpenCode или отмени запрос.',
         code: 'client_poll_timeout',
       }
       onUpdate?.(attention)

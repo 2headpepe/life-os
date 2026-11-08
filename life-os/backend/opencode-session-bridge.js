@@ -1,6 +1,7 @@
 import { promptFromMessages } from './ai-runtime.js'
 import {
   ASK_USER_FOR_ALL_PERMISSIONS,
+  ASK_USER_FOR_ALL_PERMISSIONS_V2,
   OpenCodeServerClient,
   OpenCodeServerError,
   eventNeedsPermission,
@@ -37,16 +38,20 @@ function statusType(status) {
 
 function assistantMessages(messages) {
   return messages
-    .filter(message => message?.info?.role === 'assistant')
+    // OpenCode 1.x returns `{ info: { role }, parts }`; v2 returns a direct
+    // session message with `type: "assistant"` and `content` blocks. Keep a
+    // single normalized bridge record so polling/recovery does not depend on
+    // the server generation.
+    .filter(message => (message?.info?.role || message?.role || message?.type) === 'assistant')
     .map((message, index) => ({
-      id: message.info?.id || null,
+      id: message.info?.id || message?.id || null,
       index,
-      text: (message.parts || [])
+      text: (message.parts || message.content || [])
         .filter(part => part?.type === 'text' && typeof part.text === 'string')
         .map(part => part.text)
         .join('')
         .trim(),
-      error: message.info?.error || null,
+      error: message.info?.error || message?.error || null,
     }))
 }
 
@@ -139,10 +144,15 @@ export function openCodeAttachCommand(runtime, sessionId) {
 }
 
 export class LifeOsOpenCodeSessionBridge {
-  constructor({ runtime, clientFactory, now = () => Date.now(), log = console } = {}) {
+  constructor({ runtime, clientFactory, credentialProvider, workingDirectory, now = () => Date.now(), log = console } = {}) {
     if (typeof runtime !== 'function') throw new Error('runtime must be a function')
     this.runtime = runtime
-    this.clientFactory = clientFactory || (config => new OpenCodeServerClient({ url: config.serverUrl }))
+    this.credentialProvider = credentialProvider || (() => null)
+    this.workingDirectory = workingDirectory || null
+    this.clientFactory = clientFactory || (config => new OpenCodeServerClient({
+      url: config.serverUrl,
+      credentialProvider: this.credentialProvider,
+    }))
     this.now = now
     this.log = log
     this.sessions = new Map()
@@ -213,12 +223,15 @@ export class LifeOsOpenCodeSessionBridge {
     }
     const config = this.config()
     const client = this.client(config)
-    await client.preflight(config.model, { signal: withTimeout() })
+    const preflight = await client.preflight(config.model, { signal: withTimeout() })
     const session = await client.createSession({
       title,
       agent: config.agent,
       model: config.model,
-      permission: ASK_USER_FOR_ALL_PERMISSIONS,
+      permission: preflight.protocol === 'v2'
+        ? ASK_USER_FOR_ALL_PERMISSIONS_V2
+        : ASK_USER_FOR_ALL_PERMISSIONS,
+      ...(this.workingDirectory ? { location: { directory: this.workingDirectory } } : {}),
       signal: withTimeout(),
     })
     const now = this.now()
@@ -229,6 +242,10 @@ export class LifeOsOpenCodeSessionBridge {
       updatedAt: now,
       model: config.model,
       agent: config.agent,
+      // The server generation is resolved before the session is created and
+      // remains part of its handoff contract. Legacy v1 can safely attach via
+      // its local CLI; v2 must use a short-lived browser pairing capability.
+      protocol: preflight.protocol === 'v2' ? 'v2' : 'v1',
       permissionRequired: false,
       cancelRequestedAt: null,
       error: null,
@@ -345,7 +362,18 @@ export class LifeOsOpenCodeSessionBridge {
     return this.publicRecord(record, 'cancelled')
   }
 
+  async createPairing(sessionId) {
+    // A pairing capability is only minted for a session that this Life OS
+    // backend created. The caller must redirect immediately and must never
+    // serialize the returned code into application state or analytics.
+    this.getRecord(sessionId)
+    const config = this.config()
+    return this.client(config).createPairing({ signal: withTimeout() })
+  }
+
   publicRecord(record, state, extra = {}) {
+    const canOpen = ['running', 'permission_required', 'needs_attention', 'failed'].includes(state)
+    const legacyTerminal = canOpen && record.protocol === 'v1'
     return {
       session_id: record.id,
       state,
@@ -354,7 +382,12 @@ export class LifeOsOpenCodeSessionBridge {
       created_at: record.createdAt,
       updated_at: record.updatedAt,
       permission_required: state === 'permission_required',
-      can_open_terminal: ['running', 'permission_required', 'needs_attention', 'failed'].includes(state),
+      can_open_opencode: canOpen,
+      // External v1 stays compatible with the original explicit terminal
+      // attach. Only v2 uses browser pairing, so no managed server password
+      // can ever be assembled into a terminal command.
+      can_open_terminal: legacyTerminal,
+      opencode_handoff: record.protocol === 'v1' ? 'terminal' : 'pairing',
       can_cancel: ['running', 'permission_required', 'needs_attention'].includes(state),
       ...(record.error ? { error: record.error.message, code: record.error.code } : {}),
       ...extra,

@@ -94,13 +94,20 @@ GET/POST/PATCH /api/sync/*       Google Calendar
 
 GET    /api/config               состояние выбранного AI runtime
 POST   /api/ai/chat              read-only AI-ответ; для OpenCode создаёт асинхронную локальную сессию
+POST   /api/ai/opencode-server/start  по явному UI-клику запускает owned loopback OpenCode v2
+POST   /api/ai/opencode-server/stop   останавливает только owned OpenCode-процесс
 GET    /api/ai/sessions/:id      reconcile состояния OpenCode-сессии через status/history
 POST   /api/ai/sessions/:id/abort отменить OpenCode-сессию
-POST   /api/ai/sessions/:id/open явно открыть ту же OpenCode-сессию в терминале
-POST   /api/ai/open              открыть выбранный CLI или, по явному действию, `opencode serve`
+POST   /api/ai/sessions/:id/open по явному UI-клику: v1 terminal attach или v2 одноразовый pairing flow
+POST   /api/ai/open              открыть выбранный CLI (не управляет OpenCode server)
 ```
 
-Все ответы API возвращают JSON. Ошибка имеет вид `{ "error": "..." }`.
+Все обычные ответы API возвращают JSON. Ошибка имеет вид `{ "error": "..." }`.
+`POST /api/ai/sessions/:id/open` сохраняет совместимость с внешним v1:
+явный клик открывает локальный terminal attach и возвращает JSON. Для owned v2
+это браузерная навигация: endpoint возвращает пустой `303 Location` в
+одноразовый OpenCode pairing URL с `Cache-Control: no-store`; pairing
+capability не проходит через JavaScript Life OS.
 
 ## AI runtime
 
@@ -111,16 +118,37 @@ POST   /api/ai/open              открыть выбранный CLI или, �
 - OpenCode получает временную конфигурацию с запретом edit, shell, webfetch и
   доступа за пределы рабочей папки.
 
-Для setup и встроенного чата при `AI_RUNTIME=opencode` используется отдельный
-`opencode-session-bridge.js`: он соединяется только с user-managed loopback
-`opencode serve`, создаёт сессию с выбранными `assistant/assistant` и `build`,
-и задаёт session-level permission `ask` для всех действий. Backend никогда не
-отвечает на permission API. Browser опрашивает только Life OS API; SSE от
-OpenCode служит лучшим усилием, а `status` и история сообщений — источником
-истины. По явному клику пользователь может открыть `opencode attach` к той же
-сессии и принять решение в TUI. При запуске из Life OS команда явно передаёт
-hostname и fixed port из `OPENCODE_SERVER_URL`: OpenCode 1.18 иначе выбирает
-случайный порт. Codex этот bridge не использует.
+Для setup и встроенного чата при `AI_RUNTIME=opencode` используются
+`managed-opencode-server.js` и `opencode-session-bridge.js`. Managed режим
+запускается только явным кликом пользователя: backend создаёт случайный
+пароль, передаёт его исключительно через environment дочернего
+`opencode serve --hostname 127.0.0.1 --port ...` и хранит только в памяти.
+Все v2 API-запросы backend → OpenCode получают Basic auth; браузер его никогда
+не получает. Manager не усыновляет, не перезапускает и не останавливает чужой
+процесс на занятом порту. Его `cwd` и v2 session `location.directory` равны
+`WORK_DIR`, поэтому OpenCode видит корень нужного репозитория, а не каталог
+`life-os/backend`.
+
+Мост определяет legacy v1 JSON health или v2 `/api/info`, использует
+`assistant/assistant` и `build`, а для v2 адаптирует session, prompt, active,
+messages, interrupt и events. Для каждой сессии задаётся `ask` на действия;
+backend никогда не отвечает на permission API. Browser опрашивает только Life
+OS API; SSE OpenCode — best effort, а session status/history — источник
+истины. При явном «Открыть в OpenCode» внешняя v1-сессия сохраняет прежний
+terminal attach, а owned v2-сессия получает короткоживущий одноразовый pairing
+code и открывает официальный OpenCode Web UI без передачи root password.
+Стабильный public deep-link ровно в одну v2-сессию не предполагается. External
+v1 server поддерживается без auth, но не managed; внешний защищённый v2 server
+явно показывает auth-required вместо ложного сообщения о чужом сервисе. Codex
+этот bridge и lifecycle не использует.
+
+Ограничение upstream OpenCode: foreground `serve` получает свой пароль через
+`OPENCODE_PASSWORD`. В затронутых v2-версиях tool/shell-процесс, который сам
+OpenCode запускает после явного пользовательского разрешения, может унаследовать
+эту переменную. Life OS не передаёт пароль в браузер, свой API, логи, аналитику,
+файлы или аргументы, и никогда не разрешает такой tool автоматически; однако
+пользователь не должен одобрять недоверенный shell/tool до появления upstream
+безопасного password-file/descriptor механизма.
 
 Не добавляйте ключи провайдеров в `.env.example`, исходный код или Git.
 

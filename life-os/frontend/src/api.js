@@ -136,8 +136,24 @@ export const ai = {
   }),
   session: (id) => api.get(`/ai/sessions/${encodeURIComponent(id)}`),
   abortSession: (id) => api.post(`/ai/sessions/${encodeURIComponent(id)}/abort`, {}),
-  openSession: (id) => api.post(`/ai/sessions/${encodeURIComponent(id)}/open`, {}),
-  openServer: () => api.post('/ai/open', { action: 'start_opencode_server' }),
+  // Legacy v1 can retain the original local terminal attach. V2 deliberately
+  // uses native navigation: its one-time pairing URL must never be exposed to
+  // Life OS JavaScript, rendered in the UI, or retained in state.
+  openSession: (id, { legacyTerminal = false } = {}) => {
+    if (legacyTerminal) return api.post(`/ai/sessions/${encodeURIComponent(id)}/open`, {})
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = `/api/ai/sessions/${encodeURIComponent(id)}/open`
+    form.target = '_blank'
+    form.rel = 'noopener'
+    form.style.display = 'none'
+    document.body.appendChild(form)
+    form.submit()
+    window.setTimeout(() => form.remove(), 0)
+    return { opened: true }
+  },
+  startOpenCodeServer: () => api.post('/ai/opencode-server/start', {}),
+  stopOpenCodeServer: () => api.post('/ai/opencode-server/stop', {}),
   run: (task, params = {}) => fetch('/api/ai/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

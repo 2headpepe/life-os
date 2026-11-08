@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { LifeOsOpenCodeSessionBridge, openCodeServeCommand } from '../opencode-session-bridge.js'
+import { LifeOsOpenCodeSessionBridge, openCodeAttachCommand, openCodeServeCommand } from '../opencode-session-bridge.js'
 
 function runtime() {
   return {
@@ -12,16 +12,17 @@ function runtime() {
   }
 }
 
-function fakeClient({ status = { type: 'busy' }, messages = [] } = {}) {
+function fakeClient({ status = { type: 'busy' }, messages = [], protocol = 'v1' } = {}) {
   const calls = []
   return {
     calls,
-    async preflight(model) { calls.push(['preflight', model]); return { health: { version: '1.18.33' }, model: { status: 'available' } } },
+    async preflight(model) { calls.push(['preflight', model]); return { protocol, health: { version: protocol === 'v2' ? '2.20.0' : '1.18.33' }, model: { status: 'available' } } },
     async createSession(input) { calls.push(['createSession', input]); return { id: 'ses_lifeos' } },
     async submitPromptAsync(id, input) { calls.push(['prompt', id, input]); return { accepted: true } },
     async sessionStatus(id) { calls.push(['status', id]); return status },
     async messages(id) { calls.push(['messages', id]); return messages },
     async abort(id) { calls.push(['abort', id]); return true },
+    async createPairing() { calls.push(['pairing']); return { code: 'one-time-code', expiresIn: 300 } },
     async *events() {},
   }
 }
@@ -49,24 +50,70 @@ test('OpenCode serve command binds the exact configured loopback endpoint', () =
   )
 })
 
+test('OpenCode legacy attach command targets only the configured local session', () => {
+  assert.equal(
+    openCodeAttachCommand(runtime(), 'ses_lifeos'),
+    'opencode attach http://127.0.0.1:4096 --session ses_lifeos',
+  )
+  assert.throws(
+    () => openCodeAttachCommand(runtime(), 'ses_lifeos;rm'),
+    error => error.code === 'session_invalid',
+  )
+})
+
 test('OpenCode bridge creates an ask-only session and submits no prompt tools', async () => {
   const client = fakeClient()
-  const bridge = new LifeOsOpenCodeSessionBridge({ runtime, clientFactory: () => client, log: { warn() {} } })
+  const bridge = new LifeOsOpenCodeSessionBridge({ runtime, clientFactory: () => client, workingDirectory: '/workspace', log: { warn() {} } })
   const result = await bridge.start({ messages: [{ role: 'user', content: 'Привет' }], system: 'Отвечай кратко' })
   bridge.stopEventPump()
 
   assert.equal(result.state, 'running')
   assert.equal(result.session_id, 'ses_lifeos')
+  assert.equal(result.can_open_opencode, true)
+  assert.equal(result.can_open_terminal, true)
+  assert.equal(result.opencode_handoff, 'terminal')
   const create = client.calls.find(call => call[0] === 'createSession')[1]
   assert.equal(create.title, 'Life OS chat')
   assert.equal(create.agent, 'build')
   assert.equal(create.model, 'assistant/assistant')
+  assert.deepEqual(create.location, { directory: '/workspace' })
   assert.deepEqual(create.permission, [{ permission: '*', pattern: '*', action: 'ask' }])
   assert.ok(create.signal)
   const prompt = client.calls.find(call => call[0] === 'prompt')[2]
   assert.equal(prompt.tools, undefined)
   assert.match(prompt.parts[0].text, /Отвечай кратко/)
   assert.match(prompt.parts[0].text, /User: Привет/)
+})
+
+test('OpenCode bridge creates pairing only for its own session and never returns a terminal command', async () => {
+  const client = fakeClient({ protocol: 'v2' })
+  const bridge = new LifeOsOpenCodeSessionBridge({ runtime, clientFactory: () => client, log: { warn() {} } })
+  const started = await bridge.start({ messages: [{ role: 'user', content: 'Привет' }] })
+
+  assert.equal(started.can_open_terminal, false)
+  assert.equal(started.opencode_handoff, 'pairing')
+  assert.deepEqual(
+    client.calls.find(call => call[0] === 'createSession')[1].permission,
+    [{ action: '*', resource: '*', effect: 'ask' }],
+  )
+  assert.deepEqual(await bridge.createPairing('ses_lifeos'), { code: 'one-time-code', expiresIn: 300 })
+  assert.ok(client.calls.some(call => call[0] === 'pairing'))
+  await assert.rejects(bridge.createPairing('ses_other'), error => error.code === 'session_unknown')
+  bridge.stopEventPump()
+})
+
+test('OpenCode bridge accepts v2 direct assistant message content during reconciliation', async () => {
+  const client = fakeClient({
+    protocol: 'v2',
+    status: { type: 'idle' },
+    messages: [{ id: 'msg_v2', type: 'assistant', content: [{ type: 'text', text: 'Ответ v2' }] }],
+  })
+  const bridge = new LifeOsOpenCodeSessionBridge({ runtime, clientFactory: () => client, log: { warn() {} } })
+  await bridge.start({ messages: [{ role: 'user', content: 'Привет' }] })
+  const result = await bridge.inspect('ses_lifeos')
+  assert.equal(result.state, 'completed')
+  assert.equal(result.text, 'Ответ v2')
+  bridge.stopEventPump()
 })
 
 test('OpenCode bridge reconciles completion, permission waits, and cancellation', async () => {
