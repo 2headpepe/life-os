@@ -120,6 +120,7 @@ export default function Feed() {
   const handleAiGenerate = async (force = false) => {
     setAiGenerating(true)
     try {
+      await aiApi.ensureOpenCode()
       await feedApi.aiGenerate(force)
       await loadAiStatus()
     } catch (e) {

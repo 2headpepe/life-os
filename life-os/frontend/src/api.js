@@ -128,12 +128,24 @@ export const feed = {
 }
 
 export const ai = {
-  chat: (messages, system, { sessionId, prompt } = {}) => api.post('/ai/chat', {
+  ensureOpenCode: async () => {
+    const runtime = await api.get('/config')
+    if (runtime.aiRuntime !== 'opencode') return runtime
+    const server = runtime.openCodeServer || {}
+    if (server.available && (server.state || server.status) === 'ready') return runtime
+    const started = await api.post('/ai/opencode-server/start', {})
+    if (started.error) throw new Error(started.error)
+    return started
+  },
+  chat: async (messages, system, { sessionId, prompt } = {}) => {
+    await ai.ensureOpenCode()
+    return api.post('/ai/chat', {
     messages,
     ...(system ? { system } : {}),
     ...(sessionId ? { session_id: sessionId } : {}),
     ...(prompt ? { prompt } : {}),
-  }),
+    })
+  },
   session: (id) => api.get(`/ai/sessions/${encodeURIComponent(id)}`),
   abortSession: (id) => api.post(`/ai/sessions/${encodeURIComponent(id)}/abort`, {}),
   // Legacy v1 can retain the original local terminal attach. V2 deliberately
@@ -154,11 +166,14 @@ export const ai = {
   },
   startOpenCodeServer: () => api.post('/ai/opencode-server/start', {}),
   stopOpenCodeServer: () => api.post('/ai/opencode-server/stop', {}),
-  run: (task, params = {}) => fetch('/api/ai/run', {
+  run: async (task, params = {}) => {
+    await ai.ensureOpenCode()
+    return fetch('/api/ai/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task, params }),
-  }).then(r => r.json()),
+    }).then(r => r.json())
+  },
 }
 
 export const aiReviews = {
