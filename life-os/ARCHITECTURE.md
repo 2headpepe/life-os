@@ -118,7 +118,9 @@ POST   /api/ai/open              открыть выбранный CLI или, �
 отвечает на permission API. Browser опрашивает только Life OS API; SSE от
 OpenCode служит лучшим усилием, а `status` и история сообщений — источником
 истины. По явному клику пользователь может открыть `opencode attach` к той же
-сессии и принять решение в TUI. Codex этот bridge не использует.
+сессии и принять решение в TUI. При запуске из Life OS команда явно передаёт
+hostname и fixed port из `OPENCODE_SERVER_URL`: OpenCode 1.18 иначе выбирает
+случайный порт. Codex этот bridge не использует.
 
 Не добавляйте ключи провайдеров в `.env.example`, исходный код или Git.
 

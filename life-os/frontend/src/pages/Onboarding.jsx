@@ -70,18 +70,32 @@ function StepDots({ step, total }) {
   )
 }
 
-function OpenCodeServerRecovery({ server, busy, onStart, onRefresh }) {
-  const configurationIssue = ['model_missing', 'model_not_allowed', 'missing_provider', 'missing_model'].includes(server?.reason)
+const SERVER_CONFIGURATION_ISSUES = [
+  'model_missing', 'model_not_allowed', 'missing_provider', 'missing_model',
+  'server_invalid_response', 'server_url_missing', 'server_url_invalid', 'server_url_not_loopback',
+  'server_url_port_required', 'server_url_launch_unsupported',
+]
+
+function OpenCodeServerRecovery({ server, errorCode, busy, onStart, onRefresh }) {
+  const reason = SERVER_CONFIGURATION_ISSUES.includes(errorCode) ? errorCode : server?.reason
+  const wrongService = reason === 'server_invalid_response'
+  const configurationIssue = SERVER_CONFIGURATION_ISSUES.includes(reason)
+  const title = wrongService
+    ? 'По указанному адресу не OpenCode server'
+    : (configurationIssue ? 'Проверь настройку OpenCode' : 'Локальный OpenCode server недоступен')
+  const detail = wrongService
+    ? 'На адресе из OPENCODE_SERVER_URL ответил другой локальный сервис. Проверь URL и порт: освободи порт либо измени адрес для OpenCode server.'
+    : (configurationIssue
+        ? 'Для setup и чата нужен доступный assistant/assistant в уже запущенном OpenCode server.'
+        : 'Life OS не запускает его в фоне. Открой сервер в терминале, затем проверь соединение.')
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" role="status" aria-live="polite">
       <div className="flex gap-2">
         <AlertCircle size={15} className="mt-0.5 flex-shrink-0" />
         <div className="space-y-1.5">
-          <p className="font-medium">{configurationIssue ? 'Проверь настройку OpenCode' : 'Локальный OpenCode server недоступен'}</p>
-          <p className="leading-relaxed">{configurationIssue
-            ? 'Для setup и чата нужен доступный assistant/assistant в уже запущенном OpenCode server.'
-            : 'Life OS не запускает его в фоне. Открой сервер в терминале, затем проверь соединение.'}</p>
-          {server?.reason && <p className="text-[11px] opacity-80">{server.reason}</p>}
+          <p className="font-medium">{title}</p>
+          <p className="leading-relaxed">{detail}</p>
+          {reason && <p className="text-[11px] opacity-80">{reason}</p>}
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -574,7 +588,7 @@ export default function Onboarding({ onDone }) {
                   className="w-full bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none resize-none placeholder-gray-400 disabled:opacity-50"
                 />
               </div>
-              {serverUnavailable && <OpenCodeServerRecovery server={openCodeServer} busy={serverActionLoading} onStart={startOpenCodeServer} onRefresh={refreshConfig} />}
+              {serverUnavailable && <OpenCodeServerRecovery server={openCodeServer} errorCode={errorCode} busy={serverActionLoading} onStart={startOpenCodeServer} onRefresh={refreshConfig} />}
               <OpenCodeSessionStatus session={activeSession} busy={loading} onOpen={openActiveSession} onCancel={cancelActiveSession} onCheck={resumeActiveSession} actionRef={terminalActionRef} />
               {error && <p className="text-xs text-red-500">{error}</p>}
               <button
@@ -645,7 +659,7 @@ export default function Onboarding({ onDone }) {
                   className="w-full bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none resize-none placeholder-gray-400 disabled:opacity-50"
                 />
               </div>
-              {serverUnavailable && <OpenCodeServerRecovery server={openCodeServer} busy={serverActionLoading} onStart={startOpenCodeServer} onRefresh={refreshConfig} />}
+              {serverUnavailable && <OpenCodeServerRecovery server={openCodeServer} errorCode={errorCode} busy={serverActionLoading} onStart={startOpenCodeServer} onRefresh={refreshConfig} />}
               <OpenCodeSessionStatus session={activeSession} busy={loading} onOpen={openActiveSession} onCancel={cancelActiveSession} onCheck={resumeActiveSession} actionRef={terminalActionRef} />
               {error && <p className="text-xs text-red-500">{error}</p>}
               <button onClick={handleDescribeGoals} disabled={!input.trim() || loading || activeSessionBlocksInput}

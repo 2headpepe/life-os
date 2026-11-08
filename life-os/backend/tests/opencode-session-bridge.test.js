@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { LifeOsOpenCodeSessionBridge } from '../opencode-session-bridge.js'
+import { LifeOsOpenCodeSessionBridge, openCodeServeCommand } from '../opencode-session-bridge.js'
 
 function runtime() {
   return {
@@ -25,6 +25,29 @@ function fakeClient({ status = { type: 'busy' }, messages = [] } = {}) {
     async *events() {},
   }
 }
+
+test('OpenCode serve command binds the exact configured loopback endpoint', () => {
+  assert.equal(
+    openCodeServeCommand(runtime()),
+    'opencode serve --hostname 127.0.0.1 --port 4096',
+  )
+  assert.equal(
+    openCodeServeCommand({ ...runtime(), serverUrl: 'http://localhost:4812' }),
+    'opencode serve --hostname localhost --port 4812',
+  )
+  assert.equal(
+    openCodeServeCommand({ ...runtime(), serverUrl: 'http://[::1]:4813' }),
+    'opencode serve --hostname ::1 --port 4813',
+  )
+  assert.throws(
+    () => openCodeServeCommand({ ...runtime(), serverUrl: 'http://127.0.0.1' }),
+    error => error.code === 'server_url_port_required',
+  )
+  assert.throws(
+    () => openCodeServeCommand({ ...runtime(), serverUrl: 'https://localhost:4096' }),
+    error => error.code === 'server_url_launch_unsupported',
+  )
+})
 
 test('OpenCode bridge creates an ask-only session and submits no prompt tools', async () => {
   const client = fakeClient()

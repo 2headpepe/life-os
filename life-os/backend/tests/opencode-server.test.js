@@ -103,6 +103,20 @@ test('client reports unavailable server and unavailable configured model safely'
   await assert.rejects(missingModel.preflight('other/model'), error => error.code === 'missing_provider')
 })
 
+test('client rejects an unrelated local HTTP service instead of accepting non-JSON', async () => {
+  const wrongService = new OpenCodeServerClient({
+    url: 'http://127.0.0.1:4096',
+    fetchImpl: async () => new Response('<!doctype html><title>Another service</title>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html' },
+    }),
+  })
+  await assert.rejects(
+    wrongService.preflight('assistant/assistant'),
+    error => error instanceof OpenCodeServerError && error.code === 'server_invalid_response' && error.status === 200,
+  )
+})
+
 test('SSE parsing normalizes session and permission events', async () => {
   const response = sse(
     'event: message\ndata: {"id":"event-1","type":"session.status","properties":{"sessionID":"ses_1","status":{"type":"busy"}}}\n\n',

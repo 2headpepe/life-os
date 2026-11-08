@@ -110,7 +110,21 @@ export function openCodeServeCommand(runtime) {
   if (runtime?.runtime !== 'opencode' || !runtime.command) {
     throw new LifeOsOpenCodeSessionError('OpenCode runtime is required', { code: 'runtime_not_opencode' })
   }
-  return `${runtime.command} serve`
+  // OpenCode 1.18 defaults `serve --port` to 0 (an ephemeral port). Life OS
+  // must instead start the exact endpoint that its bridge will subsequently
+  // probe and attach to; otherwise the UI can talk to an unrelated process on
+  // OPENCODE_SERVER_URL or simply never find the server.
+  const server = new URL(validateOpenCodeServerUrl(runtime.serverUrl))
+  if (server.protocol !== 'http:') {
+    throw new LifeOsOpenCodeSessionError('Life OS can launch only an HTTP OpenCode server', { code: 'server_url_launch_unsupported' })
+  }
+  if (!server.port || server.port === '0') {
+    throw new LifeOsOpenCodeSessionError('OPENCODE_SERVER_URL must include a fixed non-zero port to launch OpenCode', { code: 'server_url_port_required' })
+  }
+  // URL.hostname retains brackets for an IPv6 literal, while the CLI expects
+  // the unbracketed host value passed to --hostname.
+  const hostname = server.hostname.replace(/^\[|\]$/g, '')
+  return `${runtime.command} serve --hostname ${hostname} --port ${server.port}`
 }
 
 export function openCodeAttachCommand(runtime, sessionId) {

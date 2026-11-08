@@ -30,7 +30,12 @@ function sendJson(res, value, status = 200) {
   res.end(JSON.stringify(value))
 }
 
-async function startOpenCodeMock() {
+function sendHtml(res, value, status = 200) {
+  res.writeHead(status, { 'Content-Type': 'text/html' })
+  res.end(value)
+}
+
+async function startOpenCodeMock({ invalidHealth = false } = {}) {
   const calls = []
   const sockets = new Set()
   const state = {
@@ -39,7 +44,10 @@ async function startOpenCodeMock() {
   }
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1')
-    if (url.pathname === '/global/health') return sendJson(res, { healthy: true, version: '1.18.33' })
+    if (url.pathname === '/global/health') {
+      if (invalidHealth) return sendHtml(res, '<!doctype html><title>Other local service</title>')
+      return sendJson(res, { healthy: true, version: '1.18.33' })
+    }
     if (url.pathname === '/config/providers') return sendJson(res, { providers: [{ id: 'assistant', models: [{ id: 'assistant' }] }] })
     if (url.pathname === '/session' && req.method === 'POST') {
       calls.push({ type: 'create', body: await readJson(req) })
@@ -232,6 +240,68 @@ test('unreachable OpenCode server returns a recovery action instead of waiting f
     assert.equal(body.code, 'server_unreachable')
     assert.equal(body.action, 'start_server')
     assert.match(body.error, /opencode serve/)
+  } finally {
+    await stop(backend)
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test('an unexpected local response reports a port/configuration collision clearly', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'life-os-opencode-wrong-service-'))
+  const mock = await startOpenCodeMock({ invalidHealth: true })
+  const port = await unusedPort()
+  const backend = await startLifeOs({
+    vault: path.join(root, 'brain-content'),
+    work: path.join(root, 'work'),
+    port,
+    env: {
+      AI_RUNTIME: 'opencode',
+      OPENCODE_COMMAND: process.execPath,
+      OPENCODE_MODEL: 'assistant/assistant',
+      OPENCODE_SERVER_URL: mock.url,
+    },
+  })
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/ai/chat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'Привет' }] }),
+    })
+    assert.equal(response.status, 503)
+    const body = await response.json()
+    assert.equal(body.code, 'server_invalid_response')
+    assert.equal(body.action, 'fix_server_configuration')
+    assert.match(body.error, /другой локальный сервис/)
+  } finally {
+    await stop(backend)
+    await mock.close()
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test('server launch refuses an endpoint it cannot bind safely', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'life-os-opencode-launch-config-'))
+  const port = await unusedPort()
+  const backend = await startLifeOs({
+    vault: path.join(root, 'brain-content'),
+    work: path.join(root, 'work'),
+    port,
+    env: {
+      AI_RUNTIME: 'opencode',
+      OPENCODE_COMMAND: process.execPath,
+      OPENCODE_MODEL: 'assistant/assistant',
+      OPENCODE_SERVER_URL: 'https://localhost:4096',
+    },
+  })
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/ai/open`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:5173' },
+      body: JSON.stringify({ action: 'start_opencode_server' }),
+    })
+    assert.equal(response.status, 400)
+    const body = await response.json()
+    assert.equal(body.code, 'server_url_launch_unsupported')
+    assert.equal(body.action, 'fix_server_configuration')
   } finally {
     await stop(backend)
     await fs.rm(root, { recursive: true, force: true })

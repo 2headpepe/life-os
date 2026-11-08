@@ -1400,10 +1400,13 @@ const AI_SYSTEM_PROMPT = 'Ты личный ассистент в Life OS — с
 function openCodeFailure(error, requestId) {
   const code = error?.code || 'opencode_server_error'
   const descriptions = {
-    server_unreachable: 'OpenCode server недоступен. Запусти `opencode serve` в терминале и повтори попытку.',
+    server_unreachable: 'OpenCode server недоступен. Запусти `opencode serve` с адресом из OPENCODE_SERVER_URL и повтори попытку.',
+    server_invalid_response: 'По адресу OpenCode server ответил другой локальный сервис, а не OpenCode. Проверь OPENCODE_SERVER_URL и освободи или измени его порт.',
     server_url_missing: 'Не задан адрес OpenCode server.',
     server_url_invalid: 'Адрес OpenCode server в .env задан некорректно.',
     server_url_not_loopback: 'OpenCode server должен быть доступен только по loopback-адресу.',
+    server_url_port_required: 'Для запуска OpenCode из Life OS укажи в OPENCODE_SERVER_URL фиксированный ненулевой порт.',
+    server_url_launch_unsupported: 'Life OS может открыть `opencode serve` только для HTTP loopback-адреса. HTTPS endpoint запускай и настраивай вручную.',
     model_missing: 'Укажи OPENCODE_MODEL в формате provider/model, например assistant/assistant.',
     model_invalid: 'OPENCODE_MODEL должен иметь формат provider/model.',
     model_not_allowed: 'Для setup и встроенного чата Life OS OPENCODE_MODEL должен быть assistant/assistant.',
@@ -1413,9 +1416,9 @@ function openCodeFailure(error, requestId) {
     session_model_changed: 'Настройки модели изменились. Начни новый чат, чтобы не смешивать контексты.',
     empty_response: 'OpenCode завершил сессию без текстового ответа. Открой эту сессию в терминале для диагностики.',
   }
-  const action = ['server_unreachable', 'server_url_missing', 'server_url_invalid', 'server_url_not_loopback'].includes(code)
+  const action = code === 'server_unreachable'
     ? 'start_server'
-    : 'open_terminal'
+    : (code.startsWith('server_') ? 'fix_server_configuration' : 'open_terminal')
   return {
     error: `${descriptions[code] || 'OpenCode не смог обработать сессию.'} Код диагностики: ${requestId}`,
     requestId,
@@ -1426,6 +1429,7 @@ function openCodeFailure(error, requestId) {
 
 function openCodeStatusFor(error) {
   if (['messages_missing', 'prompt_missing', 'session_invalid'].includes(error?.code)) return 400
+  if (['server_url_missing', 'server_url_invalid', 'server_url_not_loopback', 'server_url_port_required', 'server_url_launch_unsupported'].includes(error?.code)) return 400
   if (error?.code === 'session_unknown') return 404
   return 503
 }
@@ -1625,6 +1629,7 @@ app.post('/api/ai/sessions/:sessionId/open', requireLifeOsUiOrigin, async (req, 
 })
 
 app.post('/api/ai/open', requireLifeOsUiOrigin, async (req, res) => {
+  const requestId = randomUUID()
   const { prompt, action } = req.body || {}
   const runtime = aiRuntimeConfig()
   if (runtime.runtime === 'none') return res.status(503).json({ error: 'AI is disabled. Choose codex or opencode in .env.' })
@@ -1637,6 +1642,9 @@ app.post('/api/ai/open', requireLifeOsUiOrigin, async (req, res) => {
     await openAiTerminal({ commandLine, prompt })
     res.json({ ok: true, ...(action ? { action } : {}) })
   } catch (e) {
+    if (e instanceof OpenCodeServerError || e instanceof LifeOsOpenCodeSessionError) {
+      return res.status(openCodeStatusFor(e)).json(openCodeFailure(e, requestId))
+    }
     res.status(500).json({ error: e.message })
   }
 })
