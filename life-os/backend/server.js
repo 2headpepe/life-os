@@ -1084,10 +1084,11 @@ async function writeTree(data) {
 }
 
 // Setup reset is intentionally a server-side, two-step operation.  Opening
-// /setup never mutates anything: a short-lived token and the exact phrase are
-// both required before personal content is removed.
+// /setup never mutates anything: the UI must first show the preview and the
+// user must type the exact phrase before personal content is removed. Do not
+// keep the preview in server memory: backend restarts must not turn an already
+// acknowledged destructive action into an opaque failure.
 const SETUP_RESET_PHRASE = 'СТЕРЕТЬ ВСЕ ДАННЫЕ'
-const setupResetTokens = new Map()
 
 function setupResetSummary() {
   return [
@@ -1097,16 +1098,11 @@ function setupResetSummary() {
 }
 
 app.post('/api/setup/reset-preview', requireLifeOsUiOrigin, async (req, res) => {
-  const token = randomUUID()
-  setupResetTokens.set(token, Date.now() + 10 * 60 * 1000)
-  res.json({ token, expires_in_seconds: 600, deletes: setupResetSummary(), preserves: ['тема интерфейса', 'настройки и подключение OpenCode'] })
+  res.json({ deletes: setupResetSummary(), preserves: ['тема интерфейса', 'настройки и подключение OpenCode'] })
 })
 
 app.post('/api/setup/reset', requireLifeOsUiOrigin, async (req, res) => {
-  const token = String(req.body?.token || '')
-  const expiresAt = setupResetTokens.get(token)
-  setupResetTokens.delete(token)
-  if (!expiresAt || expiresAt < Date.now() || req.body?.confirmation !== SETUP_RESET_PHRASE) {
+  if (req.body?.confirmation !== SETUP_RESET_PHRASE) {
     return res.status(400).json({ error: 'explicit reset confirmation required' })
   }
   try {

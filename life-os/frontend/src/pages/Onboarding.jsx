@@ -610,8 +610,8 @@ export default function Onboarding({ onDone }) {
     if (!resetPreview || resetConfirmation !== 'СТЕРЕТЬ ВСЕ ДАННЫЕ') return
     setLoading(true)
     try {
-      const response = await fetch('/api/setup/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: resetPreview.token, confirmation: resetConfirmation }) })
-      if (!response.ok) throw new Error('Подтверждение устарело. Начни сброс заново.')
+      const response = await fetch('/api/setup/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation: resetConfirmation }) })
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Не удалось удалить данные.')
       setResetPreview(null); setResetConfirmation(''); setStep(0)
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
