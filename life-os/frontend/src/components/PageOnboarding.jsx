@@ -1,237 +1,47 @@
 import { useState } from 'react'
-import { X, Terminal } from 'lucide-react'
-import { openInConsole } from '../utils/openInConsole'
+import { Compass, X } from 'lucide-react'
+import { useTheme } from '../context/ThemeContext'
 
-// ─── Per-page config ──────────────────────────────────────────────
-
+// Appears once, in the context of the route, without interrupting the task.
 const CONFIGS = {
-  today: {
-    emoji: '🌅',
-    title: 'Сегодня — твой план дня',
-    description: 'Здесь собраны задачи с дедлайном на сегодня и статус привычек. Одним взглядом видно что важно.',
-    tips: [
-      'Задачи появляются автоматически из Дерева — по дедлайну',
-      'Отметь выполненное — статус обновится в дереве',
-      'Привычки внизу: быстро отметь что сделал сегодня',
-    ],
-    cliPrompt: `Ты помощник в системе Life OS. Пользователь открыл раздел "Сегодня" — его план дня.
-Прочитай brain/content/tree/nodes.json и brain/content/habits/definitions.json.
-Объясни как работает страница: откуда берутся задачи, как отмечать выполненные, как связана с привычками.
-Покажи что запланировано на сегодня. Спроси есть ли задачи которые хочет добавить на сегодня или ближайшие дни.`,
-  },
-
-  tree: {
-    emoji: '🌳',
-    title: 'Дерево целей',
-    description: 'Все цели и задачи по сферам жизни. Большие цели разбиваются на конкретные шаги.',
-    tips: [
-      'Кликни по цели чтобы раскрыть задачи внутри',
-      'Нажми + рядом с любым узлом чтобы добавить подзадачу',
-      'Переводи задачи в done — цель начнёт закрываться',
-    ],
-    cliPrompt: `Ты помощник в системе Life OS. Пользователь открыл раздел "Дерево целей".
-Прочитай brain/content/tree/nodes.json.
-Покажи структуру: сферы → цели → задачи. Объясни как создавать, как двигать в done, как связано с разделом "Сегодня".
-Спроси есть ли цели или задачи которые хочет добавить или уточнить прямо сейчас.`,
-  },
-
-  habits: {
-    emoji: '🔁',
-    title: 'Привычки',
-    description: 'Ежедневный трекинг. Отмечай каждый день — статистика покажет реальную динамику.',
-    tips: [
-      'Заходи вечером и отмечай что сделал за день',
-      'График показывает streak и процент выполнения',
-      'Добавляй и редактируй привычки через кнопку ⚙️',
-    ],
-    cliPrompt: `Ты помощник в системе Life OS. Пользователь открыл раздел "Привычки".
-Прочитай brain/content/habits/definitions.json.
-Покажи текущие привычки, объясни как отмечать, как читать статистику.
-Спроси нет ли привычек которые хочет добавить, изменить или убрать. Внеси изменения если попросит.`,
-  },
-
-  inbox: {
-    emoji: '📥',
-    title: 'Входящие',
-    description: 'Место для мыслей, задач и идей которые ещё не разобраны. Захвати сейчас — разбери потом.',
-    tips: [
-      '⌘K — мгновенный захват из любого места сайта',
-      'Разбирай инбокс раз в неделю: каждому элементу своё место',
-      'Роутируй в дерево, списки или удаляй — держи инбокс чистым',
-    ],
-    cliPrompt: `Ты помощник в системе Life OS. Пользователь открыл раздел "Входящие" (инбокс).
-Прочитай brain/content/inbox/current.json.
-Покажи что сейчас в инбоксе. Объясни принцип: захвати сначала, разбери потом.
-Помоги разобрать текущие элементы — каждый роутируй в нужное место (дерево, список, удали).`,
-  },
-
-  feed: {
-    emoji: '✨',
-    title: 'Лента',
-    description: 'Умные карточки на основе твоих данных: что сделать, что вспомнить, что давно не открывал.',
-    tips: [
-      'Карточки генерируются по твоему дереву, привычкам и инсайтам',
-      'Лайкай и скрывай — это обратная связь системе',
-      'Заходи раз в день чтобы не пропустить важное',
-    ],
-    cliPrompt: `Ты помощник в системе Life OS. Пользователь открыл раздел "Лента".
-Прочитай brain/content/tree/nodes.json и brain/content/habits/definitions.json.
-Объясни как работает умная лента и откуда берутся карточки.
-На основе данных пользователя скажи на что сегодня стоит обратить внимание.`,
-  },
-
-  lists: {
-    emoji: '📚',
-    title: 'Списки',
-    description: 'Фильмы, книги, игры, сериалы, желания — всё что хочешь посмотреть, прочитать или сделать.',
-    tips: [
-      'Добавляй через кнопку + или ⌘K → выбери тип',
-      'Фильтруй по статусу: хочу / смотрю / готово',
-      'Списки всплывают в ленте как рекомендации',
-    ],
-    cliPrompt: `Ты помощник в системе Life OS. Пользователь открыл раздел "Списки".
-Объясни какие типы списков есть (фильмы, книги, игры, сериалы, желания, рестораны, путешествия).
-Спроси что хотел бы добавить прямо сейчас — и добавь через brain/content/lists/.`,
-  },
-
-  memories: {
-    emoji: '📸',
-    title: 'Воспоминания',
-    description: 'Фиксируй важные моменты: события, мысли, фото. Приятно перечитывать через год.',
-    tips: [
-      'Добавляй запись в конце дня или после важного момента',
-      'Прикрепляй фото — хранятся локально',
-      'Воспоминания всплывают в ленте — "год назад"',
-    ],
-    cliPrompt: `Ты помощник в системе Life OS. Пользователь открыл раздел "Воспоминания".
-Объясни как пользоваться: когда добавлять, как искать по дате, как прикреплять фото.
-Спроси есть ли что-то из последних дней что хотел бы зафиксировать. Помоги создать первую запись если захочет.`,
-  },
-
-  insights: {
-    emoji: '💡',
-    title: 'Инсайты',
-    description: 'Наблюдения, паттерны, идеи — мысли которые стоит не потерять и переосмыслить потом.',
-    tips: [
-      'Добавляй через ⌘K → Инсайт или кнопку +',
-      'Инсайты всплывают в ленте и просят вернуться к ним',
-      'Помечай тегами — легче находить нужное потом',
-    ],
-    cliPrompt: `Ты помощник в системе Life OS. Пользователь открыл раздел "Инсайты".
-Прочитай brain/content/insights/index.json.
-Объясни что такое инсайт в контексте системы: наблюдение, паттерн, идея — то что стоит переосмыслить.
-Покажи существующие инсайты если есть. Спроси есть ли что-то что хочет зафиксировать прямо сейчас.`,
-  },
-
-  calendar: {
-    emoji: '📅',
-    title: 'Календарь',
-    description: 'События и задачи с датами на timeline. Задачи из дерева появляются автоматически по дедлайну.',
-    tips: [
-      'Задачи с датой из дерева целей видны здесь автоматически',
-      'Добавляй конкретные события с датой и временем',
-      'Можно подключить Google Calendar в настройках',
-    ],
-    cliPrompt: `Ты помощник в системе Life OS. Пользователь открыл раздел "Календарь".
-Прочитай brain/content/tree/nodes.json — посмотри какие задачи имеют дедлайны.
-Объясни как работает календарь и как добавлять события.
-Спроси есть ли что-то что хочет запланировать на ближайшее время — помоги добавить.`,
-  },
+  feed: { title: 'Лента — контекст на сегодня', text: 'Здесь появляются сигналы из задач, привычек и заметок. Карточки можно сохранить или скрыть.', action: 'Посмотреть ленту' },
+  today: { title: 'Сегодня — один следующий шаг', text: 'Здесь задачи на сегодня и ритм привычек. Если пока пусто — начни с одной задачи или привычки.', action: 'Начать день' },
+  goals: { title: 'Цели строятся из сфер', text: 'Добавляй широкие жизненные сферы, затем цели и конкретные шаги внутри них. Лист без детей — это задача.', action: 'Понятно' },
+  pool: { title: 'Задачи — рабочий список', text: 'Здесь активные и запланированные шаги. Если список пуст, создай задачу через «Захват» или в разделе «Цели».', action: 'Понятно' },
+  habits: { title: 'Привычки — ежедневный ритм', text: 'Отмечай привычки в течение дня. Пока их нет, добавь первую вручную или вернись в setup за предложениями.', action: 'Понятно' },
+  inbox: { title: 'Входящие — чтобы не держать всё в голове', text: 'Сохраняй сюда мысли и мелкие дела, а разбирать можно позже. Быстрый захват доступен по ⌘K.', action: 'Понятно' },
+  calendar: { title: 'Календарь — только дела с датой', text: 'Задачи из целей появятся здесь, когда у них будет дата. Это помогает увидеть ближайшие дни без лишнего шума.', action: 'Понятно' },
+  lists: { title: 'Списки для того, что хочется', text: 'Книги, фильмы, места и идеи живут здесь, пока не стали конкретным планом.', action: 'Понятно' },
+  people: { title: 'Люди', text: 'Здесь появятся заметки о людях и договорённостях. Пустой раздел не требует настройки — его можно заполнить позже.', action: 'Понятно' },
+  insights: { title: 'Инсайты — мысли, к которым стоит вернуться', text: 'Фиксируй наблюдения и идеи через быстрый захват. Теги помогут найти их позже.', action: 'Понятно' },
+  memories: { title: 'Воспоминания', text: 'Сохраняй важные моменты дня и фотографии. Позже они будут возвращаться в ленте в нужный момент.', action: 'Понятно' },
 }
 
-// ─── Component ────────────────────────────────────────────────────
-
-const STORAGE_KEY = (pageId) => `life-os-onboarded-${pageId}`
+export const onboardingStorageKey = pageId => `life-os:onboarding:v2:${pageId}:seen`
 
 export default function PageOnboarding({ pageId }) {
   const config = CONFIGS[pageId]
-  const [visible, setVisible] = useState(() => !localStorage.getItem(STORAGE_KEY(pageId)))
-  const [opening, setOpening] = useState(false)
-
-  if (!config || !visible) return null
+  const { colorScheme } = useTheme()
+  const [visible, setVisible] = useState(() => Boolean(config) && !localStorage.getItem(onboardingStorageKey(pageId)))
 
   const dismiss = () => {
-    localStorage.setItem(STORAGE_KEY(pageId), '1')
+    localStorage.setItem(onboardingStorageKey(pageId), '1')
     setVisible(false)
   }
 
-  const handleOpenConsole = async () => {
-    setOpening(true)
-    try {
-      await openInConsole(config.cliPrompt)
-      dismiss()
-    } finally {
-      setOpening(false)
-    }
-  }
+  if (!config || !visible) return null
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
-      onClick={dismiss}
-    >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" />
-
-      {/* Card */}
-      <div
-        className="relative w-full max-w-sm bg-white dark:bg-gray-900 rounded-2xl shadow-2xl overflow-hidden"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Top accent stripe */}
-        <div className="h-1 bg-gradient-to-r from-blue-400 via-indigo-500 to-violet-500" />
-
-        {/* Close */}
-        <button
-          onClick={dismiss}
-          className="absolute top-4 right-4 w-7 h-7 flex items-center justify-center rounded-full text-gray-300 hover:text-gray-500 dark:text-gray-600 dark:hover:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-        >
-          <X size={15} />
-        </button>
-
-        <div className="px-6 pt-6 pb-5 space-y-5">
-          {/* Emoji + title + description */}
-          <div className="space-y-2 pr-6">
-            <div className="text-3xl leading-none">{config.emoji}</div>
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 leading-tight">
-              {config.title}
-            </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
-              {config.description}
-            </p>
-          </div>
-
-          {/* Tips */}
-          <div className="space-y-2.5 bg-gray-50 dark:bg-gray-800/60 rounded-xl p-4">
-            {config.tips.map((tip, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 text-[10px] flex items-center justify-center font-bold mt-0.5">
-                  {i + 1}
-                </span>
-                <span className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">{tip}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Actions */}
-          <div className="space-y-2">
-            <button
-              onClick={handleOpenConsole}
-              disabled={opening}
-              className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
-            >
-              <Terminal size={14} />
-              {opening ? 'Открываю…' : 'Открыть в консоли'}
-            </button>
-            <button
-              onClick={dismiss}
-              className="w-full text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-400 dark:hover:text-gray-300 py-2 transition-colors"
-            >
-              Понятно, начну сам →
-            </button>
-          </div>
+    <aside className={`fixed bottom-24 right-6 z-30 w-[min(23rem,calc(100vw-3rem))] rounded-2xl border p-4 shadow-xl ${colorScheme === 'dark' ? 'border-slate-200 bg-white text-slate-950 shadow-black/30' : 'border-slate-700 bg-slate-950 text-white shadow-slate-950/30'}`} aria-label={`Подсказка: ${config.title}`}>
+      <button type="button" onClick={dismiss} className={`absolute right-3 top-3 rounded-md p-1 ${colorScheme === 'dark' ? 'text-slate-500 hover:bg-slate-100 hover:text-slate-950' : 'text-slate-400 hover:bg-white/15 hover:text-white'}`} aria-label="Закрыть подсказку"><X size={15} /></button>
+      <div className="flex gap-3 pr-6">
+        <span className={`mt-0.5 flex h-7 w-7 flex-none items-center justify-center rounded-lg ring-1 ${colorScheme === 'dark' ? 'bg-slate-900 text-white ring-slate-300' : 'bg-white/15 text-white ring-white/30'}`}><Compass size={15} /></span>
+        <div>
+          <p className="text-sm font-semibold">{config.title}</p>
+          <p className={`mt-1 text-xs leading-5 ${colorScheme === 'dark' ? 'text-slate-600' : 'text-slate-200'}`}>{config.text}</p>
+          <button type="button" onClick={dismiss} className={`mt-3 text-xs font-semibold underline underline-offset-4 ${colorScheme === 'dark' ? 'text-slate-800 decoration-slate-400 hover:decoration-slate-700' : 'text-white decoration-white/50 hover:decoration-white'}`}>{config.action} →</button>
         </div>
       </div>
-    </div>
+    </aside>
   )
 }

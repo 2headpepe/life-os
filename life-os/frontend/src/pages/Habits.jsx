@@ -571,6 +571,7 @@ export default function Habits() {
 
           {/* Habits grouped by category */}
           <div className="space-y-2">
+            {defs.length === 0 && <div className="rounded-2xl border border-dashed border-gray-200 px-5 py-8 text-center dark:border-gray-700"><p className="text-sm font-medium text-gray-700 dark:text-gray-200">Привычек пока нет</p><p className="mt-1 text-xs text-gray-400">Добавь первую вручную в настройках привычек или вернись в setup за предложениями.</p></div>}
             {/* Foundation section — always at top */}
             {(() => {
               const foundationHabits = defs.filter(h => h.foundation)

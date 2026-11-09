@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { SpheresProvider } from './SpheresContext'
@@ -25,7 +25,14 @@ import Onboarding from './pages/Onboarding'
 import AiReviews from './pages/AiReviews'
 import NotificationBell from './components/NotificationBell'
 import ThemeSwitcher from './components/ui/ThemeSwitcher'
+import PageOnboarding, { onboardingStorageKey } from './components/PageOnboarding'
 import { tree as treeApi } from './api'
+
+const ONBOARDING_PAGES = {
+  '/': 'feed', '/today': 'today', '/goals': 'goals', '/pool': 'pool', '/habits': 'habits',
+  '/inbox': 'inbox', '/calendar': 'calendar', '/lists': 'lists', '/people': 'people',
+  '/insights': 'insights', '/memories': 'memories',
+}
 
 function AppContent() {
   const navigate = useNavigate()
@@ -37,6 +44,17 @@ function AppContent() {
   const [aiContextMessage, setAiContextMessage] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [sphere, setSphere] = useState(null)
+  const previousOnboardingPage = useRef(null)
+
+  // A hint remains readable for the whole first visit. Only an actual route
+  // change marks it seen; this avoids React development effect cleanups
+  // dismissing it immediately.
+  useEffect(() => {
+    const current = ONBOARDING_PAGES[location.pathname] || null
+    const previous = previousOnboardingPage.current
+    if (previous && previous !== current) localStorage.setItem(onboardingStorageKey(previous), '1')
+    previousOnboardingPage.current = current
+  }, [location.pathname])
 
   // Check if onboarding needed (skip if already on /setup)
   useEffect(() => {
@@ -125,6 +143,7 @@ function AppContent() {
         onPrefillUsed={() => setAiPrefill('')}
       />
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <PageOnboarding key={location.pathname} pageId={ONBOARDING_PAGES[location.pathname]} />
 
       <button
         onClick={() => setCaptureOpen(true)}

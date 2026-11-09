@@ -272,7 +272,10 @@ export default function Pool({ sphere: rootFilter }) {
       ) : view === 'kanban' ? (
         <KanbanBoard items={byDomain} onUpdate={load} />
       ) : active.length === 0 ? (
-        <p className="text-sm text-gray-400">Нет задач</p>
+        <div className="rounded-2xl border border-dashed border-gray-200 px-5 py-8 text-center dark:border-gray-700">
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-200">Задач пока нет</p>
+          <p className="mt-1 text-xs text-gray-400">Создай первый шаг в «Целях» или через быстрый захват ⌘K.</p>
+        </div>
       ) : (
         <>{viewState.context === 'delivery' && viewState.sort === 'suggested' && <div className="mb-4 rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-xs text-cyan-900 dark:border-cyan-900 dark:bg-cyan-950/30 dark:text-cyan-100"><b>Рекомендованный порядок</b><p className="mt-1">Это read-only подсказка: порядок объясняется готовностью, handoff и совпадением с запросом. Она не выбирает и не изменяет задачи.</p></div>}{viewState.task && <div className="mb-4 text-xs text-gray-500">Текущая задача сессии: {active.find(node => node.id === viewState.task)?.title || 'не входит в эту выборку'}. В URL может быть только одна такая задача.</div>}{renderGroups()}</>
       )}
