@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Check, X, Target, Shield } from 'lucide-react'
 import { habits, tree as treeApi } from '../api'
 import { useRecoveryMode } from '../context/RecoveryModeContext'
 import { computeHabitScore, habitIsDone, inTimeWindow } from '../utils/habitScoring'
 import { HabitDynamics } from './Stats'
+import { directEntityId, entityPath } from '../utils/entityLinks'
 
 export { computeHabitScore, habitIsDone, inTimeWindow } from '../utils/habitScoring'
 
@@ -333,6 +334,8 @@ function buildDefs(categories, todayStr) {
 // ─── Main ──────────────────────────────────────────────────────────
 
 export default function Habits() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const todayStr = new Date().toISOString().slice(0, 10)
   const [searchParams, setSearchParams] = useSearchParams()
   const initialTab = searchParams.get('tab') === 'dynamics' ? 'dynamics' : 'track'
@@ -383,6 +386,7 @@ export default function Habits() {
   const [pauseDate, setPauseDate] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
   const [addForm, setAddForm] = useState({ label: '', categoryId: '', kind: 'toggle', target: '' })
+  const habitId = directEntityId(location.pathname, 'habits')
 
   const applyDefs = (categories) => {
     setRawCategories(categories)
@@ -426,6 +430,19 @@ export default function Habits() {
       setWeekScores(scoresMap)
     })
   }, [histWeekStart, defs])
+
+  useEffect(() => {
+    const habit = defs.find(candidate => candidate.id === habitId)
+    if (!habit) return
+    setTab('track')
+    setCollapsedCats(previous => {
+      const next = new Set(previous)
+      next.delete(habit.category)
+      return next
+    })
+    setRecoveryExpanded(previous => new Set(previous).add(habit.category))
+    requestAnimationFrame(() => document.querySelector(`[data-entity-id="${CSS.escape(habitId)}"]`)?.scrollIntoView({ block: 'center' }))
+  }, [defs, habitId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveDefs = async (updated) => {
     await habits.saveDefinitions({ categories: updated })
@@ -587,10 +604,11 @@ export default function Habits() {
                   {foundationHabits.map((h, idx) => (
                     <div
                       key={h.id}
-                      className={`flex items-center gap-4 px-4 py-3 ${idx < foundationHabits.length - 1 ? 'border-b border-gray-50 dark:border-gray-800/50' : ''}`}
+                      data-entity-id={h.id}
+                      className={`flex items-center gap-4 px-4 py-3 ${h.id === habitId ? 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500' : ''} ${idx < foundationHabits.length - 1 ? 'border-b border-gray-50 dark:border-gray-800/50' : ''}`}
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm text-gray-800 dark:text-gray-200 font-medium">{h.label}</div>
+                        <button type="button" onClick={() => navigate(entityPath.habit(h.id))} className="text-left text-sm text-gray-800 dark:text-gray-200 font-medium hover:text-blue-600 dark:hover:text-blue-400">{h.label}</button>
                         {h.detail && <div className="text-xs text-gray-400 mt-0.5">{h.detail}</div>}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
@@ -628,11 +646,12 @@ export default function Habits() {
                 {!collapsed && nonFoundationHabits.map((h, idx) => (
                   <div
                     key={h.id}
-                    className={`flex items-center gap-4 px-4 py-3
+                    data-entity-id={h.id}
+                    className={`flex items-center gap-4 px-4 py-3 ${h.id === habitId ? 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500' : ''}
                       ${idx < nonFoundationHabits.length - 1 ? 'border-b border-gray-50 dark:border-gray-800/50' : ''}`}
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm text-gray-800 dark:text-gray-200 font-medium">{h.label}</div>
+                      <button type="button" onClick={() => navigate(entityPath.habit(h.id))} className="text-left text-sm text-gray-800 dark:text-gray-200 font-medium hover:text-blue-600 dark:hover:text-blue-400">{h.label}</button>
                       {h.detail && <div className="text-xs text-gray-400 mt-0.5">{h.detail}</div>}
                       {pauseTarget === h.id && (
                         <div className="flex items-center gap-2 mt-2">

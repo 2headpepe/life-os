@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, Plus, X, Loader2, Trash2, ImageIcon, CalendarDays } from 'lucide-react'
 import { memories as memoriesApi } from '../api'
+import { directEntityId, entityPath } from '../utils/entityLinks'
 
 const MONTHS = ['января','февраля','марта','апреля','мая','июня',
                 'июля','августа','сентября','октября','ноября','декабря']
@@ -71,7 +73,7 @@ function MediaThumbnail({ filename }) {
 
 /* ─── Memory entry card ──────────────────────────────────────────── */
 
-function MemoryEntry({ entry, onUpdate, onDelete }) {
+function MemoryEntry({ entry, onUpdate, onDelete, onOpen, selected }) {
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(entry.text)
 
@@ -95,7 +97,7 @@ function MemoryEntry({ entry, onUpdate, onDelete }) {
   }
 
   return (
-    <div className="memory-entry card px-4 py-3">
+    <div data-entity-id={entry.id} onClick={() => onOpen(entry.id)} className={`memory-entry card px-4 py-3 cursor-pointer ${selected ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''}`}>
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           {editing ? (
@@ -112,7 +114,7 @@ function MemoryEntry({ entry, onUpdate, onDelete }) {
           ) : entry.text ? (
             <p
               className="text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap cursor-text leading-relaxed"
-              onDoubleClick={() => setEditing(true)}
+              onDoubleClick={e => { e.stopPropagation(); setEditing(true) }}
             >
               {entry.text}
             </p>
@@ -120,14 +122,14 @@ function MemoryEntry({ entry, onUpdate, onDelete }) {
         </div>
         <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
-            onClick={() => setEditing(true)}
+            onClick={e => { e.stopPropagation(); setEditing(true) }}
             className="p-1 text-gray-300 hover:text-gray-500 dark:hover:text-gray-400 rounded transition-colors"
             title="Редактировать"
           >
             <span className="text-xs">ред.</span>
           </button>
           <button
-            onClick={handleDelete}
+            onClick={e => { e.stopPropagation(); handleDelete() }}
             className="p-1 text-gray-300 hover:text-red-500 rounded transition-colors"
             title="Удалить"
           >
@@ -271,11 +273,14 @@ function AddForm({ date, onAdded, onClose }) {
 /* ─── Main page ───────────────────────────────────────────────────── */
 
 export default function Memories() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState('all') // 'all' | 'day'
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [adding, setAdding] = useState(false)
+  const targetId = directEntityId(location.pathname, 'memories')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -285,6 +290,10 @@ export default function Memories() {
   }, [view, date])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => {
+    if (!targetId || !entries.some(entry => entry.id === targetId)) return
+    document.querySelector(`[data-entity-id="${CSS.escape(targetId)}"]`)?.scrollIntoView({ block: 'center' })
+  }, [entries, targetId])
 
   const handleAdded = () => {
     setAdding(false)
@@ -363,6 +372,8 @@ export default function Memories() {
       {/* Content */}
       {loading ? (
         <p className="text-sm text-gray-400">Загрузка...</p>
+      ) : targetId && !entries.some(entry => entry.id === targetId) ? (
+        <p className="text-sm text-amber-600 dark:text-amber-300">Воспоминание не найдено.</p>
       ) : entries.length === 0 ? (
         <div className="text-center py-16">
           <CalendarDays size={40} className="mx-auto text-gray-200 dark:text-gray-700 mb-3" />
@@ -387,7 +398,7 @@ export default function Memories() {
                 </div>
                 <div className="space-y-2">
                   {dayEntries.map(entry => (
-                    <MemoryEntry key={entry.id} entry={entry} onUpdate={load} onDelete={load} />
+                    <MemoryEntry key={entry.id} entry={entry} onUpdate={load} onDelete={load} onOpen={id => navigate(entityPath.memory(id))} selected={entry.id === targetId} />
                   ))}
                 </div>
               </div>
@@ -396,7 +407,7 @@ export default function Memories() {
       ) : (
         <div className="space-y-2">
           {entries.map(entry => (
-            <MemoryEntry key={entry.id} entry={entry} onUpdate={load} onDelete={load} />
+            <MemoryEntry key={entry.id} entry={entry} onUpdate={load} onDelete={load} onOpen={id => navigate(entityPath.memory(id))} selected={entry.id === targetId} />
           ))}
         </div>
       )}

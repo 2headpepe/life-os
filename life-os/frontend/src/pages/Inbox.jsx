@@ -1,14 +1,18 @@
 import { useState, useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { X, ChevronDown, ChevronRight } from 'lucide-react'
 import { inbox as inboxApi, tree as treeApi } from '../api'
 import { useSpheres } from '../SpheresContext'
+import { directEntityId, entityPath } from '../utils/entityLinks'
 
-function InboxItem({ item, onDelete, onCreateTask }) {
+function InboxItem({ item, onDelete, onCreateTask, onOpen, selected }) {
   const { SPHERE_ORDER, SPHERE_LABELS } = useSpheres()
   const [expanded, setExpanded] = useState(false)
   const [sphere, setSphere] = useState('home')
   const [converting, setConverting] = useState(false)
   const [deleting, setDeleting] = useState(false)
+
+  useEffect(() => { if (selected) setExpanded(true) }, [selected])
 
   const handleDelete = async (e) => {
     e.stopPropagation()
@@ -30,10 +34,10 @@ function InboxItem({ item, onDelete, onCreateTask }) {
   }
 
   return (
-    <article className="inbox-item card overflow-hidden">
+    <article data-entity-id={item.id} className={`inbox-item card overflow-hidden ${selected ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''}`}>
       <div
         className="inbox-item-summary px-4 py-3 cursor-pointer hover:bg-gray-50/50 dark:hover:bg-gray-900/30 transition-colors"
-        onClick={() => setExpanded(v => !v)}
+        onClick={() => { onOpen(item.id); setExpanded(true) }}
       >
         <div className="flex items-start justify-between gap-3">
           <p className="text-sm text-gray-800 dark:text-gray-200 flex-1">{item.text}</p>
@@ -101,8 +105,11 @@ function InboxItem({ item, onDelete, onCreateTask }) {
 }
 
 export default function Inbox() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
+  const targetId = directEntityId(location.pathname, 'inbox')
 
   const load = async () => {
     const data = await inboxApi.all()
@@ -111,6 +118,10 @@ export default function Inbox() {
   }
 
   useEffect(() => { load() }, [])
+  useEffect(() => {
+    if (!targetId || !items.some(item => item.id === targetId)) return
+    document.querySelector(`[data-entity-id="${CSS.escape(targetId)}"]`)?.scrollIntoView({ block: 'center' })
+  }, [items, targetId])
 
   return (
     <main className="inbox-page max-w-2xl mx-auto py-8 px-6">
@@ -125,6 +136,8 @@ export default function Inbox() {
 
       {loading ? (
         <p className="text-sm text-gray-400">Загрузка...</p>
+      ) : targetId && !items.some(item => item.id === targetId) ? (
+        <div className="inbox-empty text-center py-12"><p className="text-gray-400 text-sm">Запись не найдена</p></div>
       ) : items.length === 0 ? (
         <div className="inbox-empty text-center py-12">
           <p className="text-gray-400 text-sm">Входящие пусты</p>
@@ -133,7 +146,7 @@ export default function Inbox() {
       ) : (
         <div className="inbox-list space-y-2">
           {items.map(item => (
-            <InboxItem key={item.id} item={item} onDelete={load} onCreateTask={load} />
+            <InboxItem key={item.id} item={item} onDelete={load} onCreateTask={load} onOpen={id => navigate(entityPath.inbox(id))} selected={item.id === targetId} />
           ))}
         </div>
       )}

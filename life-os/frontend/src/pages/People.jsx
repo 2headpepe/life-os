@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { entityPath, routeSegments } from '../utils/entityLinks'
 
 const api = (path) => fetch(`/api${path}`).then(r => r.json())
 
@@ -69,15 +71,18 @@ function PersonContent({ content }) {
 }
 
 export default function People() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [people, setPeople] = useState([])
   const [selected, setSelected] = useState(null)
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(false)
+  const personId = routeSegments(location.pathname, 'people')?.[0] || null
 
   useEffect(() => { api('/people').then(setPeople) }, [])
 
-  const select = async (person) => {
-    if (selected?.id === person.id) { setSelected(null); setDetail(null); return }
+  const select = async (person, { toggle = true } = {}) => {
+    if (toggle && selected?.id === person.id) { setSelected(null); setDetail(null); navigate('/people'); return }
     setSelected(person)
     setDetail(null)
     setLoading(true)
@@ -86,6 +91,11 @@ export default function People() {
     setLoading(false)
   }
 
+  useEffect(() => {
+    const person = people.find(candidate => candidate.id === personId)
+    if (person && selected?.id !== person.id) select(person, { toggle: false })
+  }, [people, personId]) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="people-page h-full flex overflow-hidden">
       <div className="people-directory w-52 flex-shrink-0 border-r border-gray-100 dark:border-gray-800 overflow-y-auto py-4">
@@ -93,7 +103,7 @@ export default function People() {
         {people.map(p => (
           <button
             key={p.id}
-            onClick={() => select(p)}
+            onClick={() => { navigate(entityPath.person(p.id)); select(p, { toggle: false }) }}
             className={`people-person w-full text-left px-3 py-2 text-sm transition-colors ${
               selected?.id === p.id
                 ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-medium'
@@ -106,6 +116,7 @@ export default function People() {
       </div>
 
       <div className="people-detail-area flex-1 overflow-y-auto">
+        {personId && !loading && people.length > 0 && !people.some(person => person.id === personId) && <div className="p-8 text-sm text-amber-700 dark:text-amber-300">Человек не найден.</div>}
         {!selected && (
           <div className="people-empty flex items-center justify-center h-full text-gray-400 text-sm"><div><span>◌</span><strong>Выбери человека</strong><p>Контакты и важные детали собраны в спокойном личном пространстве.</p></div></div>
         )}

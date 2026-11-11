@@ -105,17 +105,17 @@ function AppContent() {
           <Route path="/"         element={<Feed />} />
           <Route path="/today"    element={<Today />} />
           <Route path="/pool"     element={<Pool sphere={sphere} />} />
-          <Route path="/goals"    element={<Tree />} />
-          <Route path="/habits"   element={<Habits />} />
-          <Route path="/lists"    element={<Lists />} />
-          <Route path="/calendar" element={<Calendar />} />
-          <Route path="/inbox"    element={<Inbox />} />
+          <Route path="/goals/*"  element={<Tree />} />
+          <Route path="/habits/*" element={<Habits />} />
+          <Route path="/lists/*"  element={<Lists />} />
+          <Route path="/calendar/*" element={<Calendar />} />
+          <Route path="/inbox/*"  element={<Inbox />} />
           <Route path="/stats"    element={<Stats />} />
-          <Route path="/people"   element={<People />} />
-          <Route path="/insights" element={<Insights />} />
-          <Route path="/memories" element={<Memories />} />
-          <Route path="/news"     element={<News />} />
-          <Route path="/ai-reviews" element={<AiReviews />} />
+          <Route path="/people/*" element={<People />} />
+          <Route path="/insights/*" element={<Insights />} />
+          <Route path="/memories/*" element={<Memories />} />
+          <Route path="/news/*"   element={<News />} />
+          <Route path="/ai-reviews/*" element={<AiReviews />} />
         </Routes>
       </main>
 

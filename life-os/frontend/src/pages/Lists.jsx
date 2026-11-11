@@ -1,13 +1,17 @@
 import { useState, useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Star, Check, X } from 'lucide-react'
 import { lists as listsApi, people as peopleApi, tree as treeApi } from '../api'
+import { entityPath, routeSegments } from '../utils/entityLinks'
 
 const STATUS_LABELS = { want: 'Хочу', in_progress: 'Смотрю', done: 'Готово', dropped: 'Брошено' }
 
-function ListItem({ item, listId, onUpdate, highlighted, people }) {
+function ListItem({ item, listId, onUpdate, highlighted, people, selected, onOpen }) {
   const [expanded, setExpanded] = useState(false)
   const [rating, setRating] = useState(item.rating || 0)
   const [showPeoplePicker, setShowPeoplePicker] = useState(false)
+
+  useEffect(() => { if (selected) setExpanded(true) }, [selected])
 
   const markDone = async (e) => {
     e.stopPropagation()
@@ -51,8 +55,9 @@ function ListItem({ item, listId, onUpdate, highlighted, people }) {
 
   return (
     <div
-      className={`lists-item card p-4 cursor-pointer transition-all ${highlighted ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''} ${item.status !== 'want' ? 'opacity-60' : ''}`}
-      onClick={() => setExpanded(v => !v)}
+      data-entity-id={item.id}
+      className={`lists-item card p-4 cursor-pointer transition-all ${(highlighted || selected) ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''} ${item.status !== 'want' ? 'opacity-60' : ''}`}
+      onClick={() => { onOpen(item.id); setExpanded(true) }}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
@@ -147,6 +152,8 @@ function ListItem({ item, listId, onUpdate, highlighted, people }) {
 }
 
 export default function Lists() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [collections, setCollections] = useState([])
   const [collectionCounts, setCollectionCounts] = useState({})
   const [active, setActive] = useState('films')
@@ -159,6 +166,8 @@ export default function Lists() {
   const [sort, setSort] = useState('added')
   const [people, setPeople] = useState([])
   const [withFilter, setWithFilter] = useState(null)
+  const [routeState, setRouteState] = useState('ready')
+  const [pathListId, pathItemId] = routeSegments(location.pathname, 'lists') || []
 
   const refreshCounts = async (cols) => {
     const entries = await Promise.all(
@@ -176,6 +185,13 @@ export default function Lists() {
     peopleApi.all().then(p => setPeople(Array.isArray(p) ? p : [])).catch(() => {})
   }, [])
 
+  useEffect(() => {
+    if (!pathListId || !collections.length) return
+    if (!collections.some(collection => collection.id === pathListId)) { setRouteState('not_found'); return }
+    setRouteState('ready')
+    setActive(pathListId)
+  }, [collections, pathListId])
+
   const loadItems = async (listId) => {
     setLoading(true)
     const data = await listsApi.get(listId)
@@ -185,6 +201,16 @@ export default function Lists() {
   }
 
   useEffect(() => { loadItems(active) }, [active])
+
+  useEffect(() => {
+    if (!pathItemId || !items.length) return
+    const item = items.find(candidate => candidate.id === pathItemId)
+    if (!item) { setRouteState('not_found'); return }
+    setRouteState('ready')
+    setFilter(item.status)
+    setHighlighted(item.id)
+    document.querySelector(`[data-entity-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ block: 'center' })
+  }, [items, pathItemId])
 
   const addItem = async () => {
     if (!newTitle.trim()) return
@@ -261,7 +287,7 @@ export default function Lists() {
           return (
             <button
               key={c.id}
-              onClick={() => { setActive(c.id); setFilter('want'); setHighlighted(null); setWithFilter(null) }}
+              onClick={() => { navigate(`/lists/${encodeURIComponent(c.id)}`); setActive(c.id); setFilter('want'); setHighlighted(null); setWithFilter(null) }}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 active === c.id
                   ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900'
@@ -339,6 +365,8 @@ export default function Lists() {
 
       {loading
         ? <p className="text-sm text-gray-400">Загрузка...</p>
+        : routeState === 'not_found'
+          ? <p className="text-sm text-amber-600 dark:text-amber-300">Элемент списка не найден.</p>
         : filtered.length === 0
           ? <p className="text-sm text-gray-400">Пусто</p>
           : (
@@ -351,6 +379,8 @@ export default function Lists() {
                   onUpdate={() => loadItems(active)}
                   highlighted={highlighted === item.id}
                   people={people}
+                  selected={item.id === pathItemId}
+                  onOpen={id => navigate(entityPath.listItem(active, id))}
                 />
               ))}
             </div>

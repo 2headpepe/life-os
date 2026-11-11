@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { insights as insightsApi } from '../api'
 import { useSpheres } from '../SpheresContext'
 import MarkdownContent from '../components/MarkdownContent'
+import { entityPath, routeSegments } from '../utils/entityLinks'
 
 const SUBTAG_PALETTES = [
   { bg: 'bg-blue-100 dark:bg-blue-900/40',     text: 'text-blue-700 dark:text-blue-300' },
@@ -53,15 +55,18 @@ function sortItems(arr, sort) {
   })
 }
 
-function InsightCard({ item, expanded, onToggle, activeSubtag, onSubtagClick, SPHERE_LABELS, SPHERE_COLORS }) {
+function InsightCard({ item, expanded, onToggle, activeSubtag, onSubtagClick, SPHERE_LABELS, SPHERE_COLORS, selected }) {
   const accentColor = item.sphere ? (SPHERE_COLORS[item.sphere] || '#e5e7eb') : '#e5e7eb'
   const isExpanded = expanded === item.id
   const topTags = item.tags || []
   const subtags = item.subtags || []
 
+  useEffect(() => { if (selected && !isExpanded) onToggle() }, [selected]) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div
-      className="insight-card card overflow-hidden cursor-pointer hover:shadow-md transition-shadow border-l-[3px]"
+      data-entity-id={item.id}
+      className={`insight-card card overflow-hidden cursor-pointer hover:shadow-md transition-shadow border-l-[3px] ${selected ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''}`}
       style={{ borderLeftColor: accentColor }}
       onClick={onToggle}
     >
@@ -134,7 +139,7 @@ function InsightCard({ item, expanded, onToggle, activeSubtag, onSubtagClick, SP
   )
 }
 
-function NotesTab() {
+function NotesTab({ topicSlug, onOpen }) {
   const [topics, setTopics] = useState([])
   const [selected, setSelected] = useState(null)
   const [content, setContent] = useState(null)
@@ -142,8 +147,8 @@ function NotesTab() {
 
   useEffect(() => { fetch('/api/topics').then(r => r.json()).then(setTopics) }, [])
 
-  const select = async (topic) => {
-    if (selected?.slug === topic.slug) { setSelected(null); setContent(null); return }
+  const select = async (topic, { toggle = true } = {}) => {
+    if (toggle && selected?.slug === topic.slug) { setSelected(null); setContent(null); return }
     setSelected(topic)
     setContent(null)
     setLoading(true)
@@ -152,13 +157,18 @@ function NotesTab() {
     setLoading(false)
   }
 
+  useEffect(() => {
+    const topic = topics.find(candidate => candidate.slug === topicSlug)
+    if (topic && selected?.slug !== topic.slug) select(topic, { toggle: false })
+  }, [topics, topicSlug]) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="flex overflow-hidden" style={{ height: 'calc(100vh - 120px)' }}>
       <div className="w-52 flex-shrink-0 border-r border-gray-100 dark:border-gray-800 overflow-y-auto py-2">
         {topics.map(t => (
           <button
             key={t.slug}
-            onClick={() => select(t)}
+            onClick={() => { onOpen(t.slug); select(t, { toggle: false }) }}
             className={`w-full text-left px-4 py-2 text-sm transition-colors ${
               selected?.slug === t.slug
                 ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-medium'
@@ -185,6 +195,8 @@ function NotesTab() {
 }
 
 export default function Insights() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const { SPHERE_ORDER, SPHERE_LABELS, SPHERE_COLORS } = useSpheres()
   const [tab, setTab] = useState('insights')
   const [items, setItems] = useState([])
@@ -198,10 +210,23 @@ export default function Insights() {
   const [draft, setDraft] = useState({ title: '', body: '', tags: '', subtags: '', sphere: '' })
   const [saving, setSaving] = useState(false)
   const titleRef = useRef(null)
+  const segments = routeSegments(location.pathname, 'insights') || []
+  const isTopicRoute = segments[0] === 'topics'
+  const topicSlug = isTopicRoute ? segments[1] || null : null
+  const insightId = topicSlug ? null : segments[0] || null
 
   const load = () => insightsApi.all().then(setItems)
   useEffect(() => { load() }, [])
   useEffect(() => { if (adding) titleRef.current?.focus() }, [adding])
+  useEffect(() => {
+    if (isTopicRoute) setTab('notes')
+    else setTab('insights')
+  }, [isTopicRoute])
+  useEffect(() => {
+    if (!insightId || !items.some(item => item.id === insightId)) return
+    setExpanded(insightId)
+    document.querySelector(`[data-entity-id="${CSS.escape(insightId)}"]`)?.scrollIntoView({ block: 'center' })
+  }, [items, insightId])
 
   const allTopTags = [...new Set(items.flatMap(i => i.tags || []))]
     .sort((a, b) => {
@@ -259,11 +284,12 @@ export default function Insights() {
   const cardProps = (item) => ({
     item,
     expanded,
-    onToggle: () => setExpanded(expanded === item.id ? null : item.id),
+    onToggle: () => navigate(expanded === item.id ? '/insights' : entityPath.insight(item.id)),
     activeSubtag,
     onSubtagClick: tag => setActiveSubtag(activeSubtag === tag ? null : tag),
     SPHERE_LABELS,
     SPHERE_COLORS,
+    selected: item.id === insightId,
   })
 
   const TABS = [
@@ -278,7 +304,7 @@ export default function Insights() {
         {TABS.map(t => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => navigate(t.id === 'notes' ? '/insights/topics' : '/insights')}
             className={`px-4 py-1.5 text-sm rounded-t-lg border-b-2 transition-colors ${
               tab === t.id
                 ? 'border-gray-900 dark:border-gray-100 text-gray-900 dark:text-gray-100 font-medium'
@@ -292,7 +318,7 @@ export default function Insights() {
 
       <div className="border-t border-gray-100 dark:border-gray-800" />
 
-      {tab === 'notes' && <NotesTab />}
+      {tab === 'notes' && <NotesTab topicSlug={topicSlug} onOpen={slug => navigate(entityPath.topic(slug))} />}
 
       {tab === 'insights' && (
         <div className="insights-content max-w-2xl mx-auto px-6 py-8">
@@ -467,7 +493,9 @@ export default function Insights() {
             </div>
           )}
 
-          {sorted.length === 0 && (
+          {insightId && !items.some(item => item.id === insightId) ? (
+            <div className="text-center py-16 text-amber-600 dark:text-amber-300 text-sm">Инсайт не найден.</div>
+          ) : sorted.length === 0 && (
             <div className="text-center py-16 text-gray-400 text-sm">
               {search || activeTopTag || activeSubtag ? 'Ничего не найдено' : 'Нет инсайтов'}
             </div>

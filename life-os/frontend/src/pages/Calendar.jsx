@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { events as eventsApi, tree as treeApi, sync as syncApi, calendars as calendarsApi } from '../api'
+import { entityPath, nodePath, routeSegments } from '../utils/entityLinks'
 
 const LS_HIDDEN = 'life-os-hidden-calendars'
 const LS_FILTERS = 'life-os-cal-filters'
@@ -131,7 +133,7 @@ function getMonthDays(year, month) {
 
 // ─── Item chip ──────────────────────────────────────────────────────
 
-function ItemChip({ item, calColor, onToggleWatched, compact }) {
+function ItemChip({ item, calColor, onOpen, onToggleWatched, compact, selected }) {
   const color = item._kind === 'event' ? '#F59E0B' : (calColor || item.root_color || '#6B7280')
   const hasCal = !!item.calendar_id
   const isWatched = item.watched !== false
@@ -151,8 +153,8 @@ function ItemChip({ item, calColor, onToggleWatched, compact }) {
 
   return (
     <>
-      <div ref={chipRef} onMouseEnter={show} onMouseLeave={() => setTip(null)}
-        className={`calendar-item-chip ${cls} rounded truncate mb-0.5 flex items-center gap-0.5 whitespace-nowrap bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-200 border group`}
+      <div ref={chipRef} onMouseEnter={show} onMouseLeave={() => setTip(null)} onClick={e => { e.stopPropagation(); onOpen?.(item) }}
+        className={`calendar-item-chip ${cls} rounded truncate mb-0.5 flex items-center gap-0.5 whitespace-nowrap bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-200 border group cursor-pointer ${selected ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''}`}
         style={{ borderLeft: `3px solid ${color}`, border: `1px solid ${color}30` }} title={full}>
         {hasCal && (
           <span onClick={e => { e.stopPropagation(); onToggleWatched?.(item) }}
@@ -181,7 +183,7 @@ function ItemChip({ item, calColor, onToggleWatched, compact }) {
 
 // ─── Month view ─────────────────────────────────────────────────────
 
-function MonthView({ year, month, allEvents, allTasks, today, onNewEvent, calMap, onToggleWatched }) {
+function MonthView({ year, month, allEvents, allTasks, today, onNewEvent, onOpen, calMap, onToggleWatched, selectedId }) {
   const days = getMonthDays(year, month)
   return (
     <div className="calendar-grid card">
@@ -200,7 +202,7 @@ function MonthView({ year, month, allEvents, allTasks, today, onNewEvent, calMap
               className="min-h-[80px] border-b border-r border-gray-50 dark:border-gray-800/50 p-1.5 hover:bg-gray-50/50 dark:hover:bg-gray-900/20 cursor-pointer">
               <div className={`text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full mb-1 ${isToday ? 'bg-blue-500 text-white' : 'text-gray-500 dark:text-gray-400'}`}>{date.getDate()}</div>
               {items.map((item, j) => (
-                <ItemChip key={j} item={item} calColor={item.calendar_id ? calMap[item.calendar_id]?.color : null} onToggleWatched={onToggleWatched} />
+                <ItemChip key={j} item={item} calColor={item.calendar_id ? calMap[item.calendar_id]?.color : null} onOpen={onOpen} onToggleWatched={onToggleWatched} selected={item.id === selectedId} />
               ))}
             </div>
           )
@@ -212,9 +214,12 @@ function MonthView({ year, month, allEvents, allTasks, today, onNewEvent, calMap
 
 // ─── Week / Day view ────────────────────────────────────────────────
 
-function HourGrid({ dates, allEvents, allTasks, today, onNewEvent, calMap, onToggleWatched }) {
+function HourGrid({ dates, allEvents, allTasks, today, onNewEvent, onOpen, calMap, onToggleWatched, selectedId }) {
   const getTimeItems = (d) => {
-    const evs = [...allEvents.filter(e => e.date === d && e.time), ...allTasks.filter(t => t.due === d && t.time)]
+    const evs = [
+      ...allEvents.filter(e => e.date === d && e.time).map(e => ({ ...e, _kind: 'event' })),
+      ...allTasks.filter(t => t.due === d && t.time).map(t => ({ ...t, _kind: 'task' })),
+    ]
     const allDay = [
       ...allEvents.filter(e => e.date === d && !e.time).map(e => ({ ...e, _kind: 'event' })),
       ...allTasks.filter(t => t.due === d && !t.time).map(t => ({ ...t, _kind: 'task' })),
@@ -222,8 +227,8 @@ function HourGrid({ dates, allEvents, allTasks, today, onNewEvent, calMap, onTog
     return { evs, allDay }
   }
   const getHourItems = (d, hour) => [
-    ...allEvents.filter(e => e.date === d && e.time && parseInt(e.time.slice(0,2),10) === hour),
-    ...allTasks.filter(t => t.due === d && t.time && parseInt(t.time.slice(0,2),10) === hour),
+    ...allEvents.filter(e => e.date === d && e.time && parseInt(e.time.slice(0,2),10) === hour).map(e => ({ ...e, _kind: 'event' })),
+    ...allTasks.filter(t => t.due === d && t.time && parseInt(t.time.slice(0,2),10) === hour).map(t => ({ ...t, _kind: 'task' })),
   ]
 
   return (
@@ -249,7 +254,7 @@ function HourGrid({ dates, allEvents, allTasks, today, onNewEvent, calMap, onTog
           return (
             <div key={d} className="p-0.5 border-l border-gray-100 dark:border-gray-800 max-h-[72px] overflow-y-auto">
               {allDay.map((item, j) => (
-                <ItemChip key={j} item={item} compact calColor={item.calendar_id ? calMap[item.calendar_id]?.color : null} onToggleWatched={onToggleWatched} />
+                <ItemChip key={j} item={item} compact calColor={item.calendar_id ? calMap[item.calendar_id]?.color : null} onOpen={onOpen} onToggleWatched={onToggleWatched} selected={item.id === selectedId} />
               ))}
             </div>
           )
@@ -270,7 +275,7 @@ function HourGrid({ dates, allEvents, allTasks, today, onNewEvent, calMap, onTog
                 <div key={d} onClick={() => items.length === 0 && onNewEvent?.({ date: d, time: `${String(hour).padStart(2,'0')}:00` })}
                   className={`p-px border-l border-gray-100 dark:border-gray-800 ${isToday ? 'bg-blue-50/20 dark:bg-blue-950/10' : ''} ${items.length === 0 ? 'hover:bg-gray-50/50 dark:hover:bg-gray-900/20 cursor-pointer' : ''}`}>
                   {items.map((ev, j) => (
-                    <ItemChip key={j} item={{ ...ev, _kind: 'task' }} calColor={ev.calendar_id ? calMap[ev.calendar_id]?.color : null} onToggleWatched={onToggleWatched} />
+                    <ItemChip key={j} item={ev} calColor={ev.calendar_id ? calMap[ev.calendar_id]?.color : null} onOpen={onOpen} onToggleWatched={onToggleWatched} selected={ev.id === selectedId} />
                   ))}
                 </div>
               )
@@ -285,8 +290,11 @@ function HourGrid({ dates, allEvents, allTasks, today, onNewEvent, calMap, onTog
 // ─── Main ──────────────────────────────────────────────────────────
 
 export default function Calendar() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [allEvents, setAllEvents] = useState([])
   const [allTasks, setAllTasks] = useState([])
+  const [treeNodes, setTreeNodes] = useState([])
   const [calendars, setCalendars] = useState([])
   const [view, setView] = useState('month')
   const [newEvent, setNewEvent] = useState(null)
@@ -294,6 +302,9 @@ export default function Calendar() {
   const [hiddenCalendars, setHiddenCalendars] = useState(loadHidden)
   const [calFilters, setCalFilters] = useState(loadFilters)
   const [editCal, setEditCal] = useState(null)
+  const calendarRoute = routeSegments(location.pathname, 'calendar') || []
+  const eventId = calendarRoute[0] === 'events' && calendarRoute.length === 2 ? calendarRoute[1] : null
+  const calendarId = calendarRoute.length === 1 ? calendarRoute[0] : null
 
   const calMap = Object.fromEntries(calendars.map(c => [c.id, c]))
 
@@ -310,13 +321,28 @@ export default function Calendar() {
     setTimeout(() => setGcalStatus(null), 3000)
   }
 
-  const loadAll = () => Promise.all([eventsApi.all(), treeApi.leaves(), calendarsApi.all()]).then(([e, leaves, cals]) => {
+  const loadAll = () => Promise.all([eventsApi.all(), treeApi.leaves(), treeApi.all(), calendarsApi.all()]).then(([e, leaves, nodes, cals]) => {
     setAllEvents(e.events || [])
     setAllTasks(leaves.filter(x => x.due && x.status !== 'done' && x.status !== 'dropped'))
+    setTreeNodes(nodes || [])
     setCalendars(cals || [])
   })
 
   useEffect(() => { loadAll() }, [])
+  useEffect(() => {
+    if (!calendarId || !calendars.length) return
+    const calendar = calendars.find(candidate => candidate.id === calendarId)
+    if (calendar) setEditCal(calendar)
+  }, [calendars, calendarId])
+  useEffect(() => {
+    const event = allEvents.find(candidate => candidate.id === eventId)
+    if (!event) return
+    setView('day')
+    setPivot(event.date)
+    const date = new Date(`${event.date}T12:00:00`)
+    setYear(date.getFullYear())
+    setMonth(date.getMonth())
+  }, [allEvents, eventId])
 
   const toggleCal = (id) => { const next = new Set(hiddenCalendars); if (next.has(id)) next.delete(id); else next.add(id); setHiddenCalendars(next); saveHidden(next) }
   const toggleFilter = (id) => { const next = { ...calFilters }; next[id] = next[id] === 'watched' ? 'all' : 'watched'; setCalFilters(next); saveFilters(next) }
@@ -326,6 +352,13 @@ export default function Calendar() {
     // Optimistic: update local state immediately
     setAllTasks(prev => prev.map(t => t.id === item.id ? { ...t, watched: next } : t))
     await treeApi.update(item.id, { watched: next })
+  }
+  const openCalendarItem = item => {
+    if (item._kind === 'event') {
+      navigate(entityPath.calendarEvent(item.id))
+      return
+    }
+    navigate(nodePath(treeNodes, item.id) || '/goals')
   }
 
   const saveCal = async (cal) => {
@@ -399,12 +432,12 @@ export default function Calendar() {
             {calendars.map(cal => {
               const mode = calFilters[cal.id] || 'all'
               return (
-                <div key={cal.id} className="flex items-center gap-2 py-1.5">
+                <div key={cal.id} className={`flex items-center gap-2 py-1.5 ${cal.id === calendarId ? 'rounded bg-blue-50 dark:bg-blue-950/30' : ''}`}>
                   <input type="checkbox" checked={!hiddenCalendars.has(cal.id)} onChange={() => toggleCal(cal.id)}
                     className="rounded cursor-pointer flex-shrink-0" style={{ accentColor: cal.color }} />
                   <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: cal.color }} />
                   <span className="text-xs text-gray-700 dark:text-gray-300 truncate flex-1 cursor-pointer"
-                    onClick={() => setEditCal(cal)}>{cal.title}</span>
+                    onClick={() => { navigate(entityPath.calendar(cal.id)); setEditCal(cal) }}>{cal.title}</span>
                   {cal.sync_to_gcal && <span className="text-xs flex-shrink-0" title="GCal">📅</span>}
                   <select value={mode} onChange={() => toggleFilter(cal.id)}
                     className="text-xs bg-transparent border-none text-gray-400 cursor-pointer outline-none flex-shrink-0">
@@ -427,13 +460,15 @@ export default function Calendar() {
 
         {/* Views */}
         <div className="calendar-view flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
-          {view === 'month' && <div className="flex-1 min-h-0 overflow-auto"><MonthView year={year} month={month} allEvents={allEvents} allTasks={visibleTasks} today={today} onNewEvent={setNewEvent} calMap={calMap} onToggleWatched={toggleWatched} /></div>}
-          {view === 'week' && <HourGrid dates={weekDates} allEvents={allEvents} allTasks={visibleTasks} today={today} onNewEvent={setNewEvent} calMap={calMap} onToggleWatched={toggleWatched} />}
-          {view === 'day' && <HourGrid dates={[pivot]} allEvents={allEvents} allTasks={visibleTasks} today={today} onNewEvent={setNewEvent} calMap={calMap} onToggleWatched={toggleWatched} />}
+          {view === 'month' && <div className="flex-1 min-h-0 overflow-auto"><MonthView year={year} month={month} allEvents={allEvents} allTasks={visibleTasks} today={today} onNewEvent={setNewEvent} onOpen={openCalendarItem} calMap={calMap} onToggleWatched={toggleWatched} selectedId={eventId} /></div>}
+          {view === 'week' && <HourGrid dates={weekDates} allEvents={allEvents} allTasks={visibleTasks} today={today} onNewEvent={setNewEvent} onOpen={openCalendarItem} calMap={calMap} onToggleWatched={toggleWatched} selectedId={eventId} />}
+          {view === 'day' && <HourGrid dates={[pivot]} allEvents={allEvents} allTasks={visibleTasks} today={today} onNewEvent={setNewEvent} onOpen={openCalendarItem} calMap={calMap} onToggleWatched={toggleWatched} selectedId={eventId} />}
           {newEvent && <EventForm date={newEvent.date} time={newEvent.time} onSave={() => { setNewEvent(null); loadAll() }} onCancel={() => setNewEvent(null)} />}
           {editCal && <CalEditModal cal={editCal} onSave={saveCal} onCancel={() => setEditCal(null)} onDelete={deleteCal} />}
         </div>
       </div>
+      {calendarId && calendars.length > 0 && !calendars.some(calendar => calendar.id === calendarId) && <p className="mt-2 text-sm text-amber-600 dark:text-amber-300">Календарь не найден.</p>}
+      {eventId && allEvents.length > 0 && !allEvents.some(event => event.id === eventId) && <p className="mt-2 text-sm text-amber-600 dark:text-amber-300">Событие не найдено.</p>}
     </div>
   )
 }

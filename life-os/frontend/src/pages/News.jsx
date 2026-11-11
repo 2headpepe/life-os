@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Newspaper, ExternalLink, ChevronDown, ChevronRight, Search, Bookmark, Plus, Trash2, Zap, FlaskConical, Crosshair, Eye, StickyNote } from 'lucide-react'
 import { news as newsApi } from '../api'
+import { entityPath, routeSegments } from '../utils/entityLinks'
 
 function fmtDate(d) {
   if (!d) return ''
@@ -29,7 +31,7 @@ function sortItems(arr, sort) {
 
 // ─── NewsCard ──────────────────────────────────────────────────────
 
-function NewsCard({ item, expanded, onToggle, onSave, onDetail, onNote, onRate }) {
+function NewsCard({ item, expanded, onToggle, onSave, onDetail, onNote, onRate, selected }) {
   const isExpanded = expanded === item.id
   const detail = item.detail || 5
   const kind = item.kind
@@ -44,7 +46,8 @@ function NewsCard({ item, expanded, onToggle, onSave, onDetail, onNote, onRate }
 
   return (
     <div
-      className={`news-card card overflow-hidden cursor-pointer transition-all ${
+      data-entity-id={item.id}
+      className={`news-card card overflow-hidden cursor-pointer transition-all ${selected ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''} ${
         isCompact ? 'opacity-60 hover:opacity-80 py-1' : 'hover:shadow-md'
       } ${
         isProminent ? 'ring-1 ring-blue-200 dark:ring-blue-800 shadow-sm' : ''
@@ -362,6 +365,8 @@ function SourcesTab({ sources, onUpdate }) {
 // ─── News Page ─────────────────────────────────────────────────────
 
 export default function News() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [tab, setTab] = useState('feed')
   const [items, setItems] = useState([])
   const [sources, setSources] = useState([])
@@ -371,12 +376,19 @@ export default function News() {
   const [showRead, setShowRead] = useState(false)
   const [sort, setSort] = useState('date_desc')
   const [expanded, setExpanded] = useState(null)
+  const itemId = routeSegments(location.pathname, 'news')?.[0] || null
 
   const load = () => newsApi.all().then(data => {
     setItems(data.items || [])
     setSources(data.sources || [])
   })
   useEffect(() => { load() }, [])
+  useEffect(() => {
+    if (!itemId || !items.some(item => item.id === itemId)) return
+    setTab('feed')
+    setExpanded(itemId)
+    document.querySelector(`[data-entity-id="${CSS.escape(itemId)}"]`)?.scrollIntoView({ block: 'center' })
+  }, [items, itemId])
 
   // Derived: kind counts for pills
   const kindCounts = {
@@ -534,16 +546,19 @@ export default function News() {
                 key={item.id}
                 item={item}
                 expanded={expanded}
-                onToggle={() => setExpanded(expanded === item.id ? null : item.id)}
+                onToggle={() => navigate(expanded === item.id ? '/news' : entityPath.news(item.id))}
                 onSave={handleSave}
                 onDetail={handleDetail}
                 onNote={handleNote}
                 onRate={handleRate}
+                selected={item.id === itemId}
               />
             ))}
           </div>
 
-          {sorted.length === 0 && (
+          {itemId && !items.some(item => item.id === itemId) ? (
+            <div className="text-center py-16 text-amber-600 dark:text-amber-300 text-sm">Новость не найдена.</div>
+          ) : sorted.length === 0 && (
             <div className="text-center py-16 text-gray-400 text-sm space-y-2">
               <Newspaper size={32} className="mx-auto opacity-30" />
               {items.length === 0 ? (

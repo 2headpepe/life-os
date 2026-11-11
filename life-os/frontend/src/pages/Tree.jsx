@@ -4,6 +4,7 @@ import { Circle, Clock, CircleDot, CheckCircle2, CircleDashed, CircleMinus, Lock
          ChevronDown, ChevronRight, Sparkles, Plus, X, AlignJustify } from 'lucide-react'
 import { tree as treeApi, habits as habitsApi, productIntelligence } from '../api'
 import { openInConsole } from '../utils/openInConsole'
+import { legacyNodePath, nodeLineage, nodePath, resolveNodePath } from '../utils/entityLinks'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
@@ -913,6 +914,7 @@ export default function Tree() {
   const [context, setContext] = useState(() => initialParams.get('context') === 'delivery' ? 'delivery' : 'personal')
   const [showInitiativeForm, setShowInitiativeForm] = useState(() => initialParams.get('create') === 'initiative')
   const [initiativeCreated, setInitiativeCreated] = useState(null)
+  const [routeState, setRouteState] = useState('overview')
 
   const addToast = useCallback(items => {
     const id = Date.now()
@@ -938,18 +940,25 @@ export default function Tree() {
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
-    const params = new URLSearchParams(location.search)
-    const requestedContext = params.get('context')
-    if (requestedContext === 'personal' || requestedContext === 'delivery') setContext(requestedContext)
-    const target = params.get('task') || params.get('root')
-    if (target && nodes.length) {
-      const targetNode = nodes.find(node => node.id === target)
-      if (targetNode) {
-        setContext(targetNode.work_context || 'personal')
-        setFocusPath(params.get('task') ? parentPath(nodes, target) : [target])
-      }
+    if (!nodes.length) return
+    const legacyPath = legacyNodePath(nodes, location.search)
+    if (location.pathname === '/goals' && legacyPath) {
+      navigate(legacyPath, { replace: true })
+      return
     }
-  }, [nodes, location.search])
+
+    const resolved = resolveNodePath(nodes, location.pathname)
+    setRouteState(resolved.state)
+    if (resolved.state === 'found') {
+      setContext(resolved.node.work_context || 'personal')
+      setFocusPath((nodeLineage(nodes, resolved.node) || []).map(node => node.id))
+      return
+    }
+
+    setFocusPath([])
+    const requestedContext = new URLSearchParams(location.search).get('context')
+    if (requestedContext === 'personal' || requestedContext === 'delivery') setContext(requestedContext)
+  }, [nodes, location.pathname, location.search, navigate])
 
   const setContextInUrl = nextContext => {
     const params = new URLSearchParams(location.search)
@@ -959,6 +968,11 @@ export default function Tree() {
     setContext(nextContext)
     setFocusPath([])
     navigate({ pathname: '/goals', search: `?${params.toString()}` })
+  }
+
+  const openNode = id => {
+    const path = nodePath(nodes, id)
+    if (path) navigate(path)
   }
 
   const nodesMap = Object.fromEntries(nodes.map(n => [n.id, n]))
@@ -983,7 +997,7 @@ export default function Tree() {
             <div><p className="goals-kicker">Life OS · карта направлений</p><h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Цели</h1></div>
           ) : (
             <nav className="flex items-center gap-1.5 flex-wrap">
-              <button onClick={() => setFocusPath([])}
+              <button onClick={() => navigate('/goals')}
                 className="text-sm text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
                 Цели
               </button>
@@ -991,7 +1005,7 @@ export default function Tree() {
                 <Fragment key={n.id}>
                   <span className="text-gray-300 dark:text-gray-600 text-sm select-none">/</span>
                   {i < breadcrumb.length - 1 ? (
-                    <button onClick={() => setFocusPath(focusPath.slice(0, i + 1))}
+                    <button onClick={() => openNode(n.id)}
                       className="text-sm text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
                       {n.title}
                     </button>
@@ -1027,12 +1041,18 @@ export default function Tree() {
           </div>
         )}
 
+        {(routeState === 'not_found' || routeState === 'invalid') && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+            Этот путь не соответствует существующему узлу дерева. Он не был заменён другой задачей.
+          </div>
+        )}
+
         {/* Overview */}
-        {focusPath.length === 0 && (
+        {focusPath.length === 0 && routeState !== 'not_found' && routeState !== 'invalid' && (
           <div className="goals-overview space-y-3">
             {roots.map(root => (
               <OverviewCard key={root.id} node={root} nodesMap={nodesMap}
-                onEnter={id => setFocusPath([id])} onUpdate={load} />
+                onEnter={openNode} onUpdate={load} />
             ))}
             {context === 'personal' && (addingRoot ? (
               <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 px-4 py-3">
@@ -1099,7 +1119,7 @@ export default function Tree() {
               {displayNodes.map(node => (
                 <OutlinerRow key={node.id} node={node} depth={0} rootColor={rootColor}
                   nodesMap={nodesMap} allNodes={nodes} onUpdate={load}
-                  onUnblock={addToast} onZoom={id => setFocusPath(prev => [...prev, id])}
+                  onUnblock={addToast} onZoom={openNode}
                   hideDone={hideDone} />
               ))}
               {addingAtBottom ? (
