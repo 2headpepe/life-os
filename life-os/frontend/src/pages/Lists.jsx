@@ -167,7 +167,9 @@ export default function Lists() {
   const [people, setPeople] = useState([])
   const [withFilter, setWithFilter] = useState(null)
   const [routeState, setRouteState] = useState('ready')
-  const [pathListId, pathItemId] = routeSegments(location.pathname, 'lists') || []
+  const listRoute = routeSegments(location.pathname, 'lists') || []
+  const invalidListRoute = listRoute.length > 2
+  const [pathListId, pathItemId] = invalidListRoute ? [] : listRoute
 
   const refreshCounts = async (cols) => {
     const entries = await Promise.all(
@@ -365,8 +367,8 @@ export default function Lists() {
 
       {loading
         ? <p className="text-sm text-gray-400">Загрузка...</p>
-        : routeState === 'not_found'
-          ? <p className="text-sm text-amber-600 dark:text-amber-300">Элемент списка не найден.</p>
+        : invalidListRoute || routeState === 'not_found'
+          ? <p className="text-sm text-amber-600 dark:text-amber-300">Такой URL элемента списка не найден.</p>
         : filtered.length === 0
           ? <p className="text-sm text-gray-400">Пусто</p>
           : (

@@ -376,7 +376,9 @@ export default function News() {
   const [showRead, setShowRead] = useState(false)
   const [sort, setSort] = useState('date_desc')
   const [expanded, setExpanded] = useState(null)
-  const itemId = routeSegments(location.pathname, 'news')?.[0] || null
+  const newsRoute = routeSegments(location.pathname, 'news') || []
+  const invalidNewsRoute = newsRoute.length > 1
+  const itemId = invalidNewsRoute ? null : newsRoute[0] || null
 
   const load = () => newsApi.all().then(data => {
     setItems(data.items || [])
@@ -556,7 +558,9 @@ export default function News() {
             ))}
           </div>
 
-          {itemId && !items.some(item => item.id === itemId) ? (
+          {invalidNewsRoute ? (
+            <div className="text-center py-16 text-amber-600 dark:text-amber-300 text-sm">Этот URL новости не найден.</div>
+          ) : itemId && !items.some(item => item.id === itemId) ? (
             <div className="text-center py-16 text-amber-600 dark:text-amber-300 text-sm">Новость не найдена.</div>
           ) : sorted.length === 0 && (
             <div className="text-center py-16 text-gray-400 text-sm space-y-2">

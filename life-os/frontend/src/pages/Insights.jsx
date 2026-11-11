@@ -212,8 +212,9 @@ export default function Insights() {
   const titleRef = useRef(null)
   const segments = routeSegments(location.pathname, 'insights') || []
   const isTopicRoute = segments[0] === 'topics'
-  const topicSlug = isTopicRoute ? segments[1] || null : null
-  const insightId = topicSlug ? null : segments[0] || null
+  const invalidInsightPath = isTopicRoute ? segments.length > 2 : segments.length > 1
+  const topicSlug = isTopicRoute && !invalidInsightPath ? segments[1] || null : null
+  const insightId = !isTopicRoute && !invalidInsightPath ? segments[0] || null : null
 
   const load = () => insightsApi.all().then(setItems)
   useEffect(() => { load() }, [])
@@ -317,10 +318,11 @@ export default function Insights() {
       </div>
 
       <div className="border-t border-gray-100 dark:border-gray-800" />
+      {invalidInsightPath && <p className="mx-auto max-w-2xl px-6 py-4 text-sm text-amber-600 dark:text-amber-300">Этот URL инсайта или заметки не найден.</p>}
 
-      {tab === 'notes' && <NotesTab topicSlug={topicSlug} onOpen={slug => navigate(entityPath.topic(slug))} />}
+      {!invalidInsightPath && tab === 'notes' && <NotesTab topicSlug={topicSlug} onOpen={slug => navigate(entityPath.topic(slug))} />}
 
-      {tab === 'insights' && (
+      {!invalidInsightPath && tab === 'insights' && (
         <div className="insights-content max-w-2xl mx-auto px-6 py-8">
           <div className="insights-header flex items-center justify-between mb-6">
             <div>

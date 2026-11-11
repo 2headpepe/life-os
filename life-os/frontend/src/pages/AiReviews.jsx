@@ -9,7 +9,9 @@ export default function AiReviews() {
   const navigate = useNavigate()
   const [model, setModel] = useState(null)
   const [error, setError] = useState('')
-  const [reviewType, reviewId] = routeSegments(location.pathname, 'ai-reviews') || []
+  const reviewRoute = routeSegments(location.pathname, 'ai-reviews') || []
+  const invalidReviewPath = reviewRoute.length !== 0 && reviewRoute.length !== 2
+  const [reviewType, reviewId] = invalidReviewPath ? [] : reviewRoute
 
   const refresh = () => aiReviews.all().then(setModel).catch(e => setError(e.message))
   useEffect(() => { refresh() }, [])
@@ -45,6 +47,7 @@ export default function AiReviews() {
         <p className="mt-2 text-sm text-gray-600">Data-free control plane: no session text, local paths, or credentials.</p>
       </header>
       {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {invalidReviewPath && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Этот URL review-сущности не найден.</p>}
       {reviewId && !knownReview && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Эта review-сущность не найдена.</p>}
 
       <section className="rounded-2xl border border-violet-200 bg-violet-50 p-5">
