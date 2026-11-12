@@ -2,6 +2,7 @@ import { spawn } from 'child_process'
 
 const RUNTIMES = new Set(['none', 'codex', 'opencode'])
 const SAFE_COMMAND = /^[A-Za-z0-9._/-]+$/
+export const DEFAULT_OPENCODE_SERVER_URL = 'http://127.0.0.1:4096'
 const OPENCODE_READ_ONLY_CONFIG = JSON.stringify({
   $schema: 'https://opencode.ai/config.json',
   // OpenCode v2 evaluates ordered permission rules. The broad deny rules make
@@ -38,31 +39,83 @@ function configuredCommand(value, fallback, variable) {
 export function aiRuntimeConfig(env = process.env) {
   const runtime = (env.AI_RUNTIME || 'none').toLowerCase()
   if (!RUNTIMES.has(runtime)) throw new Error('AI_RUNTIME must be none, codex, or opencode')
-  return {
+  const config = {
     runtime,
     command: runtime === 'codex'
       ? configuredCommand(env.CODEX_COMMAND, 'codex', 'CODEX_COMMAND')
       : configuredCommand(env.OPENCODE_COMMAND, 'opencode', 'OPENCODE_COMMAND'),
-    model: runtime === 'codex' ? env.CODEX_MODEL : env.OPENCODE_MODEL,
+    model: runtime === 'codex'
+      ? env.CODEX_MODEL
+      : (runtime === 'opencode' ? (env.OPENCODE_MODEL || 'assistant/assistant') : undefined),
   }
+  // The OpenCode session bridge uses the normal build agent. Its setup/chat
+  // contract is pinned to assistant/assistant; agent selection controls only
+  // OpenCode's workflow and permission policy, not the provider/model.
+  if (runtime === 'opencode') {
+    return {
+      ...config,
+      serverUrl: env.OPENCODE_SERVER_URL || DEFAULT_OPENCODE_SERVER_URL,
+      agent: 'build',
+    }
+  }
+  return config
 }
 
-function run(command, args, { cwd, timeoutMs, env }) {
+function diagnosticStderr(stderr) {
+  return stderr
+    .replace(/\b(bearer|token|api[_-]?key|authorization|password)\b\s*[:=]?\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/\b[A-Za-z0-9_-]{40,}\b/g, '[redacted]')
+    .trim()
+    .slice(0, 600)
+}
+
+function runtimeError(message, { code, command, pid, startedAt, stderr = '' }) {
+  const error = new Error(message)
+  error.code = code
+  error.aiDiagnostic = {
+    code,
+    command,
+    pid: pid ?? null,
+    durationMs: Date.now() - startedAt,
+    stderr: diagnosticStderr(stderr),
+  }
+  return error
+}
+
+function run(command, args, { cwd, timeoutMs, env, onStart, onStderr, onExit }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, shell: false })
+    const startedAt = Date.now()
     let stdout = ''
     let stderr = ''
+    let settled = false
+    let timer
+    const fail = (message, code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(runtimeError(message, { code, command, pid: child.pid, startedAt, stderr }))
+    }
     child.stdout.on('data', chunk => { stdout += chunk })
-    child.stderr.on('data', chunk => { stderr += chunk })
-    const timer = setTimeout(() => {
+    child.stderr.on('data', chunk => {
+      const text = String(chunk)
+      stderr += text
+      const diagnostic = diagnosticStderr(text)
+      if (diagnostic) onStderr?.(diagnostic)
+    })
+    onStart?.({ pid: child.pid ?? null, command })
+    child.once('exit', (exitCode, signal) => onExit?.({ exitCode, signal }))
+    timer = setTimeout(() => {
       child.kill('SIGTERM')
-      reject(new Error(`AI task timed out after ${timeoutMs}ms`))
+      fail(`AI task timed out after ${timeoutMs}ms`, 'timeout')
     }, timeoutMs)
-    child.once('error', error => { clearTimeout(timer); reject(error) })
+    child.once('error', error => fail(error.message, 'spawn_error'))
     child.once('close', code => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
       if (code === 0) return resolve(stdout)
-      reject(new Error(`${command} exited ${code}: ${stderr.slice(0, 300)}`))
+      reject(runtimeError(`${command} exited ${code}: ${diagnosticStderr(stderr)}`, { code: 'nonzero_exit', command, pid: child.pid, startedAt, stderr }))
     })
   })
 }
@@ -96,9 +149,9 @@ export function aiTaskInvocation(prompt, env = process.env) {
   return { config, args, env: runtimeEnv }
 }
 
-export function runAiTask(prompt, { cwd, timeoutMs = 180_000, env = process.env } = {}) {
+export function runAiTask(prompt, { cwd, timeoutMs = 180_000, env = process.env, onStart, onStderr, onExit } = {}) {
   const invocation = aiTaskInvocation(prompt, env)
-  return run(invocation.config.command, invocation.args, { cwd, timeoutMs, env: invocation.env })
+  return run(invocation.config.command, invocation.args, { cwd, timeoutMs, env: invocation.env, onStart, onStderr, onExit })
 }
 
 export function promptFromMessages(messages, system) {

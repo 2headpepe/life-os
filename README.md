@@ -104,14 +104,17 @@ AI не обязателен. Если он нужен, установите и 
 а затем измените `life-os/backend/.env`.
 
 - Для Codex используйте [официальную инструкцию установки](https://learn.chatgpt.com/docs/codex/cli), затем выполните `codex` и войдите в аккаунт.
-- Для OpenCode используйте [официальную инструкцию установки](https://opencode.ai/docs/), затем выполните `opencode auth login`.
+- Для OpenCode используйте [официальную инструкцию установки](https://opencode.ai/docs/). Если ваш провайдер уже задан в `opencode.json` с токеном, отдельный OAuth-логин в Life OS не нужен: он остаётся задачей самого OpenCode только для провайдеров, которым он требуется.
 
 ```env
 # Вариант 1: Codex CLI
 AI_RUNTIME=codex
 
-# Вариант 2: OpenCode CLI
-# AI_RUNTIME=opencode
+# Вариант 2: OpenCode — модель и токен остаются в конфиге OpenCode
+AI_RUNTIME=opencode
+OPENCODE_MODEL=assistant/assistant
+# Необязательно: это значение уже используется по умолчанию.
+OPENCODE_SERVER_URL=http://127.0.0.1:4096
 ```
 
 Авторизация и токены остаются в локальной среде выбранного CLI; в репозиторий
@@ -125,6 +128,32 @@ node ops/scripts/doctor.mjs
 `read-only`, OpenCode — с запретом изменения файлов и запуска команд. Кнопка
 «Открыть в консоли» запускает отдельную интерактивную сессию: любые изменения
 в ней вы подтверждаете сами.
+
+### OpenCode server для настройки и чата
+
+При `AI_RUNTIME=opencode` настройка и встроенный чат используют не одноразовый
+`opencode run`, а явную локальную сессию OpenCode v2. Нажмите в Life OS
+«Запустить OpenCode server»: только этот явный клик запускает принадлежащий
+Life OS процесс
+
+```bash
+opencode serve --hostname 127.0.0.1 --port 4096
+```
+
+Не запускайте отдельный `opencode serve` на том же порту: Life OS не будет
+подключаться к или останавливать неизвестный процесс. Адрес для managed-режима
+должен быть именно `OPENCODE_SERVER_URL=http://127.0.0.1:4096`: только HTTP,
+IPv4 `127.0.0.1` и фиксированный ненулевой порт. Не подойдут `https`,
+`localhost`, `:0`, путь или query-параметры. Если нужен другой свободный порт,
+например `4097`, задайте `OPENCODE_SERVER_URL=http://127.0.0.1:4097` и
+перезапустите backend.
+
+Life OS создаёт временный пароль только в памяти backend и обращается к v2 API
+сам; браузер пароль не получает. Модель остаётся `assistant/assistant`.
+Если OpenCode требует разрешение на чтение, команду или изменение, интерфейс
+предложит открыть его Web UI через одноразовый pairing-link. Решение всегда
+остаётся за вами — автоматических подтверждений нет. Внешний legacy-v1 server
+остаётся совместимым и открывается через terminal attach.
 
 ## Где лежат данные
 
@@ -153,7 +182,10 @@ brain/content/
 |---|---:|---|
 | `AI_RUNTIME` | `none` | `none`, `codex` или `opencode` |
 | `CODEX_COMMAND`, `OPENCODE_COMMAND` | имя команды | Путь или имя выбранного CLI |
-| `CODEX_MODEL`, `OPENCODE_MODEL` | — | Необязательная модель CLI |
+| `CODEX_MODEL` | — | Необязательная модель Codex CLI |
+| `OPENCODE_MODEL` | `assistant/assistant` | Для session bridge setup/chat используется только `assistant/assistant` |
+| `OPENCODE_SERVER_URL` | `http://127.0.0.1:4096` | Managed v2: точный IPv4 HTTP loopback URL с фиксированным портом; не `https` и не `localhost` |
+| `LIFE_OS_UI_ORIGIN` | `localhost:5173`, `127.0.0.1:5173`, `[::1]:5173` | Разрешённый origin для явных действий managed server и OpenCode Web; несколько значений через запятую |
 | `PORT` | `3001` | Порт бэкенда |
 | `VAULT_PATH` | `../../brain/content` | Внешняя папка для личных данных |
 | `WORK_DIR` | корень репозитория | Папка для интерактивной консоли |

@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { SpheresProvider } from './SpheresContext'
 import { ThemeProvider } from './context/ThemeContext'
+import { RecoveryModeProvider } from './context/RecoveryModeContext'
 import Sidebar from './components/Sidebar'
 import QuickCapture from './components/QuickCapture'
 import AiConsole from './components/AiConsole'
@@ -23,7 +24,15 @@ import Memories from './pages/Memories'
 import Onboarding from './pages/Onboarding'
 import AiReviews from './pages/AiReviews'
 import NotificationBell from './components/NotificationBell'
+import ThemeSwitcher from './components/ui/ThemeSwitcher'
+import PageOnboarding, { onboardingStorageKey } from './components/PageOnboarding'
 import { tree as treeApi } from './api'
+
+const ONBOARDING_PAGES = {
+  '/': 'feed', '/today': 'today', '/goals': 'goals', '/pool': 'pool', '/habits': 'habits',
+  '/inbox': 'inbox', '/calendar': 'calendar', '/lists': 'lists', '/people': 'people',
+  '/insights': 'insights', '/memories': 'memories',
+}
 
 function AppContent() {
   const navigate = useNavigate()
@@ -35,16 +44,24 @@ function AppContent() {
   const [aiContextMessage, setAiContextMessage] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [sphere, setSphere] = useState(null)
-  const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const previousOnboardingPage = useRef(null)
 
-  useEffect(() => { document.documentElement.classList.toggle('dark', dark) }, [dark])
+  // A hint remains readable for the whole first visit. Only an actual route
+  // change marks it seen; this avoids React development effect cleanups
+  // dismissing it immediately.
+  useEffect(() => {
+    const current = ONBOARDING_PAGES[location.pathname] || null
+    const previous = previousOnboardingPage.current
+    if (previous && previous !== current) localStorage.setItem(onboardingStorageKey(previous), '1')
+    previousOnboardingPage.current = current
+  }, [location.pathname])
 
   // Check if onboarding needed (skip if already on /setup)
   useEffect(() => {
     if (location.pathname === '/setup') { setReady(true); return }
     treeApi.all().then(nodes => {
       const hasUserNodes = nodes.some(n => n.parent_id !== null)
-      if (!hasUserNodes) navigate('/setup', { replace: true })
+      if (!hasUserNodes && localStorage.getItem('life-os:setup-completed') !== '1') navigate('/setup', { replace: true })
       setReady(true)
     }).catch(() => setReady(true))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -97,9 +114,7 @@ function AppContent() {
       <main className="flex-1 overflow-y-auto">
         <div className="sticky top-0 z-10 flex items-center justify-end gap-2 px-6 py-3 bg-gray-50/80 dark:bg-gray-950/80 backdrop-blur border-b border-gray-100 dark:border-gray-800">
           <NotificationBell />
-          <button onClick={() => setDark(v => !v)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-sm" title="Тема">
-            {dark ? '☀︎' : '☽'}
-          </button>
+          <ThemeSwitcher />
         </div>
         <Routes>
           <Route path="/"         element={<Feed />} />
@@ -128,6 +143,7 @@ function AppContent() {
         onPrefillUsed={() => setAiPrefill('')}
       />
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <PageOnboarding key={location.pathname} pageId={ONBOARDING_PAGES[location.pathname]} />
 
       <button
         onClick={() => setCaptureOpen(true)}
@@ -145,9 +161,11 @@ export default function App() {
   return (
     <SpheresProvider>
       <ThemeProvider>
-        <BrowserRouter>
-          <AppContent />
-        </BrowserRouter>
+        <RecoveryModeProvider>
+          <BrowserRouter>
+            <AppContent />
+          </BrowserRouter>
+        </RecoveryModeProvider>
       </ThemeProvider>
     </SpheresProvider>
   )

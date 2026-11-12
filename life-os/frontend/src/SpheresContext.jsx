@@ -10,10 +10,11 @@ export function SpheresProvider({ children }) {
     spheresApi.all().then(setData).catch(() => {})
   }, [])
 
-  const unique = data.filter((s, i) => data.findIndex(x => x.sphere === s.sphere) === i)
-  const SPHERE_ORDER  = unique.map(s => s.sphere)
-  const SPHERE_LABELS = Object.fromEntries(unique.map(s => [s.sphere, s.label]))
-  const SPHERE_COLORS = Object.fromEntries(unique.map(s => [s.sphere, s.color]))
+  // /api/tree/spheres exposes the compatibility slug as `id`.
+  const unique = data.filter((s, i) => s?.id && data.findIndex(x => x.id === s.id) === i)
+  const SPHERE_ORDER  = unique.map(s => s.id)
+  const SPHERE_LABELS = Object.fromEntries(unique.map(s => [s.id, s.label]))
+  const SPHERE_COLORS = Object.fromEntries(unique.map(s => [s.id, s.color]))
 
   return (
     <SpheresContext.Provider value={{ SPHERE_ORDER, SPHERE_LABELS, SPHERE_COLORS }}>

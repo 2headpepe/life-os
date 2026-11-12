@@ -8,6 +8,9 @@ import { randomUUID } from 'crypto'
 import { google } from 'googleapis'
 import multer from 'multer'
 import { aiRuntimeConfig, checkAiRuntime, promptFromMessages, runAiTask } from './ai-runtime.js'
+import { LifeOsOpenCodeSessionBridge, LifeOsOpenCodeSessionError, openCodeAttachCommand } from './opencode-session-bridge.js'
+import { OpenCodeServerError } from './opencode-server.js'
+import { ManagedOpenCodeServer, ManagedOpenCodeServerError } from './managed-opencode-server.js'
 import { productIntelligenceStore } from './product-intelligence.js'
 import { assertDeliveryTransition, handoffIsComplete, hasDependencyCycle, inboundDependencyReferences, isBlocked, workContext } from './task-lifecycle.js'
 import { assertEligibleExecutor, assertEligibleVerifier } from './agent-registry.js'
@@ -16,7 +19,46 @@ const app = express()
 const PORT = process.env.PORT || 3001
 const VAULT = process.env.VAULT_PATH || path.join(import.meta.dirname, '../../brain/content')
 const WORK_DIR = process.env.WORK_DIR || path.resolve(import.meta.dirname, '../..')
+const LOCAL_UI_ORIGINS = new Set((process.env.LIFE_OS_UI_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173,http://[::1]:5173')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean))
 const productIntelligence = productIntelligenceStore(WORK_DIR)
+let managedOpenCodeServer = null
+let managedOpenCodeConfigKey = null
+
+function managedServerFor(runtime = aiRuntimeConfig()) {
+  if (runtime.runtime !== 'opencode') {
+    throw new ManagedOpenCodeServerError('OpenCode managed server is disabled for this runtime', { code: 'runtime_not_opencode' })
+  }
+  const configKey = JSON.stringify({ url: runtime.serverUrl, command: runtime.command })
+  if (managedOpenCodeServer && managedOpenCodeConfigKey !== configKey) {
+    // Configuration is process-scoped. Never discard a controller merely
+    // because a later request sees a different environment value: doing so
+    // could orphan a child that owns a password and a loopback port.
+    throw new ManagedOpenCodeServerError('Cannot change managed OpenCode configuration after backend startup', { code: 'managed_config_change_while_active' })
+  }
+  if (!managedOpenCodeServer) {
+    managedOpenCodeServer = new ManagedOpenCodeServer({
+      url: runtime.serverUrl,
+      command: runtime.command,
+      cwd: WORK_DIR,
+    })
+    managedOpenCodeConfigKey = configKey
+  } else if (!managedOpenCodeServer.availability().owned) {
+    managedOpenCodeServer.setCommand(runtime.command)
+  }
+  return managedOpenCodeServer
+}
+
+const openCodeBridge = new LifeOsOpenCodeSessionBridge({
+  runtime: () => aiRuntimeConfig(),
+  workingDirectory: WORK_DIR,
+  // The manager owns this password in memory. Its value is supplied only when
+  // the owned v2 child is ready; external/v1 endpoints remain unauthenticated
+  // unless a separate future onboarding flow explicitly provides credentials.
+  credentialProvider: () => managedOpenCodeServer?.credentials() || null,
+})
 const defaultAgents = { agents: [
   { id: 'life-os-delivery-executor', status: 'active', roles: ['Исполнитель delivery'] },
   { id: 'life-os-independent-verifier', status: 'active', roles: ['Независимый проверяющий'], can_verify: true },
@@ -32,6 +74,18 @@ const STALENESS_DAYS = {
 app.use(cors())
 app.use(express.json())
 app.get('/api/agents', async (req, res) => res.json(await agentRegistry()))
+
+// Launching a terminal, starting/stopping a managed local server, and minting
+// a pairing redirect are privileged local actions. Global CORS is retained for
+// ordinary local-data APIs, but these routes require the configured Life OS UI
+// origin so another web page cannot trigger them in the background.
+function requireLifeOsUiOrigin(req, res, next) {
+  const origin = req.get('origin')
+  if (!origin || !LOCAL_UI_ORIGINS.has(origin)) {
+    return res.status(403).json({ error: 'This terminal action must come from the local Life OS interface.' })
+  }
+  next()
+}
 
 // ─── Memories photo upload ───────────────────────────────────────
 const MEMORIES_DIR = path.join(VAULT, 'memories')
@@ -1029,6 +1083,56 @@ async function writeTree(data) {
   await fs.writeFile(TREE_FILE, JSON.stringify(data, null, 2))
 }
 
+// Setup reset is intentionally a server-side, two-step operation.  Opening
+// /setup never mutates anything: the UI must first show the preview and the
+// user must type the exact phrase before personal content is removed. Do not
+// keep the preview in server memory: backend restarts must not turn an already
+// acknowledged destructive action into an opaque failure.
+const SETUP_RESET_PHRASE = 'СТЕРЕТЬ ВСЕ ДАННЫЕ'
+
+function setupResetSummary() {
+  return [
+    'сферы, цели и задачи', 'привычки и их отметки', 'inbox и инсайты',
+    'воспоминания и фотографии', 'списки', 'люди и их заметки', 'реакции и AI-карточки ленты',
+  ]
+}
+
+app.post('/api/setup/reset-preview', requireLifeOsUiOrigin, async (req, res) => {
+  res.json({ deletes: setupResetSummary(), preserves: ['тема интерфейса', 'настройки и подключение OpenCode'] })
+})
+
+app.post('/api/setup/reset', requireLifeOsUiOrigin, async (req, res) => {
+  if (req.body?.confirmation !== SETUP_RESET_PHRASE) {
+    return res.status(400).json({ error: 'explicit reset confirmation required' })
+  }
+  try {
+    const listsIndex = JSON.parse(await fs.readFile(path.join(VAULT, 'lists/_index.json'), 'utf8').catch(() => '{"collections":[]}'))
+    await writeTree({ _type: 'tree', updated: new Date().toISOString().slice(0, 10), nodes: [] })
+    await fs.writeFile(path.join(VAULT, 'habits/definitions.json'), JSON.stringify({ categories: [] }, null, 2))
+    await fs.writeFile(path.join(VAULT, 'inbox/current.json'), JSON.stringify({ _type: 'inbox', updated: new Date().toISOString().slice(0, 10), items: [] }, null, 2))
+    await fs.writeFile(path.join(VAULT, 'insights/index.json'), JSON.stringify({ updated: new Date().toISOString().slice(0, 10), insights: [] }, null, 2))
+    await fs.writeFile(path.join(VAULT, 'memories/index.json'), JSON.stringify({ entries: [] }, null, 2))
+    await fs.writeFile(PEOPLE_INDEX, JSON.stringify({ people: [] }, null, 2))
+    await Promise.all((listsIndex.collections || []).map(collection => {
+      const id = path.basename(String(collection.id || ''))
+      return id ? fs.writeFile(path.join(VAULT, 'lists', `${id}.json`), JSON.stringify({ items: [] }, null, 2)) : Promise.resolve()
+    }))
+    await Promise.all([
+      fs.rm(path.join(VAULT, 'habits/log'), { recursive: true, force: true }),
+      fs.rm(path.join(VAULT, 'memories/photos'), { recursive: true, force: true }),
+      fs.rm(path.join(BRAIN_DIR, 'people'), { recursive: true, force: true }),
+      fs.rm(path.join(VAULT, 'feed/reactions.json'), { force: true }),
+      fs.rm(path.join(VAULT, 'feed/ai-cards.json'), { force: true }),
+      fs.rm(path.join(VAULT, 'feed/note-jobs.json'), { force: true }),
+    ])
+    await fs.mkdir(path.join(VAULT, 'habits/log'), { recursive: true })
+    await fs.mkdir(path.join(VAULT, 'memories/photos'), { recursive: true })
+    await fs.mkdir(path.join(BRAIN_DIR, 'people'), { recursive: true })
+    await fs.writeFile(PEOPLE_INDEX, JSON.stringify({ people: [] }, null, 2))
+    res.json({ ok: true })
+  } catch (error) { res.status(500).json({ error: error.message }) }
+})
+
 // Data-free AI review control plane.  The records are deliberately independent
 // of CLI history: no transcript, raw source path, or provider credential is a
 // valid input or output of these routes.
@@ -1092,7 +1196,8 @@ app.get('/api/tree/leaves', async (req, res) => {
     const nodeMap = {}
     nodes.forEach(n => (nodeMap[n.id] = n))
     const childIds = new Set(nodes.map(n => n.parent_id).filter(Boolean))
-    const leaves = nodes.filter(n => !childIds.has(n.id))
+    // A root is a domain, never an actionable leaf even if it currently has no children.
+    const leaves = nodes.filter(n => n.parent_id !== null && !childIds.has(n.id))
 
     const enriched = leaves.map(leaf => {
       let cur = leaf
@@ -1238,8 +1343,17 @@ app.post('/api/tree', async (req, res) => {
     if (req.body?.status === 'blocked') return res.status(400).json({ error: 'blocked is derived from blocked_by and cannot be stored' })
     const data = await readTree()
     const today = new Date().toISOString().slice(0, 10)
+    if (req.body?.id && data.nodes.some(item => item.id === req.body.id)) {
+      return res.status(409).json({ error: 'node id already exists' })
+    }
+    if (req.body?.parent_id && !data.nodes.some(item => item.id === req.body.parent_id)) {
+      return res.status(400).json({ error: 'parent node not found' })
+    }
+    if (req.body?.parent_id === null && req.body?.status != null) {
+      return res.status(400).json({ error: 'a root domain cannot have a task status' })
+    }
     const node = {
-      id: `node-${Date.now()}`,
+      id: `node-${randomUUID()}`,
       title: '',
       outcome: null,
       parent_id: null,
@@ -1378,20 +1492,269 @@ app.delete('/api/tree/:id', async (req, res) => {
 
 const AI_SYSTEM_PROMPT = 'Ты личный ассистент в Life OS — системе управления жизнью пользователя. Помогай разбирать задачи, декомпозировать цели, планировать день. Отвечай кратко и по делу на русском языке. Используй markdown для форматирования когда уместно.'
 
+async function openCodeServerAvailability(runtime = aiRuntimeConfig(), managerOverride = null) {
+  if (runtime.runtime !== 'opencode') return null
+
+  let manager = managerOverride
+  let managerError = null
+  if (!manager) {
+    try {
+      manager = managedServerFor(runtime)
+    } catch (error) {
+      managerError = error
+    }
+  }
+
+  // Never let lifecycle reporting launch a process. The bridge probe is also
+  // passive: it can recognize a user-managed legacy server, but it cannot
+  // authenticate to an external protected v2 server without an explicit
+  // future credential-onboarding flow.
+  const bridgeStatus = await openCodeBridge.availability()
+  if (!manager) {
+    if (bridgeStatus.available) return { ...bridgeStatus, mode: 'external', managed: false, owned: false, status: 'ready' }
+    return {
+      ...bridgeStatus,
+      mode: 'managed',
+      managed: true,
+      owned: false,
+      status: 'failed',
+      available: false,
+      reason: managerError?.code || bridgeStatus.reason || 'managed_server_error',
+    }
+  }
+
+  const lifecycle = manager.availability()
+  if (lifecycle.status === 'starting') {
+    return {
+      ...bridgeStatus,
+      ...lifecycle,
+      available: false,
+      reason: 'server_starting',
+    }
+  }
+  if (lifecycle.status === 'endpoint_occupied' || lifecycle.status === 'failed') {
+    return {
+      ...bridgeStatus,
+      ...lifecycle,
+      available: false,
+      reason: lifecycle.errorCode || bridgeStatus.reason || 'managed_server_failed',
+    }
+  }
+  if (bridgeStatus.available && lifecycle.status === 'stopped') {
+    // A manually started v1 server may still be useful. It remains external:
+    // Life OS will neither own nor stop it.
+    return { ...bridgeStatus, mode: 'external', managed: false, owned: false, status: 'ready' }
+  }
+  if (!bridgeStatus.available && lifecycle.status === 'stopped' && bridgeStatus.reason === 'server_unreachable') {
+    return {
+      ...bridgeStatus,
+      ...lifecycle,
+      available: false,
+      reason: 'server_not_started',
+    }
+  }
+  return { ...bridgeStatus, ...lifecycle }
+}
+
+function openCodeFailure(error, requestId) {
+  let code = error?.code || 'opencode_server_error'
+  if (code === 'server_unreachable' && managedOpenCodeServer?.availability().status === 'stopped') {
+    code = 'server_not_started'
+  }
+  const descriptions = {
+    server_not_started: 'OpenCode не запущен. Нажми «Запустить OpenCode».',
+    server_unreachable: 'OpenCode server недоступен. Проверь локальный адрес и попробуй запустить managed OpenCode из Life OS.',
+    server_starting: 'OpenCode ещё запускается. Дождись статуса готовности и повтори запрос.',
+    endpoint_occupied: 'Порт для managed OpenCode уже занят. Life OS не подключается к неизвестному процессу и не останавливает его.',
+    server_invalid_response: 'OpenCode не вернул поддерживаемый JSON-ответ. HTML на старом v1-пути сам по себе не означает чужой сервис; проверь точный адрес v2 API.',
+    server_v2_auth_required: 'Найден OpenCode v2, но этот внешний сервер защищён паролем. Запусти managed OpenCode из Life OS либо настрой отдельное подключение.',
+    server_auth_required: 'OpenCode server требует аутентификацию.',
+    server_url_missing: 'Не задан адрес OpenCode server.',
+    server_url_invalid: 'Адрес OpenCode server в .env задан некорректно.',
+    server_url_not_loopback: 'OpenCode server должен быть доступен только по loopback-адресу.',
+    server_url_port_required: 'Для запуска OpenCode из Life OS укажи в OPENCODE_SERVER_URL фиксированный ненулевой порт.',
+    server_url_launch_unsupported: 'Life OS может открыть `opencode serve` только для HTTP loopback-адреса. HTTPS endpoint запускай и настраивай вручную.',
+    managed_url_invalid: 'Для managed OpenCode задай точный URL: OPENCODE_SERVER_URL=http://127.0.0.1:4096 (только HTTP, 127.0.0.1 и фиксированный ненулевой порт; не https и не localhost).',
+    managed_config_change_while_active: 'Нельзя менять адрес или команду OpenCode, пока managed сервер работает.',
+    model_missing: 'Укажи OPENCODE_MODEL в формате provider/model, например assistant/assistant.',
+    model_invalid: 'OPENCODE_MODEL должен иметь формат provider/model.',
+    model_not_allowed: 'Для setup и встроенного чата Life OS OPENCODE_MODEL должен быть assistant/assistant.',
+    missing_provider: 'Настроенный провайдер не найден в работающем OpenCode server.',
+    missing_model: 'Настроенная модель не найдена у провайдера OpenCode.',
+    session_unknown: 'Эта сессия больше не известна текущему серверу Life OS. Открой OpenCode вручную или начни новый запрос.',
+    session_model_changed: 'Настройки модели изменились. Начни новый чат, чтобы не смешивать контексты.',
+    empty_response: 'OpenCode завершил сессию без текстового ответа. Открой сессию в OpenCode для диагностики.',
+    pairing_unsupported: 'Этот OpenCode server не поддерживает безопасное v2 pairing-открытие.',
+    pairing_invalid_response: 'OpenCode не вернул корректную pairing-ссылку.',
+    pairing_unavailable: 'Открыть OpenCode можно только для managed v2-сервера, запущенного Life OS.',
+    stop_failed: 'Life OS не смог остановить owned OpenCode-процесс.',
+    stop_timeout: 'Owned OpenCode-процесс не завершился после контролируемой остановки.',
+  }
+  const action = ['server_unreachable', 'server_not_started'].includes(code)
+    ? 'start_server'
+    : (code === 'server_starting' ? 'wait_for_server' : (code.startsWith('server_') || code === 'endpoint_occupied' ? 'fix_server_configuration' : 'open_opencode'))
+  return {
+    error: `${descriptions[code] || 'OpenCode не смог обработать сессию.'} Код диагностики: ${requestId}`,
+    requestId,
+    code,
+    action,
+  }
+}
+
+function openCodeStatusFor(error) {
+  if (['messages_missing', 'prompt_missing', 'session_invalid'].includes(error?.code)) return 400
+  if (['server_url_missing', 'server_url_invalid', 'server_url_not_loopback', 'server_url_port_required', 'server_url_launch_unsupported', 'managed_url_invalid', 'command_invalid'].includes(error?.code)) return 400
+  if (error?.code === 'session_unknown') return 404
+  if (['endpoint_occupied', 'server_starting', 'pairing_unavailable', 'pairing_unsupported'].includes(error?.code)) return 409
+  return 503
+}
+
 app.post('/api/ai/chat', async (req, res) => {
-  const { messages, system } = req.body
-  if (!messages?.length) return res.status(400).json({ error: 'messages required' })
+  const { messages, system, session_id: sessionId, prompt } = req.body || {}
+  if (!messages?.length && !(sessionId && prompt)) return res.status(400).json({ error: 'messages required' })
+  const requestId = randomUUID()
+  const startedAt = Date.now()
+  let pid = null
+  let heartbeat = null
+  req.once('aborted', () => console.warn('[ai/chat] client_aborted', { requestId, pid, durationMs: Date.now() - startedAt }))
+  res.once('close', () => {
+    if (!res.writableEnded) console.warn('[ai/chat] response_closed', { requestId, pid, durationMs: Date.now() - startedAt })
+  })
   try {
-    const output = await runAiTask(promptFromMessages(messages, system || AI_SYSTEM_PROMPT), { cwd: WORK_DIR })
+    const runtime = aiRuntimeConfig()
+    console.info('[ai/chat] started', { requestId, runtime: runtime.runtime, model: runtime.model || 'default' })
+    if (runtime.runtime === 'opencode') {
+      const result = sessionId
+        ? await openCodeBridge.continue(sessionId, {
+          prompt: typeof prompt === 'string'
+            ? prompt
+            : [...(messages || [])].reverse().find(message => message?.role === 'user')?.content,
+          system,
+        })
+        : await openCodeBridge.start({ messages, system: system || AI_SYSTEM_PROMPT })
+      console.info('[ai/chat] session_started', {
+        requestId,
+        sessionId: result.session_id,
+        model: result.model,
+        agent: result.agent,
+        durationMs: Date.now() - startedAt,
+      })
+      return res.status(202).json({ ...result, requestId })
+    }
+    const output = await runAiTask(promptFromMessages(messages, system || AI_SYSTEM_PROMPT), {
+      cwd: WORK_DIR,
+      onStart: ({ pid: childPid }) => {
+        pid = childPid
+        console.info('[ai/chat] spawned', { requestId, pid })
+        heartbeat = setInterval(() => {
+          console.info('[ai/chat] waiting', { requestId, pid, durationMs: Date.now() - startedAt })
+        }, 30_000)
+      },
+      onStderr: message => console.info('[ai/chat] stderr', { requestId, pid, message }),
+      onExit: ({ exitCode, signal }) => console.info('[ai/chat] process_exit', { requestId, pid, exitCode, signal, durationMs: Date.now() - startedAt }),
+    })
+    console.info('[ai/chat] completed', { requestId, durationMs: Date.now() - startedAt, pid })
     res.json({ text: output })
   } catch (e) {
-    res.status(503).json({ error: e.message })
+    if (e instanceof OpenCodeServerError || e instanceof LifeOsOpenCodeSessionError) {
+      const failure = openCodeFailure(e, requestId)
+      console.error('[ai/chat] opencode_failed', { requestId, code: failure.code, durationMs: Date.now() - startedAt })
+      return res.status(openCodeStatusFor(e)).json(failure)
+    }
+    const diagnostic = e.aiDiagnostic || {}
+    console.error('[ai/chat] failed', {
+      requestId,
+      durationMs: Date.now() - startedAt,
+      pid: diagnostic.pid ?? pid,
+      code: diagnostic.code || e.code || 'runtime_error',
+      stderr: diagnostic.stderr || undefined,
+      message: e.message,
+    })
+    res.status(503).json({
+      error: `AI не ответил (${diagnostic.code || e.code || 'runtime_error'}). Код диагностики: ${requestId}`,
+      requestId,
+      code: diagnostic.code || e.code || 'runtime_error',
+    })
+  } finally {
+    clearInterval(heartbeat)
   }
 })
 
 app.get('/api/config', async (req, res) => {
   const runtime = await checkAiRuntime({ cwd: WORK_DIR })
-  res.json({ aiRuntime: runtime.runtime, cliCommand: runtime.command, hasAi: runtime.available, aiReason: runtime.reason || null })
+  const openCodeServer = runtime.runtime === 'opencode' ? await openCodeServerAvailability(runtime) : null
+  res.json({
+    aiRuntime: runtime.runtime,
+    cliCommand: runtime.command,
+    hasAi: runtime.runtime === 'opencode' ? Boolean(runtime.available || openCodeServer?.available) : runtime.available,
+    aiReason: runtime.reason || openCodeServer?.reason || null,
+    ...(openCodeServer ? { openCodeServer } : {}),
+  })
+})
+
+app.post('/api/ai/opencode-server/start', requireLifeOsUiOrigin, async (req, res) => {
+  const requestId = randomUUID()
+  try {
+    const runtime = aiRuntimeConfig()
+    if (runtime.runtime !== 'opencode') {
+      return res.status(404).json({ error: 'Managed OpenCode is disabled for this runtime.' })
+    }
+    const manager = managedServerFor(runtime)
+    const started = await manager.start()
+    const openCodeServer = await openCodeServerAvailability(runtime, manager)
+    if (started.status !== 'ready') {
+      const error = new ManagedOpenCodeServerError('Managed OpenCode did not become ready', {
+        code: started.errorCode || 'managed_server_failed',
+      })
+      return res.status(openCodeStatusFor(error)).json({
+        ...openCodeFailure(error, requestId),
+        openCodeServer,
+      })
+    }
+    res.json({ ok: true, action: started.action, openCodeServer })
+  } catch (error) {
+    const failure = openCodeFailure(error, requestId)
+    res.status(openCodeStatusFor(error)).json(failure)
+  }
+})
+
+app.post('/api/ai/opencode-server/stop', requireLifeOsUiOrigin, async (req, res) => {
+  const requestId = randomUUID()
+  try {
+    const runtime = aiRuntimeConfig()
+    if (runtime.runtime !== 'opencode') {
+      return res.status(404).json({ error: 'Managed OpenCode is disabled for this runtime.' })
+    }
+    const manager = managedServerFor(runtime)
+    const stopped = await manager.stop()
+    const openCodeServer = await openCodeServerAvailability(runtime, manager)
+    res.json({ ok: true, action: stopped.action, openCodeServer })
+  } catch (error) {
+    const failure = openCodeFailure(error, requestId)
+    res.status(openCodeStatusFor(error)).json(failure)
+  }
+})
+
+app.get('/api/ai/sessions/:sessionId', async (req, res) => {
+  const requestId = randomUUID()
+  try {
+    if (aiRuntimeConfig().runtime !== 'opencode') return res.status(404).json({ error: 'OpenCode sessions are disabled for this runtime.' })
+    res.json(await openCodeBridge.inspect(req.params.sessionId))
+  } catch (e) {
+    const failure = openCodeFailure(e, requestId)
+    res.status(openCodeStatusFor(e)).json(failure)
+  }
+})
+
+app.post('/api/ai/sessions/:sessionId/abort', async (req, res) => {
+  const requestId = randomUUID()
+  try {
+    if (aiRuntimeConfig().runtime !== 'opencode') return res.status(404).json({ error: 'OpenCode sessions are disabled for this runtime.' })
+    res.json(await openCodeBridge.abort(req.params.sessionId))
+  } catch (e) {
+    const failure = openCodeFailure(e, requestId)
+    res.status(openCodeStatusFor(e)).json(failure)
+  }
 })
 
 app.get('/api/profile', async (req, res) => {
@@ -1411,68 +1774,111 @@ app.put('/api/profile', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
-app.post('/api/ai/open', async (req, res) => {
-  const { prompt } = req.body || {}
-  const { runtime, command: cliCmd } = aiRuntimeConfig()
-  if (runtime === 'none') return res.status(503).json({ error: 'AI is disabled. Choose codex or opencode in .env.' })
-  const platform = process.platform
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`
+}
 
-  try {
-    if (platform === 'win32') {
-      // Windows: write prompt to a temp file, copy via PowerShell, open cmd
-      const scriptPath = path.join(os.tmpdir(), 'life-os-cli.bat')
-      const promptPath = path.join(os.tmpdir(), 'life-os-prompt.txt')
-      let script = `@echo off\ncd /d "${WORK_DIR}"\n`
-      if (prompt) {
-        await fs.writeFile(promptPath, prompt, 'utf-8')
-        script += `powershell -Command "Get-Content '${promptPath}' -Raw -Encoding UTF8 | Set-Clipboard"\n`
-        script += `echo.\n`
-        script += `echo ==========================================\n`
-        script += `echo  Life OS - prompt copied to clipboard\n`
-        script += `echo  Paste your first message: Ctrl+V\n`
-        script += `echo ==========================================\n`
-        script += `echo.\n`
-      }
-      script += `${cliCmd}\n`
-      await fs.writeFile(scriptPath, script, 'utf-8')
-      exec(`start cmd /k "${scriptPath}"`)
-    } else {
-      // macOS / Linux: write a .sh, copy prompt, open terminal
-      const scriptPath = path.join(os.tmpdir(), 'life-os-cli.sh')
-      let script = `#!/bin/bash\ncd "${WORK_DIR}"\n`
-      if (prompt) {
-        const escapedPrompt = prompt.replace(/'/g, "'\\''")
-        if (platform === 'darwin') {
-          script += `echo '${escapedPrompt}' | pbcopy\n`
-          script += `echo ""\n`
-          script += `echo "══════════════════════════════════════════"\n`
-          script += `echo " Life OS — инструкции скопированы в буфер"\n`
-          script += `echo " Вставь первое сообщение: ⌘V (Cmd+V)"\n`
-          script += `echo "══════════════════════════════════════════"\n`
-          script += `echo ""\n`
-        } else {
-          // Linux: try xclip, fall back to xsel
-          script += `echo '${escapedPrompt}' | xclip -selection clipboard 2>/dev/null || echo '${escapedPrompt}' | xsel --clipboard --input 2>/dev/null || true\n`
-          script += `echo ""\n`
-          script += `echo "══════════════════════════════════════════"\n`
-          script += `echo " Life OS — prompt copied to clipboard"\n`
-          script += `echo " Paste your first message: Ctrl+Shift+V"\n`
-          script += `echo "══════════════════════════════════════════"\n`
-          script += `echo ""\n`
-        }
-      }
-      script += `${cliCmd}\n`
-      await fs.writeFile(scriptPath, script)
-      await fs.chmod(scriptPath, 0o755)
-      if (platform === 'darwin') {
-        exec(`osascript -e 'tell application "Terminal" to do script "${scriptPath}"' -e 'tell application "Terminal" to activate'`)
-      } else {
-        // Linux: try common terminal emulators
-        exec(`x-terminal-emulator -e "${scriptPath}" 2>/dev/null || gnome-terminal -- bash "${scriptPath}" 2>/dev/null || xterm -e "${scriptPath}" 2>/dev/null`)
-      }
+function appleScriptQuote(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+async function openAiTerminal({ commandLine, prompt = '' }) {
+  const platform = process.platform
+  const safePrompt = typeof prompt === 'string' ? prompt : ''
+  const scriptId = randomUUID()
+
+  if (platform === 'win32') {
+    // Windows: write prompt to a temp file, copy via PowerShell, open cmd.
+    const scriptPath = path.join(os.tmpdir(), `life-os-cli-${scriptId}.bat`)
+    const promptPath = path.join(os.tmpdir(), `life-os-prompt-${scriptId}.txt`)
+    let script = `@echo off\ncd /d "${WORK_DIR.replace(/"/g, '""')}"\n`
+    if (safePrompt) {
+      await fs.writeFile(promptPath, safePrompt, 'utf-8')
+      script += `powershell -Command "Get-Content '${promptPath}' -Raw -Encoding UTF8 | Set-Clipboard"\n`
+      script += `echo.\necho ==========================================\necho  Life OS - prompt copied to clipboard\necho  Paste your first message: Ctrl+V\necho ==========================================\necho.\n`
     }
+    script += `${commandLine}\n`
+    await fs.writeFile(scriptPath, script, 'utf-8')
+    exec(`start cmd /k "${scriptPath}"`)
+    return
+  }
+
+  // macOS / Linux: write a .sh, copy any user-provided prompt, open terminal.
+  const scriptPath = path.join(os.tmpdir(), `life-os-cli-${scriptId}.sh`)
+  let script = `#!/bin/bash\ncd ${shellQuote(WORK_DIR)}\n`
+  if (safePrompt) {
+    const escapedPrompt = safePrompt.replace(/'/g, "'\\''")
+    if (platform === 'darwin') {
+      script += `echo '${escapedPrompt}' | pbcopy\n`
+      script += `echo ""\necho "══════════════════════════════════════════"\necho " Life OS — инструкции скопированы в буфер"\necho " Вставь первое сообщение: ⌘V (Cmd+V)"\necho "══════════════════════════════════════════"\necho ""\n`
+    } else {
+      // Linux: try xclip, fall back to xsel.
+      script += `echo '${escapedPrompt}' | xclip -selection clipboard 2>/dev/null || echo '${escapedPrompt}' | xsel --clipboard --input 2>/dev/null || true\n`
+      script += `echo ""\necho "══════════════════════════════════════════"\necho " Life OS — prompt copied to clipboard"\necho " Paste your first message: Ctrl+Shift+V"\necho "══════════════════════════════════════════"\necho ""\n`
+    }
+  }
+  script += `${commandLine}\n`
+  await fs.writeFile(scriptPath, script)
+  await fs.chmod(scriptPath, 0o755)
+  if (platform === 'darwin') {
+    const escapedScriptPath = appleScriptQuote(scriptPath)
+    exec(`osascript -e 'tell application "Terminal" to do script "${escapedScriptPath}"' -e 'tell application "Terminal" to activate'`)
+  } else {
+    // Linux: try common terminal emulators.
+    exec(`x-terminal-emulator -e ${shellQuote(scriptPath)} 2>/dev/null || gnome-terminal -- bash ${shellQuote(scriptPath)} 2>/dev/null || xterm -e ${shellQuote(scriptPath)} 2>/dev/null`)
+  }
+}
+
+app.post('/api/ai/sessions/:sessionId/open', requireLifeOsUiOrigin, async (req, res) => {
+  const requestId = randomUUID()
+  try {
+    const runtime = aiRuntimeConfig()
+    if (runtime.runtime !== 'opencode') return res.status(404).json({ error: 'OpenCode sessions are disabled for this runtime.' })
+    // Only a session created by this backend can be opened. Legacy external
+    // v1 keeps its explicit terminal attach; v2 receives a one-time pairing
+    // capability directly in a redirect. Neither path exposes a managed v2
+    // password to Life OS JavaScript.
+    const record = openCodeBridge.getRecord(req.params.sessionId)
+    if (record.protocol === 'v1') {
+      await openAiTerminal({ commandLine: openCodeAttachCommand(runtime, req.params.sessionId) })
+      return res.json({ ok: true, session_id: req.params.sessionId, handoff: 'terminal' })
+    }
+    const manager = managedServerFor(runtime)
+    const credentials = manager.credentials()
+    if (!credentials) {
+      throw new LifeOsOpenCodeSessionError('Managed OpenCode pairing is unavailable', { code: 'pairing_unavailable' })
+    }
+    const pairing = await openCodeBridge.createPairing(req.params.sessionId)
+    const location = new URL(`/auth/connect/${encodeURIComponent(pairing.code)}`, credentials.url).toString()
+    res.set({
+      'Cache-Control': 'no-store, private',
+      'Referrer-Policy': 'no-referrer',
+    })
+    // Do not use `res.redirect()`: Express writes an HTML response body that
+    // repeats the one-time URL. The browser navigation only needs Location.
+    res.status(303).location(location).end()
+  } catch (e) {
+    res.status(openCodeStatusFor(e)).json(openCodeFailure(e, requestId))
+  }
+})
+
+app.post('/api/ai/open', requireLifeOsUiOrigin, async (req, res) => {
+  const requestId = randomUUID()
+  const { prompt, action } = req.body || {}
+  const runtime = aiRuntimeConfig()
+  if (runtime.runtime === 'none') return res.status(503).json({ error: 'AI is disabled. Choose codex or opencode in .env.' })
+  if (action) {
+    return res.status(400).json({ error: 'Use the managed OpenCode server controls for OpenCode lifecycle actions.' })
+  }
+  try {
+    // This legacy helper remains for the non-OpenCode console UX (including
+    // Codex). It must never be used to hand OpenCode a managed password.
+    await openAiTerminal({ commandLine: runtime.command, prompt })
     res.json({ ok: true })
   } catch (e) {
+    if (e instanceof OpenCodeServerError || e instanceof LifeOsOpenCodeSessionError || e instanceof ManagedOpenCodeServerError) {
+      return res.status(openCodeStatusFor(e)).json(openCodeFailure(e, requestId))
+    }
     res.status(500).json({ error: e.message })
   }
 })
@@ -2925,10 +3331,32 @@ async function initBrain() {
   }
 }
 
-app.listen(PORT, async () => {
+const backendServer = app.listen(PORT, async () => {
   await initBrain()
   console.log(`Life OS backend running on http://localhost:${PORT}`)
 })
+
+let shuttingDown = false
+async function shutdownBackend() {
+  if (shuttingDown) return
+  shuttingDown = true
+  try {
+    // An external OpenCode process is never adopted, so shutdown can only
+    // stop a child this backend explicitly owns.
+    await managedOpenCodeServer?.shutdown()
+  } catch {
+    // Do not print child-process output or credentials while shutting down.
+  }
+  const forceExit = setTimeout(() => process.exit(0), 6_000)
+  forceExit.unref?.()
+  backendServer.close(() => {
+    clearTimeout(forceExit)
+    process.exit(0)
+  })
+}
+
+process.once('SIGINT', shutdownBackend)
+process.once('SIGTERM', shutdownBackend)
 
 // ─── Google Calendar sync ──────────────────────────────────────────
 

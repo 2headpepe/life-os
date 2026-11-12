@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, ArrowUp, Loader2, CheckCircle2, Sparkles, Terminal, RefreshCw } from 'lucide-react'
+import { AlertCircle, ArrowRight, ArrowUp, ExternalLink, Loader2, CheckCircle2, Play, Sparkles, Terminal, RefreshCw, X } from 'lucide-react'
 import { ai, config as configApi, tree as treeApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
+import { pollAiSession } from '../utils/aiSession'
 import ThemeSwitcher from '../components/ui/ThemeSwitcher'
 
 const SPHERE_COLORS = ['#3B82F6', '#22C55E', '#EF4444', '#06B6D4', '#EC4899', '#F59E0B', '#8B5CF6', '#F97316']
@@ -12,7 +13,7 @@ const SETUP_SYSTEM = `Ты помощник по настройке Life OS — 
 
 Когда просят предложить сферы жизни — верни ТОЛЬКО JSON-блок в таком формате, без лишнего текста до/после:
 \`\`\`json
-{"spheres":[{"id":"root-health","title":"Здоровье","color":"#3B82F6"},{"id":"root-work","title":"Работа","color":"#22C55E"}]}
+{"spheres":[{"id":"root-health","title":"Здоровье и спорт","color":"#3B82F6","kind":"primary","reason":"баскетбол и желание быть активнее"},{"id":"root-leisure","title":"Отдых и хобби","color":"#F59E0B","kind":"optional","reason":"дополняет картину жизни"}]}
 \`\`\`
 
 Когда просят предложить задачи — верни ТОЛЬКО JSON-блок:
@@ -20,7 +21,7 @@ const SETUP_SYSTEM = `Ты помощник по настройке Life OS — 
 {"tasks":[{"title":"Название задачи","parent_id":"root-health","status":"in_progress"}]}
 \`\`\`
 
-id сфер должны быть в формате root-{slug} (латиница, дефисы).`
+Сфера — это широкая область жизни, а не отдельное занятие: баскетбол относится к «Здоровью и спорту», чтение — к «Отдыху и хобби». Верни 2–4 primary только когда они прямо следуют из текста, и 3–4 optional как полезное, разнообразное покрытие. id сфер должны быть в формате root-{slug} (латиница, дефисы).`
 
 const CLI_ONBOARDING_PROMPT = `Ты настраиваешь Life OS — личную систему управления жизнью — для нового пользователя.
 
@@ -65,6 +66,129 @@ function StepDots({ step, total }) {
       {Array.from({ length: total }).map((_, i) => (
         <div key={i} className={`h-1.5 rounded-full transition-all ${i === step ? 'w-5 bg-gray-900 dark:bg-white' : 'w-1.5 bg-gray-200 dark:bg-gray-700'}`} />
       ))}
+    </div>
+  )
+}
+
+const SERVER_CONFIGURATION_ISSUES = new Set([
+  'model_missing', 'model_not_allowed', 'missing_provider', 'missing_model',
+  'server_url_missing', 'server_url_invalid', 'server_url_not_loopback',
+  'server_url_port_required', 'server_protocol_unsupported',
+])
+
+function serverLifecycle(server) {
+  return server?.state || server?.status || server?.lifecycle || server?.managed?.state || (server?.available ? 'ready' : 'stopped')
+}
+
+function OpenCodeServerRecovery({ server, errorCode, busy, onStart, onStop, onRefresh }) {
+  const state = serverLifecycle(server)
+  const reason = errorCode || server?.reason || null
+  const isManaged = server?.managed === true || server?.owned === true || server?.managed?.owned === true
+  const copy = (() => {
+    if (state === 'ready') return {
+      title: 'OpenCode готов',
+      detail: 'Life OS подключён к локальному OpenCode. Для действий агент всё равно спросит разрешение.',
+    }
+    if (state === 'starting') return {
+      title: 'OpenCode запускается',
+      detail: 'Life OS ждёт подтверждённый ответ OpenCode. Пароль сервера не передаётся в браузер.',
+    }
+    if (state === 'endpoint_occupied') return {
+      title: 'Порт OpenCode уже занят',
+      detail: 'Life OS не станет подключаться к неизвестному процессу и не остановит его. Освободи порт или измени настройку.',
+    }
+    if (reason === 'server_v2_auth_required' || reason === 'server_auth_required') return {
+      title: 'Найден OpenCode v2, но нужен доступ',
+      detail: 'Это не ошибка провайдера. Сервер защищён паролем, которым Life OS не располагает. Запусти управляемый сервер из Life OS или настрой отдельное подключение.',
+    }
+    if (reason === 'server_invalid_response') return {
+      title: 'На адресе ответил не OpenCode',
+      detail: 'Проверка v2 не распознала OpenCode. HTML на старом v1-адресе сам по себе не является такой ошибкой.',
+    }
+    if (SERVER_CONFIGURATION_ISSUES.has(reason)) return {
+      title: 'Проверь настройку OpenCode',
+      detail: 'Для setup и чата нужен доступный assistant/assistant в OpenCode.',
+    }
+    if (state === 'failed') return {
+      title: 'OpenCode не запустился',
+      detail: 'Проверь диагностику и попробуй запустить сервер ещё раз.',
+    }
+    return {
+      title: 'OpenCode не запущен',
+      detail: 'Life OS запускает отдельный локальный сервер только после явного нажатия кнопки.',
+    }
+  })()
+  if (state === 'ready') return null
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" role="status" aria-live="polite">
+      <div className="flex gap-2">
+        <AlertCircle size={15} className="mt-0.5 flex-shrink-0" />
+        <div className="space-y-1.5">
+          <p className="font-medium">{copy.title}</p>
+          <p className="leading-relaxed">{copy.detail}</p>
+          {reason && <p className="text-[11px] opacity-80">{reason}</p>}
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {state !== 'starting' && state !== 'ready' && <button type="button" onClick={onStart} disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-900 px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:bg-amber-200 dark:text-amber-950">
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Запустить OpenCode
+        </button>}
+        <button type="button" onClick={onRefresh} disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:hover:bg-amber-900/40">
+          <RefreshCw size={12} /> Проверить соединение
+        </button>
+        {isManaged && state === 'ready' && <button type="button" onClick={onStop} disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:hover:bg-amber-900/40">
+          <X size={12} /> Остановить
+        </button>}
+      </div>
+    </div>
+  )
+}
+
+function OpenCodeSessionStatus({ session, busy, onOpen, onCancel, onCheck, actionRef }) {
+  if (!session) return null
+  const state = session.state || 'running'
+  const needsTerminal = state === 'permission_required' || state === 'needs_attention'
+  const copy = {
+    running: ['OpenCode обрабатывает запрос', 'Ответ появится здесь. Life OS не подтверждает никакие действия за тебя.'],
+    permission_required: ['OpenCode ждёт твоего разрешения', 'Life OS не отвечает на permission-запросы. Открой эту сессию в OpenCode и прими решение там.'],
+    needs_attention: ['Нужна проверка сессии', 'Ответ не появился вовремя. Открой сессию в OpenCode или отмени запрос.'],
+    failed: ['OpenCode не завершил запрос', session.error || 'Проверь сессию в OpenCode или попробуй отправить запрос снова.'],
+    cancelled: ['Запрос отменён', 'Можно сформулировать запрос заново.'],
+  }[state] || ['OpenCode обрабатывает запрос', 'Ответ появится здесь.']
+
+  return (
+    <div className={`rounded-xl border p-3 text-xs ${needsTerminal ? 'border-violet-200 bg-violet-50 text-violet-900 dark:border-violet-900/60 dark:bg-violet-950/30 dark:text-violet-200' : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-gray-800 dark:bg-gray-800 dark:text-gray-300'}`} role="status" aria-live="polite">
+      <div className="flex gap-2">
+        {state === 'running' && <Loader2 size={15} className="mt-0.5 animate-spin flex-shrink-0" />}
+        {state !== 'running' && <AlertCircle size={15} className="mt-0.5 flex-shrink-0" />}
+        <div className="space-y-1">
+          <p className="font-medium">{copy[0]}</p>
+          <p className="leading-relaxed">{copy[1]}</p>
+        </div>
+      </div>
+      {(state === 'running' || needsTerminal || state === 'failed') && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {state === 'running' || needsTerminal || state === 'failed' ? (
+            <button ref={actionRef} type="button" onClick={onOpen} disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:bg-white dark:text-gray-900">
+              <ExternalLink size={12} /> {session.can_open_terminal ? 'Открыть в терминале' : 'Открыть OpenCode Web'}
+            </button>
+          ) : null}
+          {needsTerminal ? (
+            <button type="button" onClick={onCheck} disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-current/25 px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/10">
+              <RefreshCw size={12} /> Проверить ответ
+            </button>
+          ) : null}
+          <button type="button" onClick={onCancel} disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-current/25 px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/10">
+            <X size={12} /> Отменить
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -169,74 +293,269 @@ function CliOnboarding({ cliCommand, onDone }) {
 export default function Onboarding({ onDone }) {
   const navigate = useNavigate()
   const [hasAi, setHasAi] = useState(null)
+  const [hasExistingData, setHasExistingData] = useState(null)
   const [cliCommand, setCliCommand] = useState('codex')
+  const [aiRuntime, setAiRuntime] = useState('none')
+  const [openCodeServer, setOpenCodeServer] = useState(null)
   const [step, setStep] = useState(0)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [errorCode, setErrorCode] = useState(null)
   const [history, setHistory] = useState([])
   const [spheres, setSpheres] = useState([])
   const [editingSphere, setEditingSphere] = useState(null)
   const [tasks, setTasks] = useState([])
+  const [habits, setHabits] = useState([])
+  const [habitInput, setHabitInput] = useState('')
+  const [resetPreview, setResetPreview] = useState(null)
+  const [resetConfirmation, setResetConfirmation] = useState('')
+  const [openCodeSessionId, setOpenCodeSessionId] = useState(null)
+  const [activeSession, setActiveSession] = useState(null)
+  const [pendingRequest, setPendingRequest] = useState(null)
+  const [serverActionLoading, setServerActionLoading] = useState(false)
+  const pollAbortRef = useRef(null)
+  const terminalActionRef = useRef(null)
+
+  const refreshConfig = async () => {
+    try {
+      const c = await configApi.get()
+      setHasAi(!!c.hasAi)
+      setCliCommand(c.cliCommand || 'codex')
+      setAiRuntime(c.aiRuntime || 'none')
+      setOpenCodeServer(c.openCodeServer || null)
+      if (c.openCodeServer?.available && errorCode?.startsWith('server_')) {
+        setError(null)
+        setErrorCode(null)
+      }
+      return c
+    } catch {
+      setHasAi(false)
+      return null
+    }
+  }
 
   useEffect(() => {
-    configApi.get()
-      .then(c => { setHasAi(!!c.hasAi); setCliCommand(c.cliCommand || 'codex') })
-      .catch(() => setHasAi(false))
+    void refreshConfig()
+    treeApi.all().then(nodes => setHasExistingData(nodes.some(node => node.parent_id !== null))).catch(() => setHasExistingData(false))
+    return () => pollAbortRef.current?.abort()
+    // Configuration is intentionally refreshed after an explicit server action.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (activeSession?.state === 'permission_required' || activeSession?.state === 'needs_attention') {
+      window.setTimeout(() => terminalActionRef.current?.focus(), 0)
+    }
+  }, [activeSession?.state])
 
   const spheresWithIds = spheres.map((s, i) => ({
     ...s,
     id: s.id || `root-sphere-${i}`,
   }))
 
+  const applySetupReply = (kind, text, sourceText) => {
+    const parsed = extractJson(text || '')
+    if (kind === 'spheres') {
+      if (!parsed?.spheres?.length) {
+        setError('AI не вернул список сфер. Попробуй описать подробнее.')
+        return false
+      }
+      setSpheres(parsed.spheres.map((sphere, i) => ({ ...sphere, kind: sphere.kind === 'optional' ? 'optional' : 'primary', color: sphere.color || SPHERE_COLORS[i % SPHERE_COLORS.length] })))
+      setStep(2)
+    } else if (kind === 'tasks') {
+      if (!parsed?.tasks?.length) {
+        setError('AI не вернул список задач. Попробуй описать подробнее.')
+        return false
+      }
+      setTasks(parsed.tasks)
+      setStep(4)
+    } else {
+      if (!parsed?.habits?.length) { setError('AI не вернул привычки. Их можно добавить вручную или пропустить.'); return false }
+      setHabits(parsed.habits.map((habit, index) => ({ ...habit, id: habit.id || `onboarding-${Date.now()}-${index}`, kind: habit.kind || 'toggle', active: true, max_score: 1 })))
+      setStep(5)
+    }
+    setHistory(previous => [...previous, { role: 'user', content: sourceText }])
+    setPendingRequest(null)
+    setActiveSession(null)
+    setError(null)
+    setErrorCode(null)
+    return true
+  }
+
+  const submitOpenCodeAwareChat = async ({ messages, prompt }) => {
+    const reuseSession = aiRuntime === 'opencode' ? openCodeSessionId : null
+    const response = await ai.chat(messages, SETUP_SYSTEM, {
+      sessionId: reuseSession,
+      // The first request retains the full, backwards-compatible transcript.
+      // Subsequent OpenCode requests carry only their new prompt and keep the
+      // prior context inside the same local OpenCode session.
+      prompt: reuseSession ? prompt : undefined,
+    })
+    if (response.error) {
+      const failure = new Error(response.error)
+      failure.code = response.code
+      throw failure
+    }
+    if (!response.session_id) return response
+
+    setOpenCodeSessionId(response.session_id)
+    setActiveSession({ session_id: response.session_id, state: response.state || 'running' })
+    pollAbortRef.current?.abort()
+    const controller = new AbortController()
+    pollAbortRef.current = controller
+    const snapshot = await pollAiSession(response.session_id, {
+      signal: controller.signal,
+      onUpdate: setActiveSession,
+    })
+    if (pollAbortRef.current === controller) pollAbortRef.current = null
+    return snapshot
+  }
+
+  const resumeActiveSession = async () => {
+    if (!activeSession?.session_id || loading) return
+    setLoading(true)
+    setError(null)
+    setErrorCode(null)
+    pollAbortRef.current?.abort()
+    const controller = new AbortController()
+    pollAbortRef.current = controller
+    try {
+      const snapshot = await pollAiSession(activeSession.session_id, {
+        signal: controller.signal,
+        onUpdate: setActiveSession,
+      })
+      if (snapshot.state === 'completed' && pendingRequest) {
+        applySetupReply(pendingRequest.kind, snapshot.text, pendingRequest.sourceText)
+      } else if (snapshot.state === 'failed') {
+        setError(snapshot.error || 'OpenCode не завершил запрос.')
+        setErrorCode(snapshot.code || 'session_failed')
+      }
+    } catch (e) {
+      setError(e.message || 'Не удалось проверить сессию OpenCode.')
+      setErrorCode(e.code || 'session_status_error')
+    } finally {
+      if (pollAbortRef.current === controller) pollAbortRef.current = null
+      setLoading(false)
+    }
+  }
+
+  const openActiveSession = async () => {
+    if (!activeSession?.session_id) return
+    try {
+      const result = await ai.openSession(activeSession.session_id, { legacyTerminal: activeSession.can_open_terminal === true })
+      if (result.error) throw new Error(result.error)
+    } catch (e) {
+      setError(e.message || 'Не удалось открыть сессию в OpenCode.')
+    }
+  }
+
+  const cancelActiveSession = async () => {
+    if (!activeSession?.session_id) return
+    pollAbortRef.current?.abort()
+    setLoading(true)
+    try {
+      const result = await ai.abortSession(activeSession.session_id)
+      if (result.error) throw new Error(result.error)
+      setActiveSession(previous => ({ ...previous, state: 'cancelled' }))
+      setOpenCodeSessionId(null)
+      setPendingRequest(null)
+    } catch (e) {
+      setError(e.message || 'Не удалось отменить сессию OpenCode.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const startOpenCodeServer = async () => {
+    setServerActionLoading(true)
+    setError(null)
+    setErrorCode(null)
+    try {
+      const result = await ai.startOpenCodeServer()
+      if (result.error) {
+        const failure = new Error(result.error)
+        failure.code = result.code
+        throw failure
+      }
+      setOpenCodeServer(result.openCodeServer || result.server || result)
+      await refreshConfig()
+    } catch (e) {
+      setError(e.message || 'Не удалось запустить OpenCode.')
+      setErrorCode(e.code || 'server_start_failed')
+    } finally {
+      setServerActionLoading(false)
+    }
+  }
+
+  const stopOpenCodeServer = async () => {
+    setServerActionLoading(true)
+    try {
+      const result = await ai.stopOpenCodeServer()
+      if (result.error) {
+        const failure = new Error(result.error)
+        failure.code = result.code
+        throw failure
+      }
+      setOpenCodeServer(result.openCodeServer || result.server || result)
+      setOpenCodeSessionId(null)
+      setActiveSession(null)
+      setPendingRequest(null)
+      await refreshConfig()
+    } catch (e) {
+      setError(e.message || 'Не удалось остановить OpenCode.')
+      setErrorCode(e.code || 'server_stop_failed')
+    } finally {
+      setServerActionLoading(false)
+    }
+  }
+
+  const submitSetupPrompt = async (kind, text, messages, prompt) => {
+    setInput('')
+    setLoading(true)
+    setError(null)
+    setErrorCode(null)
+    setPendingRequest({ kind, sourceText: text })
+    try {
+      const reply = await submitOpenCodeAwareChat({ messages, prompt })
+      if (!reply.state || reply.state === 'completed') {
+        applySetupReply(kind, reply.text, text)
+      } else if (reply.state === 'failed') {
+        setError(reply.error || 'OpenCode не завершил запрос.')
+        setErrorCode(reply.code || 'session_failed')
+      }
+    } catch (e) {
+      setError(e.message || 'Не удалось отправить запрос AI.')
+      setErrorCode(e.code || 'chat_error')
+      setPendingRequest(null)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleDescribeSelf = async () => {
     const text = input.trim()
-    if (!text || loading) return
-    setInput(''); setLoading(true); setError(null)
+    if (!text || loading || ['running', 'permission_required', 'needs_attention'].includes(activeSession?.state)) return
     const msgs = [
       ...history,
       { role: 'user', content: text },
       { role: 'user', content: 'На основе моего описания предложи 5–6 сфер жизни. Верни только JSON-блок с сферами.' },
     ]
-    try {
-      const reply = await ai.chat(msgs, SETUP_SYSTEM)
-      if (reply.error) throw new Error(reply.error)
-      const parsed = extractJson(reply.text)
-      if (parsed?.spheres?.length) {
-        setSpheres(parsed.spheres.map((s, i) => ({ ...s, color: s.color || SPHERE_COLORS[i % SPHERE_COLORS.length] })))
-        setHistory([...history, { role: 'user', content: text }])
-        setStep(2)
-      } else {
-        setError('AI не вернул список сфер. Попробуй описать подробнее.')
-      }
-    } catch (e) { setError(e.message) }
-    setLoading(false)
+    const prompt = `${text}\n\nНа основе моего описания предложи 5–6 сфер жизни. Верни только JSON-блок с сферами.`
+    await submitSetupPrompt('spheres', text, msgs, prompt)
   }
 
   const handleDescribeGoals = async () => {
     const text = input.trim()
-    if (!text || loading) return
-    setInput(''); setLoading(true); setError(null)
+    if (!text || loading || ['running', 'permission_required', 'needs_attention'].includes(activeSession?.state)) return
     const sphereList = spheresWithIds.map(s => `${s.id} = "${s.title}"`).join(', ')
     const msgs = [
       ...history,
       { role: 'user', content: text },
       { role: 'user', content: `Мои сферы: ${sphereList}. Предложи 4–6 конкретных задач. Каждая — в одну из сфер (parent_id). Верни только JSON-блок с задачами.` },
     ]
-    try {
-      const reply = await ai.chat(msgs, SETUP_SYSTEM)
-      if (reply.error) throw new Error(reply.error)
-      const parsed = extractJson(reply.text)
-      if (parsed?.tasks?.length) {
-        setTasks(parsed.tasks)
-        setHistory([...history, { role: 'user', content: text }])
-        setStep(4)
-      } else {
-        setError('AI не вернул список задач. Попробуй описать подробнее.')
-      }
-    } catch (e) { setError(e.message) }
-    setLoading(false)
+    const prompt = `${text}\n\nМои сферы: ${sphereList}. Предложи 4–6 конкретных задач. Каждая — в одну из сфер (parent_id). Верни только JSON-блок с задачами.`
+    await submitSetupPrompt('tasks', text, msgs, prompt)
   }
 
   const createSpheres = async () => {
@@ -263,12 +582,69 @@ export default function Onboarding({ onDone }) {
     setLoading(false)
   }
 
-  const finish = () => { onDone?.(); navigate('/') }
+  const finish = () => { localStorage.setItem('life-os:setup-completed', '1'); onDone?.(); navigate('/') }
+  const suggestHabits = async () => {
+    if (!spheresWithIds.length && !tasks.length) return
+    const text = `Сферы: ${spheresWithIds.map(s => s.title).join(', ') || 'нет'}. Задачи: ${tasks.map(t => t.title).join(', ') || 'нет'}.`
+    await submitSetupPrompt('habits', text, [{ role: 'user', content: `${text}\nПредложи 1–3 простых привычки, поддерживающих эти сферы и задачи. Верни JSON {"habits":[{"label":"...","kind":"toggle","reason":"..."}]}.` }], text)
+  }
 
-  if (hasAi === null) return null
+  const addSphere = () => setSpheres(previous => [...previous, {
+    id: `root-custom-${Date.now()}`, title: 'Новая сфера', color: SPHERE_COLORS[previous.length % SPHERE_COLORS.length], kind: 'primary',
+  }])
+  const addTask = () => setTasks(previous => [...previous, { title: 'Новая задача', parent_id: spheresWithIds[0]?.id || '', status: 'undefined' }])
+  const addHabit = () => {
+    const label = habitInput.trim()
+    if (!label) return
+    setHabits(previous => [...previous, { id: `onboarding-${Date.now()}`, label, kind: 'toggle', active: true, max_score: 1 }])
+    setHabitInput('')
+  }
+  const createHabits = async () => {
+    if (!habits.length) { setStep(6); return }
+    setLoading(true); setError(null)
+    try {
+      const current = await fetch('/api/content/habits/definitions.json').then(response => response.ok ? response.json() : { categories: [] })
+      const categories = current.categories || []
+      const index = categories.findIndex(category => category.id === 'onboarding')
+      const category = { id: 'onboarding', label: 'Мой старт', habits }
+      if (index >= 0) categories[index] = { ...categories[index], habits: [...(categories[index].habits || []), ...habits] }
+      else categories.push(category)
+      await fetch('/api/content/habits/definitions.json', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ categories }) })
+      setStep(6)
+    } catch (e) { setError(e.message || 'Не удалось сохранить привычки.') }
+    setLoading(false)
+  }
+  const startReset = async () => {
+    const response = await fetch('/api/setup/reset-preview', { method: 'POST' })
+    if (response.ok) setResetPreview(await response.json())
+  }
+  const confirmReset = async () => {
+    if (!resetPreview || resetConfirmation !== 'СТЕРЕТЬ ВСЕ ДАННЫЕ') return
+    setLoading(true)
+    try {
+      const response = await fetch('/api/setup/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation: resetConfirmation }) })
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Не удалось удалить данные.')
+      localStorage.removeItem('life-os:setup-completed'); setResetPreview(null); setResetConfirmation(''); setHasExistingData(false); setStep(0)
+    } catch (e) { setError(e.message) } finally { setLoading(false) }
+  }
+
+  if (hasAi === null || hasExistingData === null) return null
+
+  const isOpenCode = aiRuntime === 'opencode'
+  const openCodeState = serverLifecycle(openCodeServer)
+  const serverUnavailable = isOpenCode && (
+    openCodeState !== 'ready' || openCodeServer?.available === false ||
+    errorCode?.startsWith('server_') || SERVER_CONFIGURATION_ISSUES.has(errorCode)
+  )
+  const showServerStatus = isOpenCode && (serverUnavailable || openCodeServer?.managed === true || openCodeServer?.owned === true)
+  const activeSessionBlocksInput = ['running', 'permission_required', 'needs_attention'].includes(activeSession?.state)
+
+  if (hasExistingData) {
+    return <div className="onboarding-page min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-4"><div className="w-full max-w-lg onboarding-card bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm p-8 text-center space-y-5"><div className="onboarding-appearance onboarding-appearance--welcome"><div><p>Оформление</p><span>Можно поменять в любой момент</span></div><ThemeSwitcher /></div><div><h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Life OS уже настроен</h1><p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Сферы или другие данные уже существуют. Открой систему или осознанно удали данные, чтобы пройти настройку заново.</p></div><button onClick={finish} className="w-full rounded-xl bg-gray-900 py-3 text-sm font-medium text-white dark:bg-white dark:text-gray-900">Открыть Life OS</button><button type="button" onClick={startReset} className="text-xs text-red-500 hover:text-red-600">Удалить все данные Life OS…</button>{resetPreview && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-left text-xs text-red-900"><p>{resetPreview.deletes.join(', ')} будут удалены.</p><input value={resetConfirmation} onChange={event => setResetConfirmation(event.target.value)} placeholder="СТЕРЕТЬ ВСЕ ДАННЫЕ" className="mt-3 w-full rounded border p-2 text-gray-900" /><div className="mt-2 flex gap-2"><button onClick={() => setResetPreview(null)}>Отмена</button><button disabled={loading || resetConfirmation !== 'СТЕРЕТЬ ВСЕ ДАННЫЕ'} onClick={confirmReset} className="font-medium disabled:opacity-40">Удалить</button></div></div>}</div></div>
+  }
 
   // No-AI: show CLI onboarding screen
-  if (!hasAi) {
+  if (!hasAi && !isOpenCode) {
     return (
       <div className="onboarding-page min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-4">
         <div className="w-full max-w-lg">
@@ -285,7 +661,7 @@ export default function Onboarding({ onDone }) {
   return (
     <div className="onboarding-page min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
-        <StepDots step={Math.min(step, 5)} total={6} />
+        <StepDots step={Math.min(step, 6)} total={7} />
 
         <div className="onboarding-card mt-8 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden">
 
@@ -316,6 +692,12 @@ export default function Onboarding({ onDone }) {
               >
                 Начать настройку <ArrowRight size={15} />
               </button>
+              <button type="button" onClick={startReset} className="text-xs text-gray-400 hover:text-red-500">Начать с чистых данных…</button>
+              {resetPreview && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-left text-xs text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                <p className="font-medium">Это необратимо удалит: {resetPreview.deletes.join(', ')}.</p><p className="mt-1">Сохранятся: {resetPreview.preserves.join(', ')}.</p>
+                <input value={resetConfirmation} onChange={event => setResetConfirmation(event.target.value)} placeholder="СТЕРЕТЬ ВСЕ ДАННЫЕ" className="mt-3 w-full rounded border border-red-200 bg-white px-2 py-1.5 text-xs text-gray-900" />
+                <div className="mt-2 flex gap-2"><button type="button" onClick={() => { setResetPreview(null); setResetConfirmation('') }}>Отмена</button><button type="button" disabled={loading || resetConfirmation !== 'СТЕРЕТЬ ВСЕ ДАННЫЕ'} onClick={confirmReset} className="font-medium disabled:opacity-40">Удалить данные</button></div>
+              </div>}
             </div>
           )}
 
@@ -330,17 +712,20 @@ export default function Onboarding({ onDone }) {
                 <textarea
                   autoFocus
                   value={input}
+                  disabled={activeSessionBlocksInput}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleDescribeSelf() } }}
                   placeholder="Например: я студентка, хочу следить за здоровьем, читать больше, развивать творческие навыки…"
                   rows={4}
-                  className="w-full bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none resize-none placeholder-gray-400"
+                  className="w-full bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none resize-none placeholder-gray-400 disabled:opacity-50"
                 />
               </div>
+              {showServerStatus && <OpenCodeServerRecovery server={openCodeServer} errorCode={errorCode} busy={serverActionLoading} onStart={startOpenCodeServer} onStop={stopOpenCodeServer} onRefresh={refreshConfig} />}
+              <OpenCodeSessionStatus session={activeSession} busy={loading} onOpen={openActiveSession} onCancel={cancelActiveSession} onCheck={resumeActiveSession} actionRef={terminalActionRef} />
               {error && <p className="text-xs text-red-500">{error}</p>}
               <button
                 onClick={handleDescribeSelf}
-                disabled={!input.trim() || loading}
+                disabled={!input.trim() || loading || activeSessionBlocksInput}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
               >
                 {loading ? <Loader2 size={15} className="animate-spin" /> : <><ArrowUp size={15} /> Отправить</>}
@@ -351,12 +736,19 @@ export default function Onboarding({ onDone }) {
           {/* Step 2: Confirm spheres */}
           {step === 2 && (
             <div className="p-6 space-y-4">
-              <div>
-                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Твои сферы жизни</p>
-                <p className="text-xs text-gray-400 mt-1">Нажми на название чтобы изменить. Можешь убрать лишние.</p>
+              <div className="flex items-start gap-3">
+                <button type="button" onClick={() => setStep(1)} aria-label="Назад к рассказу о себе" className="mt-0.5 -ml-1 rounded-lg px-1.5 py-1 text-sm text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200">←</button>
+                <div>
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Твои сферы жизни</p>
+                  <p className="text-xs text-gray-400 mt-1">Нажми на название чтобы изменить. Можешь убрать лишние.</p>
+                </div>
               </div>
               <div className="space-y-2">
-                {spheres.map((s, i) => (
+                {['primary', 'optional'].map(kind => {
+                  const title = kind === 'primary' ? 'Выделено из твоего рассказа' : 'Дополнительные варианты — можно оставить или убрать'
+                  const entries = spheres.map((sphere, index) => ({ sphere, index })).filter(({ sphere }) => sphere.kind === kind)
+                  if (!entries.length) return null
+                  return <div key={kind} className="space-y-2"><p className="pt-1 text-[11px] font-medium text-gray-400">{title}</p>{entries.map(({ sphere: s, index: i }) => (
                   <div key={i} className="flex items-center gap-3 bg-gray-50 dark:bg-gray-800 rounded-xl px-3 py-2.5">
                     <input type="color" value={s.color}
                       onChange={e => setSpheres(prev => prev.map((x, j) => j === i ? { ...x, color: e.target.value } : x))}
@@ -370,12 +762,15 @@ export default function Onboarding({ onDone }) {
                         className="flex-1 bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none border-b border-gray-300 dark:border-gray-600"
                       />
                     ) : (
-                      <button onClick={() => setEditingSphere(i)} className="flex-1 text-left text-sm text-gray-800 dark:text-gray-200">{s.title}</button>
+                      <button onClick={() => setEditingSphere(i)} className="flex-1 text-left text-sm text-gray-800 dark:text-gray-200"><span>{s.title}</span>{s.reason && <span className="block mt-0.5 text-[10px] text-gray-400">{s.reason}</span>}</button>
                     )}
+                    <button type="button" title="Сделать основной/дополнительной" onClick={() => setSpheres(prev => prev.map((x, j) => j === i ? { ...x, kind: x.kind === 'optional' ? 'primary' : 'optional' } : x))} className="text-[10px] text-gray-400">{s.kind === 'optional' ? 'необяз.' : 'основная'}</button>
                     <button onClick={() => setSpheres(prev => prev.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-400 text-xs px-1">✕</button>
                   </div>
-                ))}
+                ))}</div>
+                })}
               </div>
+              <button type="button" onClick={addSphere} className="text-xs text-blue-500 hover:text-blue-600">+ Добавить свою сферу</button>
               {error && <p className="text-xs text-red-500">{error}</p>}
               <button onClick={createSpheres} disabled={loading || spheres.length === 0}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
@@ -398,21 +793,24 @@ export default function Onboarding({ onDone }) {
                 ))}
               </div>
               <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
-                <textarea autoFocus value={input}
+                <textarea autoFocus value={input} disabled={activeSessionBlocksInput}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleDescribeGoals() } }}
                   placeholder="Например: хочу начать ходить в зал, дочитать книгу по дизайну, разобраться с курсовой…"
                   rows={4}
-                  className="w-full bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none resize-none placeholder-gray-400"
+                  className="w-full bg-transparent text-sm text-gray-900 dark:text-gray-100 outline-none resize-none placeholder-gray-400 disabled:opacity-50"
                 />
               </div>
+              {showServerStatus && <OpenCodeServerRecovery server={openCodeServer} errorCode={errorCode} busy={serverActionLoading} onStart={startOpenCodeServer} onStop={stopOpenCodeServer} onRefresh={refreshConfig} />}
+              <OpenCodeSessionStatus session={activeSession} busy={loading} onOpen={openActiveSession} onCancel={cancelActiveSession} onCheck={resumeActiveSession} actionRef={terminalActionRef} />
               {error && <p className="text-xs text-red-500">{error}</p>}
-              <button onClick={handleDescribeGoals} disabled={!input.trim() || loading}
+              <button onClick={handleDescribeGoals} disabled={!input.trim() || loading || activeSessionBlocksInput}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
               >
                 {loading ? <Loader2 size={15} className="animate-spin" /> : <><ArrowUp size={15} /> Отправить</>}
               </button>
               <button onClick={() => setStep(5)} className="w-full text-xs text-gray-400 hover:text-gray-600 py-1">Пропустить</button>
+              <button type="button" onClick={() => setStep(2)} className="text-xs text-gray-400 hover:text-gray-600">← К сферам</button>
             </div>
           )}
 
@@ -441,6 +839,7 @@ export default function Onboarding({ onDone }) {
                   )
                 })}
               </div>
+              <button type="button" onClick={addTask} className="text-xs text-blue-500 hover:text-blue-600">+ Добавить задачу</button>
               {error && <p className="text-xs text-red-500">{error}</p>}
               <button onClick={createTasks} disabled={loading || tasks.length === 0}
                 className="w-full flex items-center justify-center gap-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-xl py-3 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
@@ -448,11 +847,17 @@ export default function Onboarding({ onDone }) {
                 {loading ? <Loader2 size={15} className="animate-spin" /> : <><CheckCircle2 size={15} /> Добавить задачи</>}
               </button>
               <button onClick={() => setStep(5)} className="w-full text-xs text-gray-400 hover:text-gray-600 py-1">Пропустить</button>
+              <button type="button" onClick={() => setStep(3)} className="text-xs text-gray-400 hover:text-gray-600">← К описанию задач</button>
             </div>
           )}
 
-          {/* Step 5: Done */}
+          {/* Step 5: Optional habits */}
           {step === 5 && (
+            <div className="p-6 space-y-4"><div><p className="text-sm font-medium text-gray-900 dark:text-gray-100">Привычки — по желанию</p><p className="text-xs text-gray-400 mt-1">AI может предложить 1–3 привычки из выбранных сфер и задач; их всегда можно заменить или пропустить.</p></div>{(spheres.length || tasks.length) > 0 && <button type="button" onClick={suggestHabits} disabled={loading || activeSessionBlocksInput} className="w-full rounded-xl border border-violet-200 py-2.5 text-sm font-medium text-violet-600 hover:bg-violet-50 disabled:opacity-40 dark:border-violet-900">{loading ? 'AI подбирает привычки…' : 'Предложить привычки с AI'}</button>}<div className="flex gap-2"><input value={habitInput} onChange={event => setHabitInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addHabit() } }} placeholder="Например: 20 минут движения" className="flex-1 rounded-xl bg-gray-50 px-3 py-2 text-sm outline-none dark:bg-gray-800"/><button type="button" onClick={addHabit} className="text-sm text-blue-500">Добавить</button></div><div className="space-y-2">{habits.map(habit => <div key={habit.id} className="flex justify-between rounded-xl bg-gray-50 px-3 py-2 text-sm dark:bg-gray-800"><span>{habit.label}</span><button onClick={() => setHabits(previous => previous.filter(item => item.id !== habit.id))}>✕</button></div>)}</div>{error && <p className="text-xs text-red-500">{error}</p>}<button onClick={createHabits} disabled={loading} className="w-full rounded-xl bg-gray-900 py-3 text-sm font-medium text-white dark:bg-white dark:text-gray-900">{habits.length ? 'Сохранить привычки' : 'Пропустить'}</button><button type="button" onClick={() => setStep(4)} className="text-xs text-gray-400">← К задачам</button></div>
+          )}
+
+          {/* Step 6: Done */}
+          {step === 6 && (
             <div className="p-8 text-center space-y-5">
               <div className="w-12 h-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto">
                 <CheckCircle2 size={24} className="text-green-600 dark:text-green-400" />
@@ -461,7 +866,7 @@ export default function Onboarding({ onDone }) {
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Готово!</h2>
                 <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                   Создали <span className="font-medium text-gray-700 dark:text-gray-300">{spheres.length} сфер</span> и{' '}
-                  <span className="font-medium text-gray-700 dark:text-gray-300">{tasks.length} задач</span>.
+                  <span className="font-medium text-gray-700 dark:text-gray-300">{tasks.length} задач</span>{habits.length ? ` и ${habits.length} привычек` : ''}.
                   Зайди в «Привычки» чтобы настроить трекинг, в «Сегодня» чтобы увидеть план дня.
                 </p>
               </div>

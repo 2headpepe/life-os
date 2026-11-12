@@ -74,7 +74,11 @@ export default function People() {
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(false)
 
-  useEffect(() => { api('/people').then(setPeople) }, [])
+  useEffect(() => {
+    api('/people')
+      .then(data => setPeople(Array.isArray(data) ? data : []))
+      .catch(() => setPeople([]))
+  }, [])
 
   const select = async (person) => {
     if (selected?.id === person.id) { setSelected(null); setDetail(null); return }

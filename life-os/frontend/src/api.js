@@ -128,12 +128,52 @@ export const feed = {
 }
 
 export const ai = {
-  chat: (messages, system) => api.post('/ai/chat', { messages, ...(system ? { system } : {}) }),
-  run: (task, params = {}) => fetch('/api/ai/run', {
+  ensureOpenCode: async () => {
+    const runtime = await api.get('/config')
+    if (runtime.aiRuntime !== 'opencode') return runtime
+    const server = runtime.openCodeServer || {}
+    if (server.available && (server.state || server.status) === 'ready') return runtime
+    const started = await api.post('/ai/opencode-server/start', {})
+    if (started.error) throw new Error(started.error)
+    return started
+  },
+  chat: async (messages, system, { sessionId, prompt } = {}) => {
+    await ai.ensureOpenCode()
+    return api.post('/ai/chat', {
+    messages,
+    ...(system ? { system } : {}),
+    ...(sessionId ? { session_id: sessionId } : {}),
+    ...(prompt ? { prompt } : {}),
+    })
+  },
+  session: (id) => api.get(`/ai/sessions/${encodeURIComponent(id)}`),
+  abortSession: (id) => api.post(`/ai/sessions/${encodeURIComponent(id)}/abort`, {}),
+  // Legacy v1 can retain the original local terminal attach. V2 deliberately
+  // uses native navigation: its one-time pairing URL must never be exposed to
+  // Life OS JavaScript, rendered in the UI, or retained in state.
+  openSession: (id, { legacyTerminal = false } = {}) => {
+    if (legacyTerminal) return api.post(`/ai/sessions/${encodeURIComponent(id)}/open`, {})
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = `/api/ai/sessions/${encodeURIComponent(id)}/open`
+    form.target = '_blank'
+    form.rel = 'noopener'
+    form.style.display = 'none'
+    document.body.appendChild(form)
+    form.submit()
+    window.setTimeout(() => form.remove(), 0)
+    return { opened: true }
+  },
+  startOpenCodeServer: () => api.post('/ai/opencode-server/start', {}),
+  stopOpenCodeServer: () => api.post('/ai/opencode-server/stop', {}),
+  run: async (task, params = {}) => {
+    await ai.ensureOpenCode()
+    return fetch('/api/ai/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task, params }),
-  }).then(r => r.json()),
+    }).then(r => r.json())
+  },
 }
 
 export const aiReviews = {
