@@ -826,7 +826,7 @@ export default function Onboarding({ onDone }) {
                   const sphere = spheresWithIds.find(s => s.id === t.parent_id)
                   return (
                     <div key={i} className="flex items-center gap-3 bg-gray-50 dark:bg-gray-800 rounded-xl px-3 py-2.5">
-                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: sphere?.color || '#6B7280' }} />
+                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: sphere?.color || 'var(--ds-muted)' }} />
                       <div className="flex-1 min-w-0">
                         <input value={t.title}
                           onChange={e => setTasks(prev => prev.map((x, j) => j === i ? { ...x, title: e.target.value } : x))}

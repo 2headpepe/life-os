@@ -104,15 +104,15 @@ function AppContent() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="life-os-app-shell flex h-screen overflow-hidden">
       <Sidebar
         onCapture={() => setCaptureOpen(true)}
         onSearch={() => setSearchOpen(true)}
         sphere={sphere}
         setSphere={setSphere}
       />
-      <main className="flex-1 overflow-y-auto">
-        <div className="sticky top-0 z-10 flex items-center justify-end gap-2 px-6 py-3 bg-gray-50/80 dark:bg-gray-950/80 backdrop-blur border-b border-gray-100 dark:border-gray-800">
+      <main className="life-os-main flex-1 overflow-y-auto">
+        <div className="life-os-topbar sticky top-0 z-20 flex items-center justify-end gap-2 px-6 py-2">
           <NotificationBell />
           <ThemeSwitcher />
         </div>

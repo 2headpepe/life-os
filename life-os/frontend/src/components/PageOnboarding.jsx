@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { Compass, X } from 'lucide-react'
-import { useTheme } from '../context/ThemeContext'
 
 // Appears once, in the context of the route, without interrupting the task.
 const CONFIGS = {
@@ -21,7 +20,6 @@ export const onboardingStorageKey = pageId => `life-os:onboarding:v2:${pageId}:s
 
 export default function PageOnboarding({ pageId }) {
   const config = CONFIGS[pageId]
-  const { colorScheme } = useTheme()
   const [visible, setVisible] = useState(() => Boolean(config) && !localStorage.getItem(onboardingStorageKey(pageId)))
 
   const dismiss = () => {
@@ -32,14 +30,14 @@ export default function PageOnboarding({ pageId }) {
   if (!config || !visible) return null
 
   return (
-    <aside className={`fixed bottom-24 right-6 z-30 w-[min(23rem,calc(100vw-3rem))] rounded-2xl border p-4 shadow-xl ${colorScheme === 'dark' ? 'border-slate-200 bg-white text-slate-950 shadow-black/30' : 'border-slate-700 bg-slate-950 text-white shadow-slate-950/30'}`} aria-label={`Подсказка: ${config.title}`}>
-      <button type="button" onClick={dismiss} className={`absolute right-3 top-3 rounded-md p-1 ${colorScheme === 'dark' ? 'text-slate-500 hover:bg-slate-100 hover:text-slate-950' : 'text-slate-400 hover:bg-white/15 hover:text-white'}`} aria-label="Закрыть подсказку"><X size={15} /></button>
+    <aside className="life-os-onboarding fixed bottom-24 right-6 z-30 w-[min(23rem,calc(100vw-3rem))] rounded-2xl border p-4 shadow-xl" aria-label={`Подсказка: ${config.title}`}>
+      <button type="button" onClick={dismiss} className="life-os-onboarding__close absolute right-3 top-3 rounded-md p-1" aria-label="Закрыть подсказку"><X size={15} /></button>
       <div className="flex gap-3 pr-6">
-        <span className={`mt-0.5 flex h-7 w-7 flex-none items-center justify-center rounded-lg ring-1 ${colorScheme === 'dark' ? 'bg-slate-900 text-white ring-slate-300' : 'bg-white/15 text-white ring-white/30'}`}><Compass size={15} /></span>
+        <span className="life-os-onboarding__icon mt-0.5 flex h-7 w-7 flex-none items-center justify-center rounded-lg ring-1"><Compass size={15} /></span>
         <div>
           <p className="text-sm font-semibold">{config.title}</p>
-          <p className={`mt-1 text-xs leading-5 ${colorScheme === 'dark' ? 'text-slate-600' : 'text-slate-200'}`}>{config.text}</p>
-          <button type="button" onClick={dismiss} className={`mt-3 text-xs font-semibold underline underline-offset-4 ${colorScheme === 'dark' ? 'text-slate-800 decoration-slate-400 hover:decoration-slate-700' : 'text-white decoration-white/50 hover:decoration-white'}`}>{config.action} →</button>
+          <p className="life-os-onboarding__copy mt-1 text-xs leading-5">{config.text}</p>
+          <button type="button" onClick={dismiss} className="life-os-onboarding__action mt-3 text-xs font-semibold underline underline-offset-4">{config.action} →</button>
         </div>
       </div>
     </aside>

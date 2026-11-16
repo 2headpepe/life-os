@@ -158,7 +158,7 @@ export default function NodeCard({ node, onUpdate, row = false, draggable: isDra
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(node.title)
 
-  const color = node.root_color || '#6B7280'
+  const color = node.root_color || 'var(--ds-muted)'
   const status = node.status || 'undefined'
   const cfg = STATUS_CFG[status] || STATUS_CFG.undefined
   const today = new Date().toISOString().slice(0, 10)

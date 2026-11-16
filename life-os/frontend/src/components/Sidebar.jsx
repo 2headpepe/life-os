@@ -45,8 +45,8 @@ export default function Sidebar({ onCapture, onSearch, sphere, setSphere }) {
   const w = collapsed ? 'w-12' : 'w-56'
 
   return (
-    <aside className={`${w} flex-shrink-0 h-screen sticky top-0 border-r border-gray-100 dark:border-gray-800
-                      bg-white dark:bg-gray-950 flex flex-col py-5 px-2 gap-1 overflow-y-auto overflow-x-hidden transition-all duration-200`}>
+    <aside className={`${w} life-os-sidebar flex-shrink-0 h-screen sticky top-0 border-r
+                      flex flex-col py-5 px-2 gap-1 overflow-y-auto overflow-x-hidden transition-all duration-200`}>
 
       {/* Header */}
       <div className={`flex items-center mb-4 px-1 ${collapsed ? 'justify-center' : 'justify-between'}`}>
@@ -93,7 +93,7 @@ export default function Sidebar({ onCapture, onSearch, sphere, setSphere }) {
             title={collapsed ? root.title : undefined}
             className={`sidebar-item w-full text-left ${sphere === root.id ? 'active' : ''} ${collapsed ? 'justify-center px-0' : ''}`}
           >
-            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: root.color || '#6B7280' }} />
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: root.color || 'var(--ds-muted)' }} />
             {!collapsed && root.title}
           </button>
         ))}

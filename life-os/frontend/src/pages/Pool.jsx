@@ -29,11 +29,11 @@ const STATUS_LABELS = {
 }
 
 const KANBAN_COLUMNS = [
-  { id: 'undefined',   label: 'Не определено', color: '#EF4444' },
-  { id: 'in_progress', label: 'В работе',       color: '#3B82F6' },
-  { id: 'blocked',     label: 'Ждём',           color: '#F59E0B' },
-  { id: 'scheduled',   label: 'Запланировано',  color: '#8B5CF6' },
-  { id: 'someday',     label: 'Когда-нибудь',   color: '#6B7280' },
+  { id: 'undefined',   label: 'Не определено', color: 'var(--ds-danger)' },
+  { id: 'in_progress', label: 'В работе',       color: 'var(--ds-info)' },
+  { id: 'blocked',     label: 'Ждём',           color: 'var(--ds-warning)' },
+  { id: 'scheduled',   label: 'Запланировано',  color: 'var(--ds-violet)' },
+  { id: 'someday',     label: 'Когда-нибудь',   color: 'var(--ds-muted)' },
 ]
 
 function ListGroup({ label, color, items, onUpdate }) {
@@ -233,7 +233,7 @@ export default function Pool({ sphere: rootFilter }) {
               }`}
               style={isActive ? { backgroundColor: root.color } : {}}
             >
-              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: isActive ? 'white' : root.color }} />
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: isActive ? 'var(--ds-on-accent)' : root.color }} />
               {root.title} {count}
             </button>
           )
