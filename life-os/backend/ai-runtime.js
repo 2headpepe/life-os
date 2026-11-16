@@ -85,6 +85,9 @@ function runtimeError(message, { code, command, pid, startedAt, stderr = '' }) {
 function run(command, args, { cwd, timeoutMs, env, onStart, onStderr, onExit }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, shell: false })
+    // AI CLIs may read stdin as supplemental prompt input even when a prompt
+    // was supplied in argv. Signal that no additional input is coming.
+    child.stdin.end()
     const startedAt = Date.now()
     let stdout = ''
     let stderr = ''

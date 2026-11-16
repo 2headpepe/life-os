@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import { aiRuntimeConfig, aiTaskInvocation, promptFromMessages, runAiTask } from '../ai-runtime.js'
 
@@ -67,4 +70,26 @@ test('AI runtime reports a bounded, redacted diagnostic when its executable cann
       return true
     },
   )
+})
+
+test('AI runtime closes stdin so a CLI can finish without supplemental input', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'life-os-ai-runtime-'))
+  const command = path.join(dir, 'wait-for-stdin.mjs')
+  await fs.writeFile(command, [
+    '#!/usr/bin/env node',
+    'process.stdin.resume()',
+    "process.stdin.on('end', () => process.stdout.write('stdin closed'))",
+  ].join('\n'))
+  await fs.chmod(command, 0o755)
+
+  try {
+    const output = await runAiTask('test', {
+      cwd: process.cwd(),
+      timeoutMs: 1_000,
+      env: { ...process.env, AI_RUNTIME: 'opencode', OPENCODE_COMMAND: command },
+    })
+    assert.equal(output, 'stdin closed')
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
 })
