@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Navigate, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { SpheresProvider } from './SpheresContext'
 import { ThemeProvider } from './context/ThemeContext'
@@ -120,6 +120,7 @@ function AppContent() {
           <Route path="/"         element={<Feed />} />
           <Route path="/today"    element={<Today />} />
           <Route path="/pool"     element={<Pool sphere={sphere} />} />
+          <Route path="/planner"  element={<Navigate to="/pool" replace />} />
           <Route path="/goals/*"  element={<Tree />} />
           <Route path="/habits/*" element={<Habits />} />
           <Route path="/lists/*"  element={<Lists />} />

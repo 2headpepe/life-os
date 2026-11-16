@@ -4,16 +4,16 @@ import { feed as feedApi, ai as aiApi, memories as memoriesApi, insights as insi
 import {
   NewsCard, PromptCard, MemoryCard, InsightCard, ListPickCard, HabitReminderCard,
   StreakCard, OverdueCard, GoalCard, DoneCard, UpcomingCard, HabitsStaleCard,
-  InboxPendingCard, StaleInProgressCard, PeopleStalCard, AiNoteCard, NudgeCard,
-  ReflectionCard, CelebrationCard, ChallengeCard, PatternCard, EndCard,
+  InboxPendingCard, StaleActiveWorkCard, PeopleStalCard, AiNoteCard, NudgeCard,
+  PlannerNowCard, PlannerFollowUpCard, ReflectionCard, CelebrationCard, ChallengeCard, PatternCard, EndCard,
 } from './FeedCards'
 import { useRecoveryMode } from '../context/RecoveryModeContext'
 import FocusCard from '../components/FocusCard'
 import sleepRoomScene from '../focus-sleep-scene.jpg'
 
 const RECOVERY_HIDDEN_TYPES = new Set([
-  'overdue', 'goal', 'habits_stale', 'stale_inprogress',
-  'inbox_pending', 'upcoming', 'nudge',
+  'overdue', 'goal', 'habits_stale', 'stale_active_work',
+  'inbox_pending', 'upcoming', 'nudge', 'planner_focus', 'planner_follow_up',
 ])
 
 export default function Feed() {
@@ -238,12 +238,14 @@ export default function Feed() {
       case 'list_pick':       return <ListPickCard card={card} {...ctx} />
       case 'streak':          return <StreakCard card={card} {...ctx} />
       case 'overdue':         return <OverdueCard card={card} {...ctx} />
+      case 'planner_focus':   return <PlannerNowCard card={card} {...ctx} />
+      case 'planner_follow_up': return <PlannerFollowUpCard card={card} {...ctx} />
       case 'upcoming':        return <UpcomingCard card={card} {...ctx} />
       case 'habits_stale':    return <HabitsStaleCard card={card} {...ctx} />
       case 'goal':            return <GoalCard card={card} {...ctx} />
       case 'done':            return <DoneCard card={card} {...ctx} />
       case 'inbox_pending':   return <InboxPendingCard card={card} {...ctx} />
-      case 'stale_inprogress': return <StaleInProgressCard card={card} {...ctx} />
+      case 'stale_active_work': return <StaleActiveWorkCard card={card} {...ctx} />
       case 'people_stale':    return <PeopleStalCard card={card} {...ctx} />
       case 'ai_note':         return <AiNoteCard card={card} {...ctx} />
       case 'nudge':           return <NudgeCard card={card} {...ctx} />

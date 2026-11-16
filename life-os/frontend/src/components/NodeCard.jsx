@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Circle, Clock, CircleDot, CheckCircle2, CircleDashed, CircleMinus, Lock, Sparkles, Repeat, Star } from 'lucide-react'
-import { tree as treeApi } from '../api'
+import { planner as plannerApi, tree as treeApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
+import { plannerMeta } from '../utils/plannerSignals'
 
 function formatDue(dueStr) {
   const today = new Date()
@@ -28,12 +29,46 @@ const STATUS_CFG = {
   dropped:     { Icon: CircleMinus,  cls: 'text-gray-300',  label: 'Отменено' },
 }
 
-const ACTIVE_STATUSES = ['undefined', 'needs_grooming', 'backlog', 'ready', 'scheduled', 'in_progress', 'waiting_for_review', 'done', 'someday', 'dropped']
+const PERSONAL_STATUSES = ['undefined', 'scheduled', 'in_progress', 'waiting_for_review', 'done', 'someday', 'dropped']
+const DELIVERY_STATUSES = ['undefined', 'needs_grooming', 'backlog', 'ready', 'scheduled', 'in_progress', 'waiting_for_review', 'done', 'someday', 'dropped']
 
 const RECURRENCE_OPTS = [[null, 'Нет'], ['daily', 'День'], ['weekly', 'Неделя'], ['monthly', 'Месяц']]
 const RECURRENCE_LABELS = { daily: 'каждый день', weekly: 'каждую неделю', monthly: 'каждый месяц' }
 
-function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecurrenceSave, onDelete, onConsole, onCore, compact = false }) {
+function PlannerMetaBadge({ node }) {
+  const planner = plannerMeta(node)
+  if (!planner) return null
+  return <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${planner.className}`}>{planner.label}{planner.urgency === 'urgent' ? ' · срочно' : ''}{planner.followUpOn ? ` · ${planner.followUpOn}` : ''}</span>
+}
+
+function PlannerControls({ node, onUpdate }) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+  const [startLane, setStartLane] = useState('next')
+  const isPersonalTask = node.parent_id && (node.work_context || 'personal') === 'personal'
+  if (!isPersonalTask) return null
+  const canEnterQueue = node.status === 'in_progress'
+  const current = node.planner || null
+  const save = async patch => {
+    setSaving(true); setError(null)
+    try {
+      const result = await plannerApi.updateTask(node.id, patch)
+      if (result.error) throw new Error(result.error)
+      await onUpdate?.()
+    } catch (requestError) {
+      setError(requestError.message || 'Не удалось сохранить очередь.')
+    } finally {
+      setSaving(false)
+    }
+  }
+  return <section className="rounded-xl border border-violet-100 bg-violet-50/50 p-3 dark:border-violet-900/50 dark:bg-violet-950/20" aria-label="Ручная очередь задачи">
+    <div className="flex items-center justify-between gap-3"><span className="text-xs font-medium text-violet-800 dark:text-violet-200">Ручная очередь</span>{saving && <span className="text-[11px] text-violet-500">сохраняю…</span>}</div>
+    {!canEnterQueue ? <p className="mt-2 text-xs text-violet-800/80 dark:text-violet-200/80">Сначала поставь статус «В работе» — после этого задачу можно добавить в одну из очередей.</p> : !current ? <div className="mt-2 flex flex-wrap items-end gap-2"><label className="min-w-36 flex-1 text-xs text-gray-500 dark:text-gray-400">Добавить в работу<select value={startLane} disabled={saving} onChange={event => setStartLane(event.target.value)} className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"><option value="focus">Сейчас</option><option value="next">Следующая</option><option value="waiting">Ожидание</option></select></label><button type="button" disabled={saving} onClick={() => save({ lane: startLane })} className="btn btn-primary text-xs">Добавить в очередь</button></div> : <><div className="mt-2 grid gap-2 sm:grid-cols-2"><label className="text-xs text-gray-500 dark:text-gray-400">Порядок работы<select value={current.lane} disabled={saving} onChange={event => save({ lane: event.target.value })} className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"><option value="focus">Сейчас</option><option value="next">Следующая</option><option value="waiting">Ожидание</option></select></label><label className="text-xs text-gray-500 dark:text-gray-400">Срочность<select value={current.urgency || 'unknown'} disabled={saving} onChange={event => save({ urgency: event.target.value })} className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"><option value="unknown">Не задана</option><option value="normal">Обычная</option><option value="urgent">Срочно</option></select></label>{current.lane === 'waiting' && <label className="text-xs text-gray-500 dark:text-gray-400">Вернуться<input type="date" defaultValue={current.follow_up_on || ''} disabled={saving} onBlur={event => save({ follow_up_on: event.target.value || null })} className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" /></label>}</div><label className="mt-2 block text-xs text-gray-500 dark:text-gray-400">Заметка о приоритете<textarea defaultValue={current.priority_note || ''} disabled={saving} onBlur={event => save({ priority_note: event.target.value || null })} rows={2} className="mt-1 block w-full resize-y rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" placeholder="Почему это сейчас важно" /></label><button type="button" disabled={saving} onClick={() => save(null)} className="mt-2 text-xs font-medium text-gray-500 hover:text-rose-600 dark:text-gray-400 dark:hover:text-rose-300">Убрать из очереди</button></>}
+    {error && <p role="alert" className="mt-2 text-xs text-rose-600 dark:text-rose-400">{error}</p>}
+  </section>
+}
+
+function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecurrenceSave, onDelete, onConsole, onCore, onPlannerUpdate, compact = false }) {
   const [editingDue, setEditingDue] = useState(false)
   const [editingTime, setEditingTime] = useState(false)
 
@@ -43,7 +78,7 @@ function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecur
       {node.outcome && <p className="text-xs text-blue-500 dark:text-blue-400 italic">→ {node.outcome}</p>}
 
       <div className="flex items-center gap-1.5 flex-wrap">
-        {ACTIVE_STATUSES.map(s => {
+        {(node.work_context === 'delivery' ? DELIVERY_STATUSES : PERSONAL_STATUSES).map(s => {
           const { Icon: SIcon, cls } = STATUS_CFG[s]
           return (
             <button
@@ -122,6 +157,8 @@ function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecur
         </div>
       </div>
 
+      <PlannerControls node={node} onUpdate={onPlannerUpdate} />
+
       <div className="flex items-center gap-2 pt-1">
         <button
           onClick={onConsole}
@@ -152,7 +189,7 @@ function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecur
   )
 }
 
-export default function NodeCard({ node, onUpdate, row = false, draggable: isDraggable = false }) {
+export default function NodeCard({ node, onUpdate, row = false, draggable: isDraggable = false, allowTitleWrap = false }) {
   const [expanded, setExpanded] = useState(false)
   const [completing, setCompleting] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
@@ -214,6 +251,7 @@ export default function NodeCard({ node, onUpdate, row = false, draggable: isDra
       onDelete={handleDelete}
       onConsole={() => openInConsole(consoleCtx)}
       onCore={handleCore}
+      onPlannerUpdate={onUpdate}
       compact={row}
     />
   )
@@ -254,6 +292,7 @@ export default function NodeCard({ node, onUpdate, row = false, draggable: isDra
           {node.recurrence && (
             <Repeat size={11} className="text-gray-400 flex-shrink-0" title={RECURRENCE_LABELS[node.recurrence]} />
           )}
+          <PlannerMetaBadge node={node} />
           {node.core && (
             <Star size={10} className="text-amber-400 flex-shrink-0 flex-shrink-0" fill="currentColor" title="Ядро" />
           )}
@@ -308,7 +347,7 @@ export default function NodeCard({ node, onUpdate, row = false, draggable: isDra
                 />
               ) : (
                 <span
-                  className="text-sm font-medium text-gray-900 dark:text-gray-100 leading-snug truncate"
+                  className={`text-sm font-medium text-gray-900 dark:text-gray-100 leading-snug ${allowTitleWrap ? 'whitespace-normal break-words' : 'truncate'}`}
                   onDoubleClick={e => { e.stopPropagation(); setEditingTitle(true) }}
                 >
                   {node.title}
@@ -326,6 +365,7 @@ export default function NodeCard({ node, onUpdate, row = false, draggable: isDra
             {node.path?.length > 0 && (
               <span className="text-xs text-gray-400 truncate">{node.path.join(' › ')}</span>
             )}
+            <PlannerMetaBadge node={node} />
             {node.time && (
               <span className="text-xs text-indigo-400 ml-auto flex-shrink-0">{node.time.slice(0, 5)}</span>
             )}

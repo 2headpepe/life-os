@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'crypto'
 import fs from 'fs/promises'
 import path from 'path'
 import { priorityPacket } from './priority-loop.js'
+import { buildAiReviewOverview } from './ai-review-overview.js'
 
 const FILES = {
   opportunities: 'opportunities.jsonl',
@@ -44,7 +45,7 @@ export function productIntelligenceStore(root) {
   const now = () => new Date().toISOString()
   const id = type => `${type}:${randomUUID()}`
 
-  async function readModel() {
+  async function readModel({ includeLocalOverview = false } = {}) {
     const [opportunities, initiatives, actions, reminders, rechecks, coverage] = await Promise.all([
       ...Object.keys(FILES).map(name => safeJsonl(file(name))),
       safeJson(coverageFile, { zones: [] }),
@@ -59,7 +60,7 @@ export function productIntelligenceStore(root) {
     const loopReminder = loopReminderRecord
       ? { state: loopReminderRecord.action === 'dismiss' ? 'dismissed' : 'suppressed' }
       : loop.reminder
-    return {
+    const model = {
       schema_version: 1,
       boundary: 'data-free',
       limits: ['No session text, transcript, filesystem path, credential, or personal content is exposed.'],
@@ -69,6 +70,10 @@ export function productIntelligenceStore(root) {
       priority_loop: { ...loop, reminder: loopReminder },
       priority_recheck: { drafts: latest(rechecks) },
     }
+    if (!includeLocalOverview) return model
+    const overview = await buildAiReviewOverview(root, model.initiatives)
+    return { ...model, boundary: overview.boundary, overview, initiatives: overview.initiatives,
+      limits: ['Only locally generated report summaries are shown. Raw transcripts, source paths, credentials, and personal notes are excluded.'] }
   }
 
   async function action({ action, target_ref }) {

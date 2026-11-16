@@ -12,8 +12,10 @@ import { LifeOsOpenCodeSessionBridge, LifeOsOpenCodeSessionError, openCodeAttach
 import { OpenCodeServerError } from './opencode-server.js'
 import { ManagedOpenCodeServer, ManagedOpenCodeServerError } from './managed-opencode-server.js'
 import { productIntelligenceStore } from './product-intelligence.js'
+import { isLoopbackAddress } from './ai-review-overview.js'
 import { assertDeliveryTransition, handoffIsComplete, hasDependencyCycle, inboundDependencyReferences, isBlocked, workContext } from './task-lifecycle.js'
 import { assertEligibleExecutor, assertEligibleVerifier } from './agent-registry.js'
+import { isPlannerCandidate, migratePlannerState, patchPlanner, plannerQueue, plannerRoots, plannerTaskFromCommit, reorderPlannerTasks, nextPlannerRank } from './planner-queue.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -83,6 +85,16 @@ function requireLifeOsUiOrigin(req, res, next) {
   const origin = req.get('origin')
   if (!origin || !LOCAL_UI_ORIGINS.has(origin)) {
     return res.status(403).json({ error: 'This terminal action must come from the local Life OS interface.' })
+  }
+  next()
+}
+
+// Planner mutations are a local single-user bridge for the Codex chat and the
+// local board. They are deliberately narrower than the generic tree API and
+// are unavailable to a non-local caller.
+function requireLocalPlanner(req, res, next) {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) {
+    return res.status(403).json({ error: 'Planner is available only on this computer.' })
   }
   next()
 }
@@ -1133,11 +1145,11 @@ app.post('/api/setup/reset', requireLifeOsUiOrigin, async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }) }
 })
 
-// Data-free AI review control plane.  The records are deliberately independent
-// of CLI history: no transcript, raw source path, or provider credential is a
-// valid input or output of these routes.
+// Local-only AI Review read model. It exposes compressed generated-report
+// results, never a transcript, source path, credential, or personal note.
 app.get('/api/ai-reviews', async (req, res) => {
-  try { res.json(await productIntelligence.readModel()) }
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return res.status(403).json({ error: 'AI Reviews summaries are available only on this computer.' })
+  try { res.json(await productIntelligence.readModel({ includeLocalOverview: true })) }
   catch (error) { res.status(500).json({ error: error.message }) }
 })
 
@@ -1234,6 +1246,89 @@ app.get('/api/tree', async (req, res) => {
     res.json(data.nodes)
   } catch (e) {
     res.status(500).json({ error: e.message })
+  }
+})
+
+// ─── Personal work planner ────────────────────────────────────────
+
+app.get('/api/planner/queue', requireLocalPlanner, async (req, res) => {
+  try {
+    const tree = await readTree()
+    res.json({ roots: plannerRoots(tree.nodes), tasks: plannerQueue(tree.nodes) })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.post('/api/planner/commit', requireLocalPlanner, async (req, res) => {
+  if (req.body?.confirmed !== true) return res.status(400).json({ error: 'explicit task confirmation is required' })
+  try {
+    const tree = await readTree()
+    const today = new Date().toISOString().slice(0, 10)
+    const task = plannerTaskFromCommit(req.body?.task, {
+      nodes: tree.nodes,
+      id: `node-${randomUUID()}`,
+      today,
+    })
+    tree.nodes.push(task)
+    await writeTree(tree)
+    res.status(201).json({ task })
+  } catch (error) {
+    res.status(400).json({ error: error.message })
+  }
+})
+
+app.post('/api/planner/migrate', requireLocalPlanner, async (req, res) => {
+  try {
+    const tree = await readTree()
+    const migrated = migratePlannerState(tree.nodes)
+    if (migrated.changed) {
+      tree.nodes = migrated.nodes
+      await writeTree(tree)
+    }
+    res.json({ changed: migrated.changed, tasks: plannerQueue(migrated.nodes) })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.patch('/api/planner/tasks/:id', requireLocalPlanner, async (req, res) => {
+  try {
+    const tree = await readTree()
+    const index = tree.nodes.findIndex(node => node.id === req.params.id)
+    if (index === -1) return res.status(404).json({ error: 'task not found' })
+    const previous = tree.nodes[index]
+    if (!isPlannerCandidate(previous, tree.nodes)) return res.status(409).json({ error: 'task is not available in planner' })
+    if (req.body?.planner === null || req.body?.planner?.lane === 'triage') {
+      const task = { ...previous, planner: null, updated: new Date().toISOString().slice(0, 10) }
+      tree.nodes[index] = task
+      await writeTree(tree)
+      return res.json({ task })
+    }
+    const requestedLane = req.body?.planner?.lane || previous.planner?.lane || 'next'
+    const planner = patchPlanner(previous.planner, req.body?.planner, {
+      fallbackRank: nextPlannerRank(tree.nodes, requestedLane),
+    })
+    const task = { ...previous, planner, updated: new Date().toISOString().slice(0, 10) }
+    tree.nodes[index] = task
+    await writeTree(tree)
+    res.json({ task })
+  } catch (error) {
+    res.status(400).json({ error: error.message })
+  }
+})
+
+app.post('/api/planner/reorder', requireLocalPlanner, async (req, res) => {
+  try {
+    const tree = await readTree()
+    const reordered = reorderPlannerTasks(tree.nodes, req.body || {})
+    const updatedIds = new Set(req.body?.ordered_ids || [])
+    const today = new Date().toISOString().slice(0, 10)
+    tree.nodes = reordered.map(node => updatedIds.has(node.id) ? { ...node, updated: today } : node)
+    await writeTree(tree)
+    res.json({ tasks: plannerQueue(tree.nodes) })
+  } catch (error) {
+    res.status(400).json({ error: error.message })
   }
 })
 
@@ -1394,11 +1489,14 @@ app.patch('/api/tree/:id', async (req, res) => {
     if (idx === -1) return res.status(404).json({ error: 'node not found' })
     const today = new Date().toISOString().slice(0, 10)
     const oldNode = data.nodes[idx]
-    if (req.body?.status === 'in_progress' || req.body?.status === 'waiting_for_review') {
+    if (workContext(oldNode) === 'delivery' && (req.body?.status === 'in_progress' || req.body?.status === 'waiting_for_review')) {
       assertEligibleExecutor(await agentRegistry(), req.body?.execution?.actor || oldNode.execution?.actor, oldNode.handoff_contract?.target_role)
     }
     assertDeliveryTransition(oldNode, req.body?.status ?? oldNode.status, { ...oldNode, ...req.body })
     data.nodes[idx] = { ...oldNode, ...req.body, updated: today }
+    if (workContext(data.nodes[idx]) === 'personal' && data.nodes[idx].planner && !isPlannerCandidate(data.nodes[idx], data.nodes)) {
+      data.nodes[idx].planner = null
+    }
     const newNode = data.nodes[idx]
 
     // Auto-memory: node changed
@@ -2033,6 +2131,7 @@ app.get('/api/feed', async (req, res) => {
     const dismissed = new Set()
 
     const cards = []
+    const pinnedPlannerCards = []
     const leaves = treeData.nodes
     const leavesByParent = {}
     for (const n of leaves) if (n.parent_id) (leavesByParent[n.parent_id] ||= []).push(n)
@@ -2040,6 +2139,49 @@ app.get('/api/feed', async (req, res) => {
       const kids = leavesByParent[id] || []
       if (kids.length === 0) return leaves.find(n => n.id === id) ? [leaves.find(n => n.id === id)] : []
       return kids.flatMap(k => leafDescendants(k.id))
+    }
+
+    // Personal status `in_progress` admits work to the active queue; planner
+    // placement then supplies its explicit order without rewriting the status.
+    const plannerTasks = plannerQueue(treeData.nodes)
+    const nowTasks = plannerTasks.filter(node => node.planner_lane === 'focus')
+    if (nowTasks.length > 0 && !dismissed.has(`planner-focus:${today}`)) {
+      pinnedPlannerCards.push({
+        ref: `planner-focus:${today}`,
+        type: 'planner_focus',
+        ts: today,
+        tasks: nowTasks.slice(0, 3).map(node => ({
+          id: node.id, title: node.title, rank: node.planner_rank,
+          urgency: node.planner?.urgency || 'unknown', due: node.due || null,
+          priority_note: node.planner?.priority_note || null,
+          is_blocked: node.is_blocked,
+        })),
+        trace: makeTrace({ generated_by: 'rules',
+          description: `${nowTasks.length} задач(и) сейчас в активной работе`,
+          data: { 'Сейчас в работе': nowTasks.length, 'Показано': Math.min(3, nowTasks.length), 'Задачи': nowTasks.slice(0, 5).map(node => node.title).join('; ') },
+          truncation: nowTasks.length > 3 ? { shown: 3, total: nowTasks.length } : undefined,
+        }),
+      })
+    }
+    const dueFollowUps = plannerTasks
+      .filter(node => node.planner_lane === 'waiting' && node.planner?.follow_up_on && node.planner.follow_up_on <= today)
+      .sort((left, right) => left.planner.follow_up_on.localeCompare(right.planner.follow_up_on) || (left.planner_rank ?? Number.MAX_SAFE_INTEGER) - (right.planner_rank ?? Number.MAX_SAFE_INTEGER))
+    if (dueFollowUps.length > 0 && !dismissed.has(`planner-follow-up:${today}`)) {
+      pinnedPlannerCards.push({
+        ref: `planner-follow-up:${today}`,
+        type: 'planner_follow_up',
+        ts: today,
+        tasks: dueFollowUps.slice(0, 3).map(node => ({
+          id: node.id, title: node.title, follow_up_on: node.planner.follow_up_on,
+          urgency: node.planner?.urgency || 'unknown', is_blocked: node.is_blocked,
+          priority_note: node.planner?.priority_note || null,
+        })),
+        trace: makeTrace({ generated_by: 'rules',
+          description: `${dueFollowUps.length} follow-up из Waiting наступил(о)`,
+          data: { 'Follow-up всего': dueFollowUps.length, 'Показано': Math.min(3, dueFollowUps.length), 'Задачи': dueFollowUps.slice(0, 5).map(node => `${node.title} (${node.planner.follow_up_on})`).join('; ') },
+          truncation: dueFollowUps.length > 3 ? { shown: 3, total: dueFollowUps.length } : undefined,
+        }),
+      })
     }
 
     // news — one per day, seeded selection. Stays the same within a day regardless of rating.
@@ -2252,7 +2394,7 @@ app.get('/api/feed', async (req, res) => {
 
     // overdue nudge
     const overdue = leaves
-      .filter(n => n.due && n.due < today && ['scheduled', 'in_progress'].includes(n.status))
+      .filter(n => n.due && n.due < today && n.status === 'scheduled' && workContext(n) === 'personal' && !n.calendar_id)
       .sort((a, b) => a.due.localeCompare(b.due))
     if (overdue.length > 0) {
       const ref = 'overdue'
@@ -2328,7 +2470,7 @@ app.get('/api/feed', async (req, res) => {
           done, total, pct: Math.round((done / total) * 100), this_week: thisWeek,
           trace: makeTrace({ generated_by: 'rules',
             description: `Прогресс цели: ${done}/${total} (${Math.round((done / total) * 100)}%)`,
-            data: { 'Цель': n.title, 'Сделано': done, 'Всего': total, 'За неделю': `+${thisWeek}`, 'Процент': `${Math.round((done / total) * 100)}%`, 'Статусы': { done: under.filter(l => l.status === 'done').length, dropped: under.filter(l => l.status === 'dropped').length, in_progress: under.filter(l => l.status === 'in_progress').length, scheduled: under.filter(l => l.status === 'scheduled').length, undefined: under.filter(l => !l.status || l.status === 'undefined').length } },
+            data: { 'Цель': n.title, 'Сделано': done, 'Всего': total, 'За неделю': `+${thisWeek}`, 'Процент': `${Math.round((done / total) * 100)}%`, 'Статусы': { done: under.filter(l => l.status === 'done').length, dropped: under.filter(l => l.status === 'dropped').length, active_queue: plannerQueue(under).length, scheduled: under.filter(l => l.status === 'scheduled').length, undefined: under.filter(l => !l.status || l.status === 'undefined').length } },
           }),
         })
       }
@@ -2364,20 +2506,20 @@ app.get('/api/feed', async (req, res) => {
       }
     }
 
-    // stale in_progress — tasks stuck for 5+ days
-    const staleInProgress = leaves
-      .filter(n => n.status === 'in_progress' && n.updated && daysSince(n.updated) >= 5 && !(leavesByParent[n.id] || []).length)
+    // Stale active work — a task has remained in the personal queue for 5+ days.
+    const staleActiveWork = plannerTasks
+      .filter(n => n.updated && daysSince(n.updated) >= 5)
       .sort((a, b) => a.updated.localeCompare(b.updated))
-    if (staleInProgress.length > 0) {
-      const ref = 'stale-inprogress'
+    if (staleActiveWork.length > 0) {
+      const ref = 'stale-active-work'
       if (!dismissed.has(ref)) {
         cards.push({
-          ref, type: 'stale_inprogress', ts: today, count: staleInProgress.length,
-          tasks: staleInProgress.slice(0, 3).map(n => ({ id: n.id, title: n.title, days: daysSince(n.updated) })),
+          ref, type: 'stale_active_work', ts: today, count: staleActiveWork.length,
+          tasks: staleActiveWork.slice(0, 3).map(n => ({ id: n.id, title: n.title, days: daysSince(n.updated) })),
           trace: makeTrace({ generated_by: 'rules',
-            description: `${staleInProgress.length} задач зависло в in_progress`,
-            data: { 'Всего': staleInProgress.length, 'Показано': Math.min(3, staleInProgress.length), 'Самый старый': staleInProgress[0] ? `${daysSince(staleInProgress[0].updated)} дн. (${staleInProgress[0].title})` : '—', 'Все задачи': staleInProgress.slice(0, 10).map(n => `${n.title} (${daysSince(n.updated)}дн)`).join('; ') },
-            truncation: staleInProgress.length > 3 ? { shown: 3, total: staleInProgress.length } : undefined,
+            description: `${staleActiveWork.length} задач зависло в активной очереди`,
+            data: { 'Всего': staleActiveWork.length, 'Показано': Math.min(3, staleActiveWork.length), 'Самая старая': staleActiveWork[0] ? `${daysSince(staleActiveWork[0].updated)} дн. (${staleActiveWork[0].title})` : '—', 'Все задачи': staleActiveWork.slice(0, 10).map(n => `${n.title} (${daysSince(n.updated)}дн)`).join('; ') },
+            truncation: staleActiveWork.length > 3 ? { shown: 3, total: staleActiveWork.length } : undefined,
           }),
         })
       }
@@ -2520,19 +2662,19 @@ app.get('/api/feed', async (req, res) => {
       }
     }
 
-    // no_in_progress — no active tasks but scheduled ones exist
-    const hasInProgress = leaves.some(n => n.status === 'in_progress' && !(leavesByParent[n.id] || []).length)
-    const hasScheduled = leaves.some(n => n.status === 'scheduled' && !(leavesByParent[n.id] || []).length)
-    if (!hasInProgress && hasScheduled) {
-      const ref = `nudge:no-inprogress:${today}`
+    // No active queue — scheduled personal work exists but nothing has been started.
+    const hasActiveQueue = plannerTasks.length > 0
+    const hasScheduled = leaves.some(n => n.status === 'scheduled' && workContext(n) === 'personal' && !(leavesByParent[n.id] || []).length)
+    if (!hasActiveQueue && hasScheduled) {
+      const ref = `nudge:no-active-queue:${today}`
       if (!dismissed.has(ref)) {
-        cards.push({ ref, type: 'nudge', ts: today, nudge_type: 'no_in_progress',
-          message: 'Нет задач в работе. Выбери что-то из запланированного.',
+        cards.push({ ref, type: 'nudge', ts: today, nudge_type: 'no_active_queue',
+          message: 'Нет задач в активной работе. Выбери что-то из запланированного.',
           action_label: 'К пулу', action_target: null, action_link: '/pool',
           trace: makeTrace({ generated_by: 'rules',
-            description: 'Нет in_progress, но есть scheduled',
-            data: { 'nudge_type': 'no_in_progress', 'В работе': hasInProgress ? 'да' : 'нет', 'Запланировано': hasScheduled ? 'да' : 'нет' },
-            nudge_type: 'no_in_progress',
+            description: 'Нет активной очереди, но есть scheduled',
+            data: { 'nudge_type': 'no_active_queue', 'В активной работе': hasActiveQueue ? 'да' : 'нет', 'Запланировано': hasScheduled ? 'да' : 'нет' },
+            nudge_type: 'no_active_queue',
           }),
         })
       }
@@ -2615,7 +2757,7 @@ app.get('/api/feed', async (req, res) => {
       }))
 
     res.set('Cache-Control', 'no-store')
-    res.json({ date: today, cards: [...aiCards, ...selected], pool_size: poolSize, ai_last_generated: aiLastGenerated })
+    res.json({ date: today, cards: [...aiCards, ...pinnedPlannerCards, ...selected], pool_size: poolSize, ai_last_generated: aiLastGenerated })
   } catch (e) {
     console.error('FEED ERROR:', e.stack)
     res.status(500).json({ error: e.message })
@@ -2899,17 +3041,18 @@ async function triggerGoalAnalysis(monday, force = false) {
     // tree summary
     const nodes = treeData.nodes || []
     const roots = nodes.filter(n => n.parent_id === null)
+    const activeQueue = plannerQueue(nodes)
     const treeSummary = roots.map(root => {
       const children = nodes.filter(n => n.parent_id === root.id)
       const grandchildren = children.flatMap(c => nodes.filter(n => n.parent_id === c.id))
       const allUnder = [...children, ...grandchildren]
       const activeCount = allUnder.filter(n => !['done','dropped'].includes(n.status)).length
       const doneCount = allUnder.filter(n => n.status === 'done').length
-      const inProgressItems = allUnder.filter(n => n.status === 'in_progress').map(n => n.title)
+      const activeQueueItems = activeQueue.filter(n => n.root_id === root.id).map(n => n.title)
       const scheduledItems = allUnder.filter(n => n.status === 'scheduled').map(n => ({ title: n.title, due: n.due }))
       const undefinedItems = allUnder.filter(n => n.status === 'undefined').map(n => n.title)
       const lastUpdated = allUnder.map(n => n.updated || '').sort().pop() || ''
-      return { sphere: root.title, activeCount, doneCount, inProgressItems, scheduledItems: scheduledItems.slice(0, 5), undefinedItems: undefinedItems.slice(0, 5), lastUpdated }
+      return { sphere: root.title, activeCount, doneCount, activeQueueItems, scheduledItems: scheduledItems.slice(0, 5), undefinedItems: undefinedItems.slice(0, 5), lastUpdated }
     })
 
     // memories: split manual vs auto
@@ -2964,9 +3107,9 @@ async function triggerGoalAnalysis(monday, force = false) {
       .slice(0, 15)
       .map(n => ({ title: n.title, date: n.updated }))
 
-    // overdue tasks (scheduled or in_progress, past due date)
+    // Overdue personal scheduled tasks
     const overdueTasks = nodes
-      .filter(n => n.due && n.due < today && ['scheduled', 'in_progress'].includes(n.status))
+      .filter(n => n.due && n.due < today && n.status === 'scheduled' && workContext(n) === 'personal' && !n.calendar_id)
       .sort((a, b) => a.due.localeCompare(b.due))
       .map(n => ({ title: n.title, due: n.due, days_overdue: daysSince(n.due), status: n.status }))
 
@@ -3097,7 +3240,7 @@ Rules:
       'Режим': mode.id,
       'Сферы': treeSummary.map(s => s.sphere).join(', '),
       'Активных': treeSummary.map(s => `${s.sphere}: ${s.activeCount}`).join(', '),
-      'In-progress': treeSummary.flatMap(s => s.inProgressItems).slice(0, 5).join(', ') || '—',
+      'Активная очередь': treeSummary.flatMap(s => s.activeQueueItems).slice(0, 5).join(', ') || '—',
     }
     const newCards = (Array.isArray(specs) ? specs : [specs]).map(spec => ({
       ...spec, ts: today,

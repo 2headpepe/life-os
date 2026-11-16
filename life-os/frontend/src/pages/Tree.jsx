@@ -5,6 +5,7 @@ import { Circle, Clock, CircleDot, CheckCircle2, CircleDashed, CircleMinus, Lock
 import { tree as treeApi, habits as habitsApi, productIntelligence } from '../api'
 import { openInConsole } from '../utils/openInConsole'
 import { legacyNodePath, nodeLineage, nodePath, resolveNodePath } from '../utils/entityLinks'
+import { plannerMeta } from '../utils/plannerSignals'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
@@ -105,8 +106,14 @@ const STATUS_CFG = {
   dropped:     { Icon: CircleMinus,  cls: 'text-gray-300',  label: 'Отменено' },
 }
 
-const LEAF_STATUSES = ['undefined', 'needs_grooming', 'backlog', 'ready', 'scheduled', 'in_progress', 'waiting_for_review', 'done', 'someday', 'dropped']
+const LEAF_STATUSES = ['undefined', 'scheduled', 'in_progress', 'waiting_for_review', 'done', 'someday', 'dropped']
 const NODE_STATUSES = ['done', 'someday', 'dropped']
+
+function PlannerBadge({ node }) {
+  const planner = plannerMeta(node)
+  if (!planner) return null
+  return <span className={`inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-medium ${planner.className}`}>{planner.label}{planner.urgency === 'urgent' ? ' · срочно' : ''}{planner.followUpOn ? ` · ${planner.followUpOn}` : ''}</span>
+}
 
 // ── Shared sub-components ────────────────────────────────────────────────────
 
@@ -690,7 +697,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
     if (node.notes) lines.push(`Заметки: ${node.notes}`)
     const leaves = collectOpenLeaves(node)
     const undef = leaves.filter(l => !l.status || l.status === 'undefined')
-    const active = leaves.filter(l => l.status === 'in_progress' || l.status === 'scheduled')
+    const active = leaves.filter(l => l.planner || l.status === 'scheduled')
     if (undef.length) lines.push(`Не определено (${undef.length}): ${undef.map(l => l.title).join(', ')}`)
     if (active.length) lines.push(`В работе (${active.length}): ${active.map(l => l.title).join(', ')}`)
     lines.push('\nПроверь декомпозицию: все ли важные аспекты цели покрыты?')
@@ -748,6 +755,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
               {node.title}
             </span>
           )}
+          {isLeaf && <div className="mt-1"><PlannerBadge node={node} /></div>}
         </div>
 
         {/* Right: progress or date */}
@@ -854,6 +862,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
               className="text-xs text-gray-600 dark:text-gray-400"
             />
           </div>
+          {isLeaf && node.planner && <div><div className="text-xs text-gray-400 mb-0.5">Ручная очередь</div><PlannerBadge node={node} />{node.planner.priority_note && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{node.planner.priority_note}</p>}</div>}
           {node.work_context === 'delivery' && isLeaf && (
             <div className="flex items-center justify-between gap-3 rounded-lg border border-violet-100 bg-violet-50/40 px-2.5 py-2 dark:border-violet-900/50 dark:bg-violet-950/10">
               <div className="min-w-0 text-xs text-gray-500 dark:text-gray-400">

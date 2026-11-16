@@ -59,6 +59,13 @@ export const tree = {
   verify: (id, payload) => api.post(`/tree/${id}/verification`, payload),
 }
 
+export const planner = {
+  queue: () => api.get('/planner/queue'),
+  updateTask: (id, plannerPatch) => api.patch(`/planner/tasks/${id}`, { planner: plannerPatch }),
+  reorder: (lane, ordered_ids) => api.post('/planner/reorder', { lane, ordered_ids }),
+  migrate: () => api.post('/planner/migrate'),
+}
+
 export const focus = {
   get: () => api.get('/focus'),
   action: (component_id, action, payload = {}) => api.post('/focus/action', { component_id, action, ...payload }),

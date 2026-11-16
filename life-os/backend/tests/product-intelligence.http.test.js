@@ -5,7 +5,7 @@ import os from 'os'
 import path from 'path'
 import { spawn } from 'child_process'
 
-test('data-free AI review HTTP lifecycle never serves a source session', async t => {
+test('local AI review HTTP lifecycle serves an allowlisted summary, never a source session', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'life-os-pi-http-'))
   const pi = path.join(root, 'ops/product-intelligence')
   await fs.mkdir(pi, { recursive: true })
@@ -20,8 +20,9 @@ test('data-free AI review HTTP lifecycle never serves a source session', async t
   })
   const base = `http://127.0.0.1:${port}/api`
   const initial = await (await fetch(`${base}/ai-reviews`)).json()
-  assert.equal(initial.boundary, 'data-free')
+  assert.equal(initial.boundary, 'local_summary_only')
   assert.equal(initial.opportunities[0].id, 'opp:http')
+  assert.equal(initial.overview.streams.length, 4)
   assert.equal(initial.sessions, undefined)
   const selected = await (await fetch(`${base}/product-intelligence/review-actions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'select', target_ref: 'opp:http' }) })).json()
   assert.equal(selected.initiative.state, 'draft')

@@ -2,9 +2,9 @@ import { useState, useRef, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   Newspaper, Image as ImageIcon, Lightbulb, Flame, AlertTriangle, Target, CheckCircle2, PartyPopper, HelpCircle, Sparkles, CalendarDays, Activity,
-  Inbox, Clock, Users, MessageSquare, Pencil,
+  Inbox, Clock, ListTodo, Users, MessageSquare, Pencil,
 } from 'lucide-react'
-import { inbox, news as newsApi, memories as memoriesApi, insights as insightsApi, lists as listsApi, tree as treeApi, feed as feedApi, habits as habitsApi } from '../api'
+import { inbox, news as newsApi, memories as memoriesApi, insights as insightsApi, lists as listsApi, planner as plannerApi, tree as treeApi, feed as feedApi, habits as habitsApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
 
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
@@ -31,12 +31,16 @@ function serializeCardContext(card) {
       return `[Готово] "${card.task?.title}" — ${card.days_ago === 0 ? 'сегодня' : `${card.days_ago} дн. назад`}`
     case 'upcoming':
       return `[Скоро] ${(card.tasks || []).slice(0, 5).map(t => t.title).join(', ')}`
+    case 'planner_focus':
+      return `[Сейчас в работе] ${(card.tasks || []).slice(0, 5).map(t => t.title).join(', ')}`
+    case 'planner_follow_up':
+      return `[Вернуться] ${(card.tasks || []).slice(0, 5).map(t => `${t.title} (${t.follow_up_on})`).join(', ')}`
     case 'habits_stale':
       return `[Привычки · тишина] с ${fmtFeedDate(card.last_log)} — ${card.stale_days} дн.`
     case 'inbox_pending':
       return `[Inbox] ${card.count} записей${card.oldest ? `, старейшая с ${fmtFeedDate(card.oldest)}` : ''}`
-    case 'stale_inprogress':
-      return `[В процессе · зависло] ${(card.tasks || []).slice(0, 5).map(t => `${t.title} (${t.days} дн.)`).join(', ')}`
+    case 'stale_active_work':
+      return `[Активная работа · зависло] ${(card.tasks || []).slice(0, 5).map(t => `${t.title} (${t.days} дн.)`).join(', ')}`
     case 'people_stale':
       return `[Люди] ${(card.people || []).slice(0, 5).map(p => `${p.name} (${p.days} дн. назад)`).join(', ')}`
     case 'ai_note':
@@ -775,7 +779,7 @@ export function OverdueCard({ card, onDismiss, onSaved, note, onNote, onQuickRep
 
   const start = async (id) => {
     try {
-      await treeApi.update(id, { status: 'in_progress' })
+      await plannerApi.updateTask(id, { lane: 'focus' })
       onSaved?.()
     } finally {
       navigate('/pool')
@@ -801,6 +805,32 @@ export function OverdueCard({ card, onDismiss, onSaved, note, onNote, onQuickRep
       <CardActions onDismiss={onDismiss} note={note} onNote={onNote} onQuickReply={onQuickReply} onEdit={onEdit} card={card} />
     </div>
   )
+}
+
+function PlannerTaskRow({ task, date }) {
+  return <div className="text-sm"><div className="flex items-start gap-2"><span className="min-w-0 flex-1 text-gray-700 dark:text-gray-300">{task.title}</span>{task.urgency === 'urgent' && <span className="shrink-0 text-xs font-medium text-rose-500">срочно</span>}{date && <span className="shrink-0 text-xs text-amber-600 dark:text-amber-400">{fmtFeedDate(date)}</span>}{task.is_blocked && <span className="shrink-0 text-xs text-gray-400">ждёт</span>}</div>{task.priority_note && <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{task.priority_note}</p>}</div>
+}
+
+export function PlannerNowCard({ card, onDismiss, note, onNote, onQuickReply, onEdit }) {
+  return <div className="card p-4 ring-1 ring-violet-200 dark:ring-violet-900">
+    <CardHeader icon={ListTodo} label="Сейчас в работе" iconClass="text-violet-500" trace={card.trace} />
+    <p className="text-sm text-gray-600 dark:text-gray-400">Это активная работа. Порядок внутри карточки совпадает с очередью.</p>
+    <div className="mt-3 space-y-2">{card.tasks.map(task => <PlannerTaskRow key={task.id} task={task} />)}</div>
+    <div className="mt-3 flex justify-end"><Link to="/pool" className="btn btn-primary text-xs">Открыть очередь →</Link></div>
+    <GenerationTrace trace={card.trace} meta={card.meta} />
+    <CardActions onDismiss={onDismiss} note={note} onNote={onNote} onQuickReply={onQuickReply} onEdit={onEdit} card={card} />
+  </div>
+}
+
+export function PlannerFollowUpCard({ card, onDismiss, note, onNote, onQuickReply, onEdit }) {
+  return <div className="card p-4 ring-1 ring-amber-200 dark:ring-amber-900">
+    <CardHeader icon={Clock} label="Пора вернуться" iconClass="text-amber-500" trace={card.trace} />
+    <p className="text-sm text-gray-600 dark:text-gray-400">Для этих задач из «Ожидания» наступила выбранная дата возврата.</p>
+    <div className="mt-3 space-y-2">{card.tasks.map(task => <PlannerTaskRow key={task.id} task={task} date={task.follow_up_on} />)}</div>
+    <div className="mt-3 flex justify-end"><Link to="/pool" className="btn btn-ghost text-xs">К очереди →</Link></div>
+    <GenerationTrace trace={card.trace} meta={card.meta} />
+    <CardActions onDismiss={onDismiss} note={note} onNote={onNote} onQuickReply={onQuickReply} onEdit={onEdit} card={card} />
+  </div>
 }
 
 // ─── Goal progress ─────────────────────────────────────────────────
@@ -941,9 +971,9 @@ export function InboxPendingCard({ card, onDismiss, note, onNote, onQuickReply, 
   )
 }
 
-// ─── Stale in-progress ─────────────────────────────────────────────
+// ─── Stale active work ──────────────────────────────────────────────
 
-export function StaleInProgressCard({ card, onDismiss, onSaved, note, onNote, onQuickReply, onEdit }) {
+export function StaleActiveWorkCard({ card, onDismiss, onSaved, note, onNote, onQuickReply, onEdit }) {
   const navigate = useNavigate()
 
   const resume = async (id) => {
@@ -954,7 +984,7 @@ export function StaleInProgressCard({ card, onDismiss, onSaved, note, onNote, on
 
   return (
     <div className="card p-4 ring-1 ring-amber-200 dark:ring-amber-900">
-      <CardHeader icon={Clock} label={`В процессе · зависло ${card.count > 1 ? `${card.count} задачи` : 'задача'}`} iconClass="text-amber-500" trace={card.trace} />
+      <CardHeader icon={Clock} label={`Активная работа · зависло ${card.count > 1 ? `${card.count} задачи` : 'задача'}`} iconClass="text-amber-500" trace={card.trace} />
       <div className="space-y-2">
         {card.tasks.map(t => (
           <div key={t.id} className="flex items-center gap-2 text-sm">

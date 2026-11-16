@@ -1,5 +1,6 @@
 const CONTEXTS = new Set(['personal', 'delivery'])
 const SORTS = new Set(['default', 'suggested'])
+const POOL_VIEWS = new Set(['list', 'queue'])
 
 function values(params, key) {
   return [...new Set(params.getAll(key).map(value => value.trim()).filter(Boolean))].sort()
@@ -19,6 +20,7 @@ export function parseWorkView(search = '') {
     q: params.get('q')?.trim() || '',
     sort: SORTS.has(params.get('sort')) ? params.get('sort') : 'default',
     task: params.get('task')?.trim() || '',
+    view: POOL_VIEWS.has(params.get('view')) ? params.get('view') : 'list',
   }
 }
 
@@ -33,6 +35,7 @@ export function workViewSearch(view) {
   if (view.q) params.set('q', view.q)
   if (view.sort === 'suggested') params.set('sort', 'suggested')
   if (view.task) params.set('task', view.task)
+  if (view.view === 'queue') params.set('view', 'queue')
   return params.toString()
 }
 

@@ -26,11 +26,17 @@
 
 ## Data-free review control plane
 
-`/ai-reviews` отображает только review opportunities, явные user decisions,
-initiative/work-item state, coverage-derived priority candidates и безопасные
-provenance IDs. API не читает и не выдаёт transcript, raw session path или
-provider credentials. Priority reminder и recheck остаются локальными
-черновиками: они не меняют порядок задач и не запускают автоматическую работу.
+`/ai-reviews` показывает сначала local-only краткие результаты daily, weekly,
+design-review и analytics: период, состояние, полноту, человеческий итог и
+следующую проверку. Полный список сжатых отчётов доступен из истории, а
+инициатива раскрывает её work-item progress и блокеры. Эти результаты доступны
+только через loopback на этом компьютере.
+
+API не читает и не выдаёт raw transcript, исходный путь сессии, credentials или
+личные заметки. Возможности, user decisions, initiative/work-item state,
+coverage-derived priority candidates и provenance остаются вторым уровнем
+детализации. Priority reminder и recheck — локальные черновики: они не меняют
+порядок задач и не запускают автоматическую работу.
 
 ## Повторяемый порядок ревью
 

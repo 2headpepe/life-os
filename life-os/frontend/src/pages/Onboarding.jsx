@@ -18,7 +18,7 @@ const SETUP_SYSTEM = `Ты помощник по настройке Life OS — 
 
 Когда просят предложить задачи — верни ТОЛЬКО JSON-блок:
 \`\`\`json
-{"tasks":[{"title":"Название задачи","parent_id":"root-health","status":"in_progress"}]}
+{"tasks":[{"title":"Название задачи","parent_id":"root-health","status":"undefined"}]}
 \`\`\`
 
 Сфера — это широкая область жизни, а не отдельное занятие: баскетбол относится к «Здоровью и спорту», чтение — к «Отдыху и хобби». Верни 2–4 primary только когда они прямо следуют из текста, и 3–4 optional как полезное, разнообразное покрытие. id сфер должны быть в формате root-{slug} (латиница, дефисы).`
@@ -38,7 +38,7 @@ const CLI_ONBOARDING_PROMPT = `Ты настраиваешь Life OS — лич�
 {"id":"root-health","title":"Здоровье","parent_id":null,"color":"#3B82F6","status":null,"due":null,"notes":null,"created":"TODAY","updated":"TODAY"}
 
 Корневые узлы (сферы): parent_id = null, id = root-{slug}
-Задачи: parent_id = id родительской сферы, id = node-{slug}, status = "in_progress"
+Задачи: parent_id = id родительской сферы, id = node-{slug}, status = "undefined"
 
 Файл nodes.json имеет структуру: {"_type":"tree","updated":"TODAY","nodes":[...все узлы...]}
 
@@ -575,7 +575,7 @@ export default function Onboarding({ onDone }) {
     try {
       for (const t of tasks) {
         if (!t.title?.trim()) continue
-        await treeApi.create({ title: t.title, parent_id: t.parent_id, status: t.status || 'in_progress' })
+        await treeApi.create({ title: t.title, parent_id: t.parent_id, status: t.status || 'undefined' })
       }
       setStep(5)
     } catch (e) { setError(e.message) }

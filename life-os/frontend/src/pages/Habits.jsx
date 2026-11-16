@@ -1,11 +1,13 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Check, X, Target, Shield } from 'lucide-react'
+import { Check, X, Target, GripVertical, MoreHorizontal, Clock3, Power } from 'lucide-react'
 import { habits, tree as treeApi } from '../api'
 import { useRecoveryMode } from '../context/RecoveryModeContext'
 import { computeHabitScore, habitIsDone, inTimeWindow } from '../utils/habitScoring'
 import { HabitDynamics } from './Stats'
 import { directEntityId, entityPath } from '../utils/entityLinks'
+import { moveHabitToCategory, orderedFoundationHabits, orderedHabits, reorderFoundationHabits, reorderHabitsInCategory } from '../utils/habitOrdering'
 
 export { computeHabitScore, habitIsDone, inTimeWindow } from '../utils/habitScoring'
 
@@ -61,7 +63,7 @@ function TrackToggle({ value, onChange }) {
   return (
     <button
       onClick={() => onChange(next)}
-      className={`w-8 h-8 rounded-full flex items-center justify-center transition-all
+      className={`habit-track-toggle w-8 h-8 rounded-full flex items-center justify-center transition-all
         ${value === true  ? 'bg-green-400 dark:bg-green-500 text-white'
         : value === false ? 'bg-red-400 dark:bg-red-500 text-white'
         :                   'border-2 border-gray-300 dark:border-gray-600 text-gray-400 hover:border-gray-400 dark:hover:border-gray-500'}`}
@@ -79,16 +81,16 @@ function TrackCounter({ habit, value, onChange }) {
       ? (v === 0 ? 'text-green-500' : v === 1 ? 'text-amber-500' : 'text-red-500')
       : (v >= habit.target ? 'text-green-500' : v > 0 ? 'text-amber-500' : 'text-gray-400')
   return (
-    <div className="flex items-center gap-2">
+    <div className="habit-counter flex items-center gap-2">
       <button
         onClick={() => onChange(isNull ? null : v === 0 ? null : v - 1)}
         disabled={isNull}
-        className="w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 flex items-center justify-center"
+        className="habit-track-step w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 flex items-center justify-center"
       >−</button>
-      <span className={`text-lg font-semibold w-8 text-center ${color}`}>{isNull ? '—' : v}</span>
+      <span className={`habit-counter__value text-lg font-semibold w-8 text-center ${color}`}>{isNull ? '—' : v}</span>
       <button
         onClick={() => onChange(isNull ? 0 : v + 1)}
-        className="w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-center"
+        className="habit-track-step w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-center"
       >+</button>
       {habit.target > 0 && !isNull && <span className="text-xs text-gray-400">/ {habit.target}</span>}
     </div>
@@ -104,7 +106,7 @@ function TrackCycle({ habit, value, onChange }) {
   return (
     <button
       onClick={handleClick}
-      className={`px-4 py-1.5 rounded-lg border text-sm font-medium transition-opacity hover:opacity-75 ${colorClass}`}
+      className={`habit-track-cycle px-4 py-1.5 rounded-lg border text-sm font-medium transition-opacity hover:opacity-75 ${colorClass}`}
     >{label}</button>
   )
 }
@@ -114,12 +116,12 @@ function TrackTimeWindow({ habit, value, onChange }) {
   const ok = inTimeWindow(tw, value)
   const color = value ? (ok ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400') : ''
   return (
-    <div className="flex items-center gap-2">
+    <div className="habit-time-window flex items-center gap-2">
       <input
         type="time"
         value={value || ''}
         onChange={e => onChange(e.target.value || null)}
-        className={`text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 outline-none cursor-pointer ${color}`}
+        className={`habit-time-input text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 outline-none cursor-pointer ${color}`}
       />
       {tw && <span className="text-xs text-gray-400">{tw.start}–{tw.end}</span>}
     </div>
@@ -159,7 +161,7 @@ function TrackBP({ value, onChange }) {
       {adding ? (
         <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
           <input type="time" value={form.time} onChange={e => setForm(f => ({ ...f, time: e.target.value }))}
-            className="text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 w-[72px] outline-none" />
+            className="habit-bp-input text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 w-[72px] outline-none" />
           <input type="number" placeholder="сист" value={form.sys} onChange={e => setForm(f => ({ ...f, sys: e.target.value }))}
             className="text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 w-14 outline-none" />
           <span className="text-gray-400 text-xs">/</span>
@@ -315,7 +317,7 @@ function GapsView({ defs, todayStr, onJump }) {
 function buildDefs(categories, todayStr) {
   const allActive = [], paused = []
   for (const c of categories) {
-    for (const h of (c.habits || [])) {
+    for (const h of orderedHabits(c.habits || [])) {
       if (!h.active) continue
       if (h.active_until && h.active_until < todayStr) continue
       const enriched = { ...h, category: c.label, categoryId: c.id }
@@ -329,6 +331,70 @@ function buildDefs(categories, todayStr) {
     grouped[h.category].push(h)
   }
   return { allActive, paused, grouped, maxTotal: allActive.reduce((s, x) => s + (x.max_score || 1), 0) }
+}
+
+function HabitActionsMenu({ habit, onGoal, onPause, onDisable }) {
+  const triggerRef = useRef(null)
+  const menuRef = useRef(null)
+  const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState(null)
+
+  useEffect(() => {
+    if (!open) return undefined
+    const updatePosition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const menuWidth = 224
+      setPosition({
+        top: rect.bottom + 8,
+        left: Math.max(12, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12)),
+      })
+    }
+    const closeOnOutsidePointer = event => {
+      if (!triggerRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setOpen(false)
+    }
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    document.addEventListener('mousedown', closeOnOutsidePointer)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+      document.removeEventListener('mousedown', closeOnOutsidePointer)
+    }
+  }, [open])
+
+  const close = () => {
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+  const act = action => {
+    action()
+    close()
+  }
+
+  return <>
+    <button
+      ref={triggerRef}
+      type="button"
+      onClick={() => setOpen(value => !value)}
+      onKeyDown={event => { if (event.key === 'Escape') close() }}
+      aria-label={`Действия с привычкой «${habit.label}»`}
+      aria-expanded={open}
+      aria-haspopup="menu"
+      className="habit-actions-trigger"
+    ><MoreHorizontal size={18} /></button>
+    {open && position && createPortal(
+      <div ref={menuRef} role="menu" aria-label={`Действия с привычкой «${habit.label}»`} onKeyDown={event => { if (event.key === 'Escape') close() }} className="habit-actions-menu" style={position}>
+        <div className="habit-actions-menu__label">Управление привычкой</div>
+        <button type="button" role="menuitem" onClick={() => act(onGoal)}><Target size={16} /><span>Привязать к цели</span></button>
+        <button type="button" role="menuitem" onClick={() => act(onPause)}><Clock3 size={16} /><span>Поставить на паузу</span></button>
+        <div className="habit-actions-menu__divider" />
+        <button type="button" role="menuitem" className="habit-actions-menu__danger" onClick={() => act(onDisable)}><Power size={16} /><span>Выключить</span></button>
+      </div>,
+      document.body,
+    )}
+  </>
 }
 
 // ─── Main ──────────────────────────────────────────────────────────
@@ -385,6 +451,8 @@ export default function Habits() {
   const [pauseTarget, setPauseTarget] = useState(null)
   const [pauseDate, setPauseDate] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
+  const [draggedHabit, setDraggedHabit] = useState(null)
+  const [dragOverCategoryId, setDragOverCategoryId] = useState(null)
   const [addForm, setAddForm] = useState({ label: '', categoryId: '', kind: 'toggle', target: '' })
   const habitId = directEntityId(location.pathname, 'habits')
 
@@ -483,11 +551,49 @@ export default function Habits() {
     await saveDefs(updated)
   }
 
-  const toggleFoundation = async (habitId) => {
-    const updated = rawCategories.map(c => ({
-      ...c, habits: c.habits.map(h => h.id === habitId ? { ...h, foundation: !h.foundation } : h)
+  const disableHabit = async (habitId) => {
+    const updated = rawCategories.map(category => ({
+      ...category,
+      habits: category.habits.map(habit => habit.id === habitId ? { ...habit, active: false } : habit),
     }))
     await saveDefs(updated)
+  }
+
+  const toggleFoundation = async (habitId) => {
+    const foundationCount = rawCategories.flatMap(category => category.habits || []).filter(habit => habit.foundation).length
+    const updated = rawCategories.map(c => ({
+      ...c, habits: c.habits.map(h => h.id === habitId
+        ? { ...h, foundation: !h.foundation, ...(!h.foundation ? { foundation_order: foundationCount } : {}) }
+        : h)
+    }))
+    await saveDefs(updated)
+  }
+
+  const reorderCategory = async (categoryId, sourceId, targetId) => {
+    if (!sourceId || sourceId === targetId) return
+    await saveDefs(reorderHabitsInCategory(rawCategories, categoryId, sourceId, targetId))
+  }
+
+  const reorderFoundation = async (sourceId, targetId) => {
+    if (!sourceId || sourceId === targetId) return
+    await saveDefs(reorderFoundationHabits(rawCategories, sourceId, targetId))
+  }
+
+  const moveCategory = async (habitId, categoryId) => {
+    const current = rawCategories.find(category => category.habits?.some(habit => habit.id === habitId))
+    if (!current || current.id === categoryId) return
+    await saveDefs(moveHabitToCategory(rawCategories, habitId, categoryId))
+  }
+
+  const dropIntoCategory = async (categoryId, targetHabitId = null) => {
+    if (!draggedHabit) return
+    if (draggedHabit.categoryId === categoryId) {
+      if (targetHabitId) await reorderCategory(categoryId, draggedHabit.id, targetHabitId)
+    } else {
+      await moveCategory(draggedHabit.id, categoryId)
+    }
+    setDraggedHabit(null)
+    setDragOverCategoryId(null)
   }
 
   const submitAddHabit = async () => {
@@ -591,7 +697,7 @@ export default function Habits() {
             {defs.length === 0 && <div className="rounded-2xl border border-dashed border-gray-200 px-5 py-8 text-center dark:border-gray-700"><p className="text-sm font-medium text-gray-700 dark:text-gray-200">Привычек пока нет</p><p className="mt-1 text-xs text-gray-400">Добавь первую вручную в настройках привычек или вернись в setup за предложениями.</p></div>}
             {/* Foundation section — always at top */}
             {(() => {
-              const foundationHabits = defs.filter(h => h.foundation)
+              const foundationHabits = orderedFoundationHabits(defs.filter(h => h.foundation))
               if (!foundationHabits.length) return null
               const foundationDone = foundationHabits.filter(h => habitIsDone(h, dayLog[h.id])).length
               const allDone = foundationDone === foundationHabits.length
@@ -606,19 +712,20 @@ export default function Habits() {
                     <div
                       key={h.id}
                       data-entity-id={h.id}
+                      draggable
+                      onDragStart={() => setDraggedHabit({ id: h.id, scope: 'foundation', categoryId: h.categoryId })}
+                      onDragOver={event => event.preventDefault()}
+                      onDrop={() => { if (draggedHabit?.scope === 'foundation') reorderFoundation(draggedHabit.id, h.id); setDraggedHabit(null); setDragOverCategoryId(null) }}
+                      onDragEnd={() => { setDraggedHabit(null); setDragOverCategoryId(null) }}
                       className={`flex items-center gap-4 px-4 py-3 ${h.id === habitId ? 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500' : ''} ${idx < foundationHabits.length - 1 ? 'border-b border-gray-50 dark:border-gray-800/50' : ''}`}
                     >
+                      <GripVertical size={15} aria-hidden="true" className="shrink-0 cursor-grab text-gray-300 dark:text-gray-600" />
                       <div className="min-w-0 flex-1">
                         <button type="button" onClick={() => navigate(entityPath.habit(h.id))} className="text-left text-sm text-gray-800 dark:text-gray-200 font-medium hover:text-blue-600 dark:hover:text-blue-400">{h.label}</button>
                         {h.detail && <div className="text-xs text-gray-400 mt-0.5">{h.detail}</div>}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <TrackInput habit={h} value={dayLog[h.id]} onChange={(val) => updateHabit(h.id, val)} editable={trackDate <= todayStr} />
-                        <button
-                          onClick={() => toggleFoundation(h.id)}
-                          title="Убрать из фундамента"
-                          className="text-amber-400 hover:text-gray-400 transition-colors"
-                        ><Shield size={13} fill="currentColor" /></button>
                       </div>
                     </div>
                   ))}
@@ -635,9 +742,12 @@ export default function Habits() {
                 const toggleFn = isRecoveryMode ? () => toggleCatRecovery(cat) : () => toggleCat(cat)
                 const catDone = nonFoundationHabits.filter(h => habitIsDone(h, dayLog[h.id])).length
                 return (
-              <div key={cat} className="habits-category card overflow-hidden">
+              <div key={cat} className={`habits-category card overflow-hidden ${dragOverCategoryId === catHabits[0].categoryId ? 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500' : ''}`}>
                 <button
                   onClick={toggleFn}
+                  onDragOver={event => { event.preventDefault(); setDragOverCategoryId(catHabits[0].categoryId) }}
+                  onDragLeave={() => setDragOverCategoryId(null)}
+                  onDrop={event => { event.preventDefault(); dropIntoCategory(catHabits[0].categoryId) }}
                   className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider bg-gray-50/50 dark:bg-gray-900/30 border-b border-gray-100 dark:border-gray-800 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                 >
                   <span className={`text-gray-300 dark:text-gray-600 transition-transform ${collapsed ? '' : 'rotate-90'}`}>›</span>
@@ -648,9 +758,16 @@ export default function Habits() {
                   <div
                     key={h.id}
                     data-entity-id={h.id}
+                    draggable
+                    onDragStart={() => setDraggedHabit({ id: h.id, scope: cat, categoryId: h.categoryId })}
+                    onDragOver={event => { event.preventDefault(); setDragOverCategoryId(h.categoryId) }}
+                    onDragLeave={() => setDragOverCategoryId(null)}
+                    onDrop={event => { event.preventDefault(); dropIntoCategory(h.categoryId, h.id) }}
+                    onDragEnd={() => { setDraggedHabit(null); setDragOverCategoryId(null) }}
                     className={`flex items-center gap-4 px-4 py-3 ${h.id === habitId ? 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500' : ''}
                       ${idx < nonFoundationHabits.length - 1 ? 'border-b border-gray-50 dark:border-gray-800/50' : ''}`}
                   >
+                    <GripVertical size={15} aria-hidden="true" className="shrink-0 cursor-grab text-gray-300 dark:text-gray-600" />
                     <div className="min-w-0 flex-1">
                       <button type="button" onClick={() => navigate(entityPath.habit(h.id))} className="text-left text-sm text-gray-800 dark:text-gray-200 font-medium hover:text-blue-600 dark:hover:text-blue-400">{h.label}</button>
                       {h.detail && <div className="text-xs text-gray-400 mt-0.5">{h.detail}</div>}
@@ -668,10 +785,9 @@ export default function Habits() {
                         </div>
                       )}
                       {h.node_id && nodeById[h.node_id] && goalPickerFor !== h.id && (
-                        <button onClick={() => setGoalPickerFor(h.id)}
-                          className="flex items-center gap-1 mt-1 text-xs text-blue-500 hover:text-blue-600">
+                        <div className="flex items-center gap-1 mt-1 text-xs text-blue-500">
                           <Target size={11} /> {nodeById[h.node_id].title}
-                        </button>
+                        </div>
                       )}
                       {goalPickerFor === h.id && (
                         <div className="flex items-center gap-2 mt-2">
@@ -696,21 +812,12 @@ export default function Habits() {
                         onChange={(val) => updateHabit(h.id, val)}
                         editable={trackDate <= todayStr}
                       />
-                      <button
-                        onClick={() => setGoalPickerFor(goalPickerFor === h.id ? null : h.id)}
-                        title="Привязать к цели"
-                        className={`transition-colors text-xs leading-none ${h.node_id ? 'text-blue-400 hover:text-blue-500' : 'text-gray-300 dark:text-gray-700 hover:text-blue-400'}`}
-                      ><Target size={13} /></button>
-                      <button
-                        onClick={() => toggleFoundation(h.id)}
-                        title="Добавить в фундамент (режим восстановления)"
-                        className="text-gray-300 dark:text-gray-700 hover:text-amber-400 transition-colors"
-                      ><Shield size={13} /></button>
-                      <button
-                        onClick={() => { setPauseTarget(h.id); setPauseDate(addDays(todayStr, 7)) }}
-                        title="Поставить на паузу"
-                        className="text-gray-300 dark:text-gray-700 hover:text-amber-400 transition-colors text-xs leading-none"
-                      >⏸</button>
+                      <HabitActionsMenu
+                        habit={h}
+                        onGoal={() => setGoalPickerFor(h.id)}
+                        onPause={() => { setPauseTarget(h.id); setPauseDate(addDays(todayStr, 7)) }}
+                        onDisable={() => disableHabit(h.id)}
+                      />
                     </div>
                   </div>
                 ))}

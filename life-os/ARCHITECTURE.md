@@ -51,13 +51,13 @@ brain/content/
 
 | Маршрут | Файл | Назначение |
 |---|---|---|
-| `/` | `Feed.jsx` | Лента задач, привычек, воспоминаний и подсказок |
-| `/today` | `Today.jsx` | План на день |
-| `/goals` | `Tree.jsx` | Дерево сфер, целей и задач |
-| `/pool` | `Pool.jsx` | Все активные и запланированные задачи |
+| `/` | `Feed.jsx` | Лента задач, привычек, воспоминаний, подсказок и активной очереди `Сейчас` |
+| `/today` | `Today.jsx` | План на день с активной очередью `Сейчас` и наступившими follow-up |
+| `/goals` | `Tree.jsx` | Дерево сфер, целей и задач с контекстом ручной очереди на листьях |
+| `/pool` | `Pool.jsx` | Инвентарь личных задач в list-режиме и единая очередь активной работы (`Сейчас`, `Следующая`, `Ожидание`) в режиме доски |
 | `/habits` | `Habits.jsx` | Трекинг привычек и история |
 | `/lists` | `Lists.jsx` | Личные списки |
-| `/calendar` | `Calendar.jsx` | Календарь и синхронизация Google Calendar |
+| `/calendar` | `Calendar.jsx` | Календарь, синхронизация Google Calendar и визуальные follow-up из Waiting |
 | `/inbox` | `Inbox.jsx` | Неразобранные записи |
 | `/insights` | `Insights.jsx` | Инсайты и тематические заметки |
 | `/memories` | `Memories.jsx` | Воспоминания и фотографии |
@@ -82,6 +82,14 @@ PATCH  /api/tree/:id             изменить узел
 DELETE /api/tree/:id             удалить узел и потомков
 GET    /api/tree/leaves          получить задачи без потомков
 GET    /api/tree/spheres         получить корневые сферы
+
+GET    /api/planner/queue        personal-листья со статусом `in_progress`, находящиеся в активной очереди
+POST   /api/planner/commit       локальный chat-capture bridge (`confirmed: true`); доска `/pool` его не вызывает
+PATCH  /api/planner/tasks/:id    назначить или изменить placement существующей задачи
+POST   /api/planner/reorder      сохранить ручной порядок одной полосы
+POST   /api/planner/migrate      локально применить миграцию прежних названий полос planner
+
+GET    /api/feed                 rule-based лента, включая `Сейчас` и наступившие Waiting follow-up
 
 GET    /api/context              краткий контекст дня
 GET    /api/search?q=            поиск

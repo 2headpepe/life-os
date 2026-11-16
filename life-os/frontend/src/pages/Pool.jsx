@@ -1,8 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { tree as treeApi } from '../api'
+import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCorners, pointerWithin, useDraggable, useDroppable, useSensor, useSensors } from '@dnd-kit/core'
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { tree as treeApi, planner as plannerApi } from '../api'
 import NodeCard from '../components/NodeCard'
-import { SlidersHorizontal, X } from 'lucide-react'
+import { Clock3, GripVertical, Link2, SlidersHorizontal, X } from 'lucide-react'
+import { overdueTasks, starterBacklog } from '../utils/activeWork'
 import { filterAndRank, parseWorkView, workViewSearch } from '../utils/workControlPlane'
 
 const STATUS_TABS = [
@@ -28,12 +32,10 @@ const STATUS_LABELS = {
   someday:     '◌ Когда-нибудь',
 }
 
-const KANBAN_COLUMNS = [
-  { id: 'undefined',   label: 'Не определено', color: 'var(--ds-danger)' },
-  { id: 'in_progress', label: 'В работе',       color: 'var(--ds-info)' },
-  { id: 'blocked',     label: 'Ждём',           color: 'var(--ds-warning)' },
-  { id: 'scheduled',   label: 'Запланировано',  color: 'var(--ds-violet)' },
-  { id: 'someday',     label: 'Когда-нибудь',   color: 'var(--ds-muted)' },
+const PLANNER_LANES = [
+  { id: 'focus', label: 'Сейчас', description: 'то, над чем работаешь прямо сейчас', accent: 'bg-violet-500' },
+  { id: 'next', label: 'Следующая', description: 'следом, когда закончишь текущую работу', accent: 'bg-sky-500' },
+  { id: 'waiting', label: 'Ожидание', description: 'вернёмся после ответа, события или решения', accent: 'bg-amber-500' },
 ]
 
 function ListGroup({ label, color, items, onUpdate }) {
@@ -51,41 +53,253 @@ function ListGroup({ label, color, items, onUpdate }) {
   )
 }
 
-function KanbanColumn({ id, label, color, items, onUpdate }) {
+function urgencyLabel(urgency) {
+  if (urgency === 'urgent') return 'срочно'
+  if (urgency === 'normal') return 'обычная срочность'
+  return null
+}
+
+function plannerStatus(task) {
+  if (task.is_blocked) return '⏸ Ждёт зависимость'
+  return STATUS_LABELS[task.status || 'undefined'] || '⚠ Не определено'
+}
+
+// `pointerWithin` makes the whole lane a real destination: dropping into an
+// empty part of a neighbouring column must not depend on hitting a card. The
+// fallback keeps keyboard sorting working, where no pointer coordinates exist.
+function plannerCollisionDetection(args) {
+  const pointerCollisions = pointerWithin(args)
+  return pointerCollisions.length ? pointerCollisions : closestCorners(args)
+}
+
+function PlannerCard({ task, onUpdate, overlay = false }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id, disabled: overlay })
+  const urgency = urgencyLabel(task.planner?.urgency)
+  const style = overlay ? undefined : {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
   return (
-    <div className="flex-shrink-0 w-72">
-      <div className="flex items-center gap-2 mb-3 px-1">
-        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-        <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
-          {label}
-        </span>
-        <span className="ml-auto text-xs text-gray-400 dark:text-gray-600 font-medium">
-          {items.length}
-        </span>
+    <article
+      ref={overlay ? undefined : setNodeRef}
+      style={style}
+      className={`relative ${isDragging ? 'opacity-35' : ''} ${overlay ? 'w-72 shadow-lg ring-1 ring-gray-300 dark:ring-gray-600' : ''}`}
+    >
+      {!overlay && (
+        <div className="mb-1 flex items-center px-1">
+          <button
+            type="button"
+            className="flex min-h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 active:cursor-grabbing dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+            aria-label={`Перетащить задачу «${task.title}»`}
+            onClick={event => event.stopPropagation()}
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical size={15} />
+            Перетащить
+          </button>
+        </div>
+      )}
+      <NodeCard node={task} onUpdate={onUpdate} allowTitleWrap />
+      <div className="-mt-1 mb-2 flex flex-wrap items-center gap-1.5 px-3 text-[11px] text-gray-500 dark:text-gray-400">
+        <span className={`rounded-full px-2 py-0.5 ${task.is_blocked ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200' : 'bg-gray-100 dark:bg-gray-800'}`}>{plannerStatus(task)}</span>
+        {task.root_title && <span className="rounded-full bg-gray-100 px-2 py-0.5 dark:bg-gray-800">{task.root_title}</span>}
+        {urgency && <span className={task.planner?.urgency === 'urgent' ? 'font-medium text-rose-600 dark:text-rose-400' : ''}>{urgency}</span>}
+        {task.is_blocked && <span className="flex items-center gap-1"><Link2 size={12} />зависимость</span>}
+        {task.planner?.follow_up_on && <span className="flex items-center gap-1"><Clock3 size={12} />{task.planner.follow_up_on}</span>}
       </div>
-      <div className="rounded-xl bg-gray-50 dark:bg-gray-800/50 p-2 min-h-24 flex flex-col gap-2">
-        {items.length === 0 ? (
-          <div className="text-xs text-gray-300 dark:text-gray-600 text-center py-4">пусто</div>
-        ) : (
-          items.map(n => <NodeCard key={n.id} node={n} onUpdate={onUpdate} row />)
-        )}
-      </div>
-    </div>
+    </article>
   )
 }
 
-function KanbanBoard({ items, onUpdate }) {
+function BacklogCard({ task, onActivate, onUpdate, overlay = false, draggedRef }) {
+  const { attributes, listeners = {}, setNodeRef, transform, transition, isDragging } = useDraggable({ id: `backlog:${task.id}`, disabled: overlay })
+  const { onPointerDown: onDragPointerDown, ...dragListeners } = listeners
+  const style = overlay ? undefined : {
+    transform: CSS.Translate.toString(transform),
+    transition,
+  }
+  return <article ref={overlay ? undefined : setNodeRef} style={style} className={`${isDragging ? 'opacity-35' : ''} ${overlay ? 'w-72 shadow-lg ring-1 ring-violet-300 dark:ring-violet-700' : ''}`}>
+    {!overlay && <div className="mb-1 flex items-center px-1"><button type="button" className="flex min-h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 active:cursor-grabbing dark:text-violet-200 dark:hover:bg-violet-950/50" aria-label={`Перетащить задачу «${task.title}» в активную очередь`} {...attributes} {...dragListeners} onPointerDown={event => { if (draggedRef) draggedRef.current = false; onDragPointerDown?.(event) }} onClick={event => { event.stopPropagation(); if (draggedRef?.current) { draggedRef.current = false; return } onActivate?.(task) }}><GripVertical size={15} />В «Сейчас»</button></div>}
+    <NodeCard node={task} onUpdate={onUpdate} allowTitleWrap />
+  </article>
+}
+
+function PlannerLane({ lane, tasks, onUpdate }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `lane:${lane.id}` })
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4 -mx-6 px-6">
-      {KANBAN_COLUMNS.map(col => (
-        <KanbanColumn
-          key={col.id}
-          {...col}
-          items={items.filter(n => col.id === 'blocked' ? n.is_blocked : !n.is_blocked && (n.status || 'undefined') === col.id)}
-          onUpdate={onUpdate}
-        />
-      ))}
-    </div>
+    <section
+      ref={setNodeRef}
+      aria-label={`${lane.label}: ${lane.description}`}
+      className={`w-[22rem] min-w-[22rem] max-h-[calc(100vh-14rem)] overflow-y-auto rounded-2xl border p-3 transition-colors ${isOver ? 'border-gray-400 bg-gray-100/70 dark:border-gray-500 dark:bg-gray-800/80' : 'border-gray-200 bg-gray-50/70 dark:border-gray-800 dark:bg-gray-900/40'}`}
+    >
+      <div className="mb-3 flex items-start gap-2 px-1">
+        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${lane.accent}`} />
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{lane.label} <span className="font-normal text-gray-400">{tasks.length}</span></h2>
+          <p className="mt-0.5 text-[11px] leading-4 text-gray-400 dark:text-gray-500">{lane.description}</p>
+        </div>
+      </div>
+      <SortableContext items={tasks.map(task => task.id)} strategy={verticalListSortingStrategy}>
+        <div className="space-y-2">
+          {tasks.map(task => <PlannerCard key={task.id} task={task} onUpdate={onUpdate} />)}
+          <div className={`min-h-12 rounded-xl border border-dashed px-3 py-3 text-center text-xs transition-colors ${isOver ? 'border-gray-400 bg-white text-gray-700 dark:border-gray-500 dark:bg-gray-900 dark:text-gray-200' : 'border-gray-200 text-gray-400 dark:border-gray-700 dark:text-gray-500'}`}>
+            {isOver ? 'Отпустите — задача окажется в этой очереди' : tasks.length ? 'Перетащите сюда' : 'Пусто — перетащите задачу сюда'}
+          </div>
+        </div>
+      </SortableContext>
+    </section>
+  )
+}
+
+function placementFor(tasks, activeTask, overId) {
+  const withoutActive = tasks.filter(task => task.id !== activeTask.id)
+  const overIndex = withoutActive.findIndex(task => task.id === overId)
+  const at = overIndex === -1 ? withoutActive.length : overIndex
+  return [...withoutActive.slice(0, at), activeTask, ...withoutActive.slice(at)]
+}
+
+function overdueDateLabel(due) {
+  return new Date(`${due}T12:00:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
+}
+
+function PlannerBoard({ tasks, candidates, inProgressCount, overdue, onRefresh, onOpenList }) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+  const [activeId, setActiveId] = useState(null)
+  const backlogDragRef = useRef(false)
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+  const tasksByLane = useMemo(() => Object.fromEntries(PLANNER_LANES.map(lane => [lane.id, tasks.filter(task => task.planner_lane === lane.id)])), [tasks])
+  const activeQueueCount = PLANNER_LANES.reduce((count, lane) => count + tasksByLane[lane.id].length, 0)
+  const activeTask = tasks.find(task => task.id === activeId) || null
+  const activeBacklogTask = candidates.find(task => `backlog:${task.id}` === activeId) || null
+  const stateDescription = tasksByLane.focus.length
+    ? `Сейчас выбрано: ${tasksByLane.focus.length}. «Следующая» и «Ожидание» помогают не потерять продолжение и возвращения.`
+    : activeQueueCount
+      ? 'В очереди есть задачи, но ни одна не назначена на сейчас. Перетащи подходящую задачу в «Сейчас», когда начнёшь её.'
+      : inProgressCount
+        ? 'Задачи уже имеют статус «В работе», но не попали в ручной порядок. Ниже можно открыть их и добавить в очередь.'
+        : 'В очереди пока ничего нет. Бэклог ниже поможет выбрать следующий шаг.'
+  const hasCurrentWork = tasksByLane.focus.length > 0
+  const hasStateSummary = !hasCurrentWork || activeQueueCount > 0 || inProgressCount > 0 || overdue.length > 0
+
+  const addBacklogTask = async (source, lane, overTaskId) => {
+    if (saving || !PLANNER_LANES.some(item => item.id === lane)) return
+    setSaving(true)
+    setError(null)
+    let changedStatus = false
+    let createdPlacement = false
+    try {
+      const destination = tasksByLane[lane] || []
+      const reordered = placementFor(destination, source, overTaskId)
+      const orderedIds = reordered.map(task => task.id)
+      if (source.status !== 'in_progress') {
+        const started = await treeApi.update(source.id, { status: 'in_progress' })
+        if (started.error) throw new Error(started.error)
+        changedStatus = true
+      }
+      const moved = await plannerApi.updateTask(source.id, { lane })
+      if (moved.error) throw new Error(moved.error)
+      createdPlacement = true
+      const result = await plannerApi.reorder(lane, orderedIds)
+      if (result.error) throw new Error(result.error)
+      await onRefresh()
+    } catch (requestError) {
+      if (createdPlacement) {
+        const cleared = await plannerApi.updateTask(source.id, null)
+        if (cleared.error) requestError = new Error(`${requestError.message || 'Не удалось добавить задачу в очередь.'} Placement не удалось вернуть обратно.`)
+      }
+      if (changedStatus) {
+        const rollback = await treeApi.update(source.id, { status: source.status || 'undefined' })
+        if (rollback.error) requestError = new Error(`${requestError.message || 'Не удалось добавить задачу в очередь.'} Статус «В работе» не удалось вернуть обратно.`)
+      }
+      await onRefresh()
+      setError(requestError.message || 'Не удалось изменить порядок внимания.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDragEnd = async ({ active, over }) => {
+    setActiveId(null)
+    if (!over || saving || active.id === over.id) return
+    const activeKey = String(active.id)
+    const fromBacklog = activeKey.startsWith('backlog:')
+    const sourceId = fromBacklog ? activeKey.slice('backlog:'.length) : activeKey
+    const source = fromBacklog ? candidates.find(task => task.id === sourceId) : tasks.find(task => task.id === sourceId)
+    if (!source) return
+    const overTask = tasks.find(task => task.id === over.id)
+    const lane = String(over.id).startsWith('lane:') ? String(over.id).slice(5) : overTask?.planner_lane
+    if (!PLANNER_LANES.some(item => item.id === lane)) return
+    if (fromBacklog) {
+      backlogDragRef.current = true
+      await addBacklogTask(source, lane, overTask?.id)
+      return
+    }
+
+    const sourceLane = source.planner_lane
+    setSaving(true)
+    setError(null)
+    try {
+      const destination = tasksByLane[lane] || []
+      const reordered = placementFor(destination, source, overTask?.id)
+      const orderedIds = reordered.map(task => task.id)
+      if (sourceLane === lane && orderedIds.every((id, index) => id === destination[index]?.id)) return
+      if (sourceLane !== lane) {
+        const moved = await plannerApi.updateTask(source.id, { lane })
+        if (moved.error) throw new Error(moved.error)
+      }
+      const result = await plannerApi.reorder(lane, orderedIds)
+      if (result.error) throw new Error(result.error)
+      await onRefresh()
+    } catch (requestError) {
+      setError(requestError.message || 'Не удалось изменить порядок внимания.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      {error && <div role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-300">{error}</div>}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={plannerCollisionDetection}
+        onDragStart={({ active }) => { backlogDragRef.current = String(active.id).startsWith('backlog:'); setActiveId(active.id) }}
+        onDragCancel={() => setActiveId(null)}
+        onDragEnd={handleDragEnd}
+      >
+      <section id="start-backlog" className="mb-5 scroll-mt-6 w-[68rem] max-w-full rounded-2xl border border-dashed border-violet-200 bg-violet-50/40 px-5 py-5 dark:border-violet-900/60 dark:bg-violet-950/20" aria-live="polite" aria-labelledby="active-work-state-heading">
+        {hasStateSummary && <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-2xl"><p className="text-sm font-semibold text-violet-950 dark:text-violet-100">{!hasCurrentWork ? 'Активная работа ещё не выбрана' : 'Активная работа'}</p><p className="mt-1 text-sm text-violet-800/80 dark:text-violet-200/80">{stateDescription}{overdue.length ? ' Просроченные задачи отмечены отдельно: они не становятся «Сейчас» автоматически.' : ''}</p></div>
+          <div className="flex flex-wrap gap-2 text-xs font-medium">
+            <span className="rounded-full bg-white/70 px-2.5 py-1 text-violet-900 dark:bg-slate-900/70 dark:text-violet-100">В очереди: {activeQueueCount}</span>
+            <span className="rounded-full bg-white/70 px-2.5 py-1 text-violet-900 dark:bg-slate-900/70 dark:text-violet-100">В работе: {inProgressCount}</span>
+            <span className={`rounded-full px-2.5 py-1 ${overdue.length ? 'bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100' : 'bg-white/70 text-violet-900 dark:bg-slate-900/70 dark:text-violet-100'}`}>Просрочено: {overdue.length}</span>
+          </div>
+        </div>}
+        {overdue.length > 0 && <aside className="mt-4 rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-sm dark:border-amber-900/60 dark:bg-amber-950/20" aria-label="Просроченные задачи">
+          <p className="font-medium text-amber-950 dark:text-amber-100">Просрочены</p>
+          <div className="mt-2 flex flex-wrap gap-2">{overdue.slice(0, 3).map(task => <span key={task.id} className="rounded-lg bg-white/80 px-2 py-1 text-xs text-amber-950 dark:bg-slate-900/70 dark:text-amber-100">{task.title} · до {overdueDateLabel(task.due)}</span>)}{overdue.length > 3 && <button type="button" onClick={onOpenList} className="px-1 text-xs font-medium text-amber-900 underline-offset-2 hover:underline dark:text-amber-100">Ещё {overdue.length - 3} в списке</button>}</div>
+        </aside>}
+        <div className={`${hasStateSummary || overdue.length ? 'mt-5 border-t border-violet-200/80 pt-4 dark:border-violet-900/60' : ''}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div><h2 id="active-work-state-heading" className="text-sm font-semibold text-violet-950 dark:text-violet-100">Бэклог для старта</h2><p className="mt-0.5 text-xs text-violet-800/80 dark:text-violet-200/80">Нажми «В Сейчас» или перетащи задачу в «Сейчас», «Следующая» либо «Ожидание» — она автоматически станет «В работе» и попадёт в выбранную очередь. Это варианты по статусу и сроку, а не автоматический приоритет.</p></div>
+            <button type="button" onClick={onOpenList} className="text-xs font-medium text-violet-800 underline-offset-2 hover:underline dark:text-violet-200">Открыть весь список</button>
+          </div>
+          {candidates.length > 0 ? <div className="mt-3 grid gap-3 lg:grid-cols-3">{candidates.map(task => <div id={`backlog-${task.id}`} key={task.id} className="scroll-mt-6 rounded-xl bg-white/60 p-1 dark:bg-slate-950/30"><BacklogCard task={task} draggedRef={backlogDragRef} onActivate={item => addBacklogTask(item, 'focus')} onUpdate={onRefresh} /></div>)}</div> : <p className="mt-3 text-sm text-violet-800/80 dark:text-violet-200/80">В личном списке нет незавершённых задач, которые можно поставить в работу.</p>}
+        </div>
+      </section>
+      <div className="flex gap-4 overflow-x-auto pb-4">
+        {PLANNER_LANES.map(lane => <PlannerLane key={lane.id} lane={lane} tasks={tasksByLane[lane.id] || []} onUpdate={onRefresh} />)}
+      </div>
+      <DragOverlay dropAnimation={null}>{activeTask ? <PlannerCard task={activeTask} onUpdate={() => {}} overlay /> : activeBacklogTask ? <BacklogCard task={activeBacklogTask} onUpdate={() => {}} overlay /> : null}</DragOverlay>
+      </DndContext>
+      {saving && <p aria-live="polite" className="mt-4 text-xs text-gray-400">Сохраняю порядок внимания…</p>}
+    </>
   )
 }
 
@@ -114,17 +328,19 @@ export default function Pool({ sphere: rootFilter }) {
   const navigate = useNavigate()
   const initialView = parseWorkView(location.search)
   const [allLeaves, setAllLeaves] = useState([])
+  const [plannerTasks, setPlannerTasks] = useState([])
   const [roots, setRoots]         = useState([])
   const [group, setGroup]         = useState(initialView.sort === 'suggested' ? 'flat' : 'domain')
   const [viewState, setViewState] = useState(initialView)
-  const [view, setView]             = useState('list')
+  const [view, setView]             = useState(initialView.view === 'queue' ? 'kanban' : 'list')
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [loading, setLoading]       = useState(true)
 
   const load = async () => {
-    const [leaves, nodes] = await Promise.all([treeApi.leaves(), treeApi.all()])
+    const [leaves, nodes, plannerQueue] = await Promise.all([treeApi.leaves(), treeApi.all(), plannerApi.queue()])
     setAllLeaves(leaves.filter(n => n.status !== 'done' && n.status !== 'dropped' && !n.calendar_id))
     setRoots(nodes.filter(n => !n.parent_id && (n.work_context || 'personal') === viewState.context))
+    if (!plannerQueue.error) setPlannerTasks(plannerQueue.tasks || [])
     setLoading(false)
   }
 
@@ -132,6 +348,7 @@ export default function Pool({ sphere: rootFilter }) {
   useEffect(() => {
     const next = parseWorkView(location.search)
     setViewState(next)
+    setView(next.view === 'queue' ? 'kanban' : 'list')
   }, [location.search])
   useEffect(() => {
     const search = workViewSearch(viewState)
@@ -145,6 +362,35 @@ export default function Pool({ sphere: rootFilter }) {
   const statusTab = viewState.statuses[0] || 'all'
   const filterRoot = viewState.roots[0] || null
   const updateView = patch => setViewState(current => ({ ...current, ...patch }))
+  const visiblePlannerTasks = useMemo(
+    () => plannerTasks.filter(task => PLANNER_LANES.some(lane => lane.id === task.planner_lane) && (!viewState.roots.length || viewState.roots.includes(task.root_id))),
+    [plannerTasks, viewState.roots],
+  )
+  const visibleInventoryTasks = useMemo(
+    () => contextLeaves.filter(task => !viewState.roots.length || viewState.roots.includes(task.root_id)),
+    [contextLeaves, viewState.roots],
+  )
+  const visibleBacklogCandidates = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    return starterBacklog(visibleInventoryTasks, today, { excludeIds: new Set(visiblePlannerTasks.map(task => task.id)) })
+  }, [visibleInventoryTasks, visiblePlannerTasks])
+  const visibleOverdueTasks = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    return overdueTasks(visibleInventoryTasks, today)
+  }, [visibleInventoryTasks])
+  const inProgressCount = useMemo(
+    () => visibleInventoryTasks.filter(task => task.status === 'in_progress').length,
+    [visibleInventoryTasks],
+  )
+  const visibleTaskCount = view === 'kanban'
+    ? visibleInventoryTasks.length
+    : contextLeaves.length
+  const totalTaskCount = contextLeaves.length
+  useEffect(() => {
+    if (view !== 'kanban' || loading || !location.hash) return
+    const target = document.getElementById(location.hash.slice(1))
+    target?.scrollIntoView({ block: 'start' })
+  }, [view, loading, location.hash, visibleBacklogCandidates])
 
   const renderGroups = () => {
     if (group === 'domain') {
@@ -179,12 +425,16 @@ export default function Pool({ sphere: rootFilter }) {
     <div className={`pool-page ${view === 'kanban' ? 'py-8 px-6' : 'max-w-3xl mx-auto py-8 px-6'}`}>
       {/* Header */}
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
-        <div><p className="pool-kicker">Life OS · рабочий поток</p><h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Задачи</h1></div>
+        <div>
+          <p className="pool-kicker">Life OS · {view === 'kanban' ? 'активная работа' : 'рабочий поток'}</p>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Задачи</h1>
+          {view === 'kanban' && <p className="mt-1 max-w-2xl text-sm text-gray-500 dark:text-gray-400">Активная работа: что делаешь сейчас, что пойдёт следующей и к чему нужно вернуться. Для полос прокручивай доску по горизонтали.</p>}
+        </div>
         <div className="flex items-center gap-2">
           {/* View toggle */}
           <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
             <button
-              onClick={() => setView('list')}
+              onClick={() => { setView('list'); updateView({ view: 'list' }) }}
               className={`px-2.5 py-1.5 transition-colors ${
                 view === 'list'
                   ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900'
@@ -195,13 +445,26 @@ export default function Pool({ sphere: rootFilter }) {
               <IconList />
             </button>
             <button
-            onClick={() => { setView('kanban'); setFiltersOpen(false) }}
+            onClick={() => {
+              setView('kanban')
+              setFiltersOpen(false)
+              updateView({
+                context: 'personal',
+                view: 'queue',
+                roots: viewState.context === 'personal' ? viewState.roots : [],
+                statuses: [],
+                blocked: null,
+                ready: false,
+                owner: '',
+                task: '',
+              })
+            }}
               className={`px-2.5 py-1.5 transition-colors border-l border-gray-200 dark:border-gray-700 ${
                 view === 'kanban'
                   ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900'
                   : 'bg-white dark:bg-gray-900 text-gray-400 hover:text-gray-600'
               }`}
-              title="Канбан"
+              title="Ручная очередь"
             >
               <IconKanban />
             </button>
@@ -218,7 +481,7 @@ export default function Pool({ sphere: rootFilter }) {
             !filterRoot ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900' : 'bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200'
           }`}
         >
-          Все ({contextLeaves.length})
+          Все ({view === 'kanban' ? totalTaskCount : visibleTaskCount})
         </button>
         {roots.map(root => {
           const count = contextLeaves.filter(n => n.root_id === root.id).length
@@ -270,7 +533,7 @@ export default function Pool({ sphere: rootFilter }) {
       {loading ? (
         <p className="text-sm text-gray-400">Загрузка...</p>
       ) : view === 'kanban' ? (
-        <KanbanBoard items={byDomain} onUpdate={load} />
+        <PlannerBoard tasks={visiblePlannerTasks} candidates={visibleBacklogCandidates} inProgressCount={inProgressCount} overdue={visibleOverdueTasks} onRefresh={load} onOpenList={() => { setView('list'); updateView({ view: 'list' }) }} />
       ) : active.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-gray-200 px-5 py-8 text-center dark:border-gray-700">
           <p className="text-sm font-medium text-gray-700 dark:text-gray-200">Задач пока нет</p>
