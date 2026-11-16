@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react'
 
 const THEME_STORAGE_KEY = 'life-os:theme-variant'
 const COLOR_STORAGE_KEY = 'life-os:color-scheme'
+const PALETTE_STORAGE_KEY = 'life-os:color-palette'
 const ThemeContext = createContext(null)
 
 export function ThemeProvider({ children }) {
@@ -10,6 +11,9 @@ export function ThemeProvider({ children }) {
   })
   const [colorScheme, setColorScheme] = useState(() => {
     try { return localStorage.getItem(COLOR_STORAGE_KEY) || 'light' } catch { return 'light' }
+  })
+  const [palette, setPalette] = useState(() => {
+    try { return localStorage.getItem(PALETTE_STORAGE_KEY) || 'default' } catch { return 'default' }
   })
 
   useEffect(() => {
@@ -22,7 +26,12 @@ export function ThemeProvider({ children }) {
     try { localStorage.setItem(COLOR_STORAGE_KEY, colorScheme) } catch {}
   }, [colorScheme])
 
-  return <ThemeContext.Provider value={{ theme, setTheme, colorScheme, setColorScheme }}>{children}</ThemeContext.Provider>
+  useEffect(() => {
+    document.documentElement.dataset.palette = palette
+    try { localStorage.setItem(PALETTE_STORAGE_KEY, palette) } catch {}
+  }, [palette])
+
+  return <ThemeContext.Provider value={{ theme, setTheme, colorScheme, setColorScheme, palette, setPalette }}>{children}</ThemeContext.Provider>
 }
 
 export function useTheme() {

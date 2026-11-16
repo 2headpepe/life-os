@@ -15,7 +15,6 @@ export default function AiReviews() {
 
   const refresh = () => aiReviews.all().then(setModel).catch(e => setError(e.message))
   useEffect(() => { refresh() }, [])
-
   const action = async (name, id) => {
     try { await aiReviews.action(name, id); await refresh() } catch (e) { setError(e.message) }
   }
@@ -33,7 +32,7 @@ export default function AiReviews() {
     ...(model.initiatives || []).map(x => ({ ...x, type: 'delivery', summary: x.goal || x.scope || '', sources: x.source_refs || [] })),
   ] : [], [model])
 
-  if (!model) return <main className="p-8 text-sm text-gray-500">Загружаю review model…</main>
+  if (!model) return <main className="ai-reviews-page mx-auto max-w-6xl p-8 text-sm">Загружаю review model…</main>
   const packet = model.priority_loop || { candidates: [], reminder: {} }
   const knownReview = reviewId && (
     (reviewType === 'opportunity' && model.opportunities?.some(item => item.id === reviewId)) ||
@@ -41,34 +40,34 @@ export default function AiReviews() {
   )
 
   return (
-    <main className="mx-auto max-w-6xl space-y-8 p-8">
-      <header>
+    <main className="ai-reviews-page mx-auto max-w-6xl space-y-8 p-8">
+      <header className="ai-reviews-header">
         <h1 className="text-2xl font-semibold">AI Reviews</h1>
-        <p className="mt-2 text-sm text-gray-600">Data-free control plane: no session text, local paths, or credentials.</p>
+        <p className="mt-2 text-sm">Data-free control plane: no session text, local paths, or credentials.</p>
       </header>
-      {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {error && <p className="ai-reviews-error rounded-lg p-3 text-sm" role="alert">{error}</p>}
       {invalidReviewPath && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Этот URL review-сущности не найден.</p>}
       {reviewId && !knownReview && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Эта review-сущность не найдена.</p>}
 
-      <section className="rounded-2xl border border-violet-200 bg-violet-50 p-5">
-        <h2 className="font-semibold text-violet-950">Priority review</h2>
-        <p className="mt-1 text-sm text-violet-900">Это recommendation по coverage, а не автоматическое изменение приоритета.</p>
-        <ol className="mt-3 space-y-1 text-sm">
+      <section className="ai-review-priority rounded-2xl border p-5" aria-labelledby="priority-review-heading">
+        <h2 id="priority-review-heading" className="font-semibold">Priority review</h2>
+        <p className="mt-1 text-sm">Это recommendation по coverage, а не автоматическое изменение приоритета.</p>
+        <ol className="ai-review-priority__candidates mt-3 space-y-1 text-sm">
           {packet.candidates.map(item => <li key={item.id}>{item.title} · {item.reasons.join(', ')}</li>)}
         </ol>
-        {packet.reminder?.state !== 'dismissed' && <button className="btn btn-ghost mt-3 border" onClick={() => priority('dismiss')}>Скрыть до изменения набора</button>}
-        <p className="mt-3 text-xs text-violet-700">Recheck drafts: {(model.priority_recheck?.drafts || []).length}</p>
+        {packet.reminder?.state !== 'dismissed' && <button className="btn btn-ghost ai-review-priority__dismiss mt-3 border" onClick={() => priority('dismiss')}>Скрыть до изменения набора</button>}
+        <p className="ai-review-priority__recheck mt-3 text-xs">Recheck drafts: {(model.priority_recheck?.drafts || []).length}</p>
       </section>
 
-      <section>
-        <h2 className="text-lg font-semibold">Возможности</h2>
+      <section className="ai-review-section" aria-labelledby="opportunities-heading">
+        <h2 id="opportunities-heading" className="text-lg font-semibold">Возможности</h2>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           {(model.opportunities || []).map(item => (
-            <article key={item.id} data-entity-id={item.id} className={`card p-5 ${reviewType === 'opportunity' && reviewId === item.id ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''}`}>
+            <article key={item.id} data-entity-id={item.id} className={`ai-review-card card p-5 ${reviewType === 'opportunity' && reviewId === item.id ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''}`}>
               <button type="button" onClick={() => navigate(entityPath.aiReview('opportunity', item.id))} className="text-left font-semibold hover:text-blue-600 dark:hover:text-blue-400">{item.title}</button>
-              <p className="mt-2 text-sm text-gray-600">{item.summary || item.goal}</p>
-              <p className="mt-3 text-xs text-gray-500">Provenance: {(item.source_refs || []).join(', ') || 'нет'}</p>
-              <div className="mt-4 flex gap-2">
+              <p className="ai-review-card__summary mt-2 text-sm">{item.summary || item.goal}</p>
+              <p className="ai-review-card__provenance mt-3 text-xs">Provenance: {(item.source_refs || []).join(', ') || 'нет'}</p>
+              <div className="ai-review-card__actions mt-4 flex flex-wrap gap-2" role="group" aria-label={`Действия: ${item.title}`}>
                 <button className="btn btn-primary" onClick={() => action('select', item.id)}>Выбрать</button>
                 <button className="btn btn-ghost" onClick={() => action('defer', item.id)}>Отложить</button>
                 <button className="btn btn-ghost" onClick={() => action('stop', item.id)}>Остановить</button>
@@ -78,13 +77,13 @@ export default function AiReviews() {
         </div>
       </section>
 
-      <section>
-        <h2 className="text-lg font-semibold">Инициативы</h2>
+      <section className="ai-review-section" aria-labelledby="initiatives-heading">
+        <h2 id="initiatives-heading" className="text-lg font-semibold">Инициативы</h2>
         <div className="mt-3 space-y-3">
           {(model.initiatives || []).map(item => (
-            <article key={item.id} data-entity-id={item.id} className={`card p-5 ${reviewType === 'initiative' && reviewId === item.id ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''}`}>
+            <article key={item.id} data-entity-id={item.id} className={`ai-review-initiative card p-5 ${reviewType === 'initiative' && reviewId === item.id ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''}`}>
               <button type="button" onClick={() => navigate(entityPath.aiReview('initiative', item.id))} className="text-left font-semibold hover:text-blue-600 dark:hover:text-blue-400">{item.title}</button>
-              <p className="mt-1 text-sm text-gray-600">{item.state}</p>
+              <p className="ai-review-initiative__state mt-1 text-sm">{item.state}</p>
               {item.state === 'draft' && <button className="btn btn-primary mt-3" onClick={() => action('approve_delivery_scope', item.id)}>Подтвердить границы</button>}
               {item.state === 'approved' && <button className="btn btn-primary mt-3" onClick={() => addWork(item.id)}>Создать work item</button>}
             </article>
@@ -92,8 +91,8 @@ export default function AiReviews() {
         </div>
       </section>
 
-      <section>
-        <h2 className="mb-3 text-lg font-semibold">Граф controlled workflow</h2>
+      <section className="ai-review-section ai-review-graph-section" aria-labelledby="workflow-graph-heading">
+        <h2 id="workflow-graph-heading" className="mb-3 text-lg font-semibold">Граф controlled workflow</h2>
         <ProductGraph records={graph} />
       </section>
     </main>

@@ -56,7 +56,7 @@ function sortItems(arr, sort) {
 }
 
 function InsightCard({ item, expanded, onToggle, activeSubtag, onSubtagClick, SPHERE_LABELS, SPHERE_COLORS, selected }) {
-  const accentColor = item.sphere ? (SPHERE_COLORS[item.sphere] || '#e5e7eb') : '#e5e7eb'
+  const accentColor = item.sphere ? (SPHERE_COLORS[item.sphere] || 'var(--ds-line)') : 'var(--ds-line)'
   const isExpanded = expanded === item.id
   const topTags = item.tags || []
   const subtags = item.subtags || []
@@ -258,7 +258,7 @@ export default function Insights() {
         .map(sphere => ({
           sphere,
           label: sphere ? (SPHERE_LABELS[sphere] || sphere) : 'Без сферы',
-          color: sphere ? SPHERE_COLORS[sphere] : '#9ca3af',
+          color: sphere ? SPHERE_COLORS[sphere] : 'var(--ds-muted)',
           items: sortItems(filtered.filter(i => i.sphere === sphere), sort),
         }))
         .filter(g => g.items.length > 0)

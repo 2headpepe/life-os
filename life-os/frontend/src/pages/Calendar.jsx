@@ -134,7 +134,10 @@ function getMonthDays(year, month) {
 // ─── Item chip ──────────────────────────────────────────────────────
 
 function ItemChip({ item, calColor, onOpen, onToggleWatched, compact, selected }) {
-  const color = item._kind === 'event' ? '#F59E0B' : (calColor || item.root_color || '#6B7280')
+  // Calendar/root colours are user data; the fallback and the built-in event
+  // role stay inside the active theme instead of silently introducing a gray
+  // or amber that belongs to a different palette.
+  const color = item._kind === 'event' ? 'var(--ds-warning)' : (calColor || item.root_color || 'var(--ds-muted)')
   const hasCal = !!item.calendar_id
   const isWatched = item.watched !== false
   const cls = compact ? 'text-[10px] py-px pl-1 pr-0.5 min-w-[24px]' : 'text-xs py-0.5 pl-1.5 pr-1'
@@ -149,13 +152,11 @@ function ItemChip({ item, calColor, onOpen, onToggleWatched, compact, selected }
     setTip({ left: r.left, top: r.top, height: r.height })
   }
 
-  const chipClass = `${cls} rounded truncate mb-0.5 flex items-center gap-0.5 whitespace-nowrap bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-200 border`
-
   return (
     <>
       <div ref={chipRef} onMouseEnter={show} onMouseLeave={() => setTip(null)} onClick={e => { e.stopPropagation(); onOpen?.(item) }}
         className={`calendar-item-chip ${cls} rounded truncate mb-0.5 flex items-center gap-0.5 whitespace-nowrap bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-200 border group cursor-pointer ${selected ? 'ring-2 ring-blue-400 dark:ring-blue-500' : ''}`}
-        style={{ borderLeft: `3px solid ${color}`, border: `1px solid ${color}30` }} title={full}>
+        style={{ '--calendar-item-accent': color }} title={full}>
         {hasCal && (
           <span onClick={e => { e.stopPropagation(); onToggleWatched?.(item) }}
             className="cursor-pointer flex-shrink-0 leading-none hover:scale-110 transition-transform"
@@ -168,8 +169,8 @@ function ItemChip({ item, calColor, onOpen, onToggleWatched, compact, selected }
         </span>
       </div>
       {tip && createPortal(
-        <div className={`${compact ? 'text-[10px] py-px pl-1 pr-0.5' : 'text-xs py-0.5 pl-1.5 pr-1'} fixed z-[9999] rounded shadow-lg whitespace-nowrap max-w-[360px] truncate pointer-events-none flex items-center bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-200 border`}
-          style={{ left: tip.left, top: tip.top, height: tip.height, borderLeft: `3px solid ${color}`, border: `1px solid ${color}30` }}>
+        <div className={`calendar-item-chip calendar-item-chip--tooltip ${compact ? 'text-[10px] py-px pl-1 pr-0.5' : 'text-xs py-0.5 pl-1.5 pr-1'} fixed z-[9999] rounded shadow-lg whitespace-nowrap max-w-[360px] truncate pointer-events-none flex items-center bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-200 border`}
+          style={{ left: tip.left, top: tip.top, height: tip.height, '--calendar-item-accent': color }}>
           {hasCal && <span className="flex-shrink-0 leading-none">{isWatched ? '⭐' : '☆'}</span>}
           <span className="truncate flex-1 ml-0.5">{full}</span>
         </div>,

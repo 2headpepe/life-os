@@ -93,12 +93,15 @@
   --ds-page: #f9fafb;
   --ds-surface: #ffffff;
   --ds-surface-hover: #f8fafc;
+  --ds-surface-strong: #ffffff;
   --ds-text: #111827;
+  --ds-ink: #111827;
   --ds-muted: #6b7280;
   --ds-line: #e5e7eb;
   --ds-accent: #2563eb;
   --ds-accent-strong: #111827;
   --ds-on-accent: #ffffff;
+  --ds-on-media: #ffffff;
   --ds-radius: 16px;
   --ds-shadow: 0 1px 2px rgba(15,23,42,.04);
   --ds-shadow-hover: 0 10px 28px rgba(15,23,42,.08);
@@ -548,6 +551,692 @@
 @media (max-width:620px) { .inbox-header { align-items:flex-start; gap:10px; flex-direction:column; } }
 
 @media (prefers-reduced-motion: reduce) { .ds-surface,.ds-button,.theme-switcher button,.app-shell { transition:none; } }
+
+/*
+ * Palette layer: it deliberately sits beside (rather than inside) the
+ * classic/glass and light/dark controls. The default palette has no selector
+ * here, so selecting it leaves the existing appearance byte-for-byte intact.
+ */
+:root[data-palette='tokyo-night'] {
+  --ds-page:#e1e2e7;
+  --ds-surface:#f7f7fa;
+  --ds-surface-hover:#eeeef3;
+  --ds-surface-strong:#ffffff;
+  --ds-text:#343b58;
+  --ds-ink:#343b58;
+  --ds-muted:#565f89;
+  --ds-line:#a9b1d6;
+  --ds-accent:#2e7de9;
+  --ds-accent-strong:#2e7de9;
+  --ds-on-accent:#0f1220;
+  --ds-shadow:0 2px 8px rgba(52,59,88,.10);
+  --ds-shadow-hover:0 12px 30px rgba(52,59,88,.16);
+  --ds-blur:0px;
+}
+
+:root[data-palette='tokyo-night'].dark {
+  --ds-page:#161721;
+  --ds-surface:#1f202b;
+  --ds-surface-hover:#292a38;
+  --ds-surface-strong:#292a38;
+  --ds-text:#dde3ff;
+  --ds-ink:#dde3ff;
+  --ds-muted:#a9b1d6;
+  --ds-line:#3b4261;
+  --ds-accent:#7aa2f7;
+  --ds-accent-strong:#7aa2f7;
+  --ds-on-accent:#161721;
+  --ds-shadow:0 8px 24px rgba(0,0,0,.28);
+  --ds-shadow-hover:0 16px 34px rgba(0,0,0,.38);
+}
+
+/* Glass changes material only: its colour comes from the same palette. */
+:root[data-palette='tokyo-night'][data-theme='glass'] {
+  --ds-surface:rgba(247,247,250,.68);
+  --ds-surface-hover:rgba(255,255,255,.86);
+  --ds-surface-strong:rgba(255,255,255,.86);
+  --ds-line:rgba(86,95,137,.34);
+  --ds-radius:22px;
+  --ds-shadow:0 12px 32px rgba(52,59,88,.12), inset 0 1px 0 rgba(255,255,255,.68);
+  --ds-shadow-hover:0 18px 42px rgba(52,59,88,.18), inset 0 1px 0 rgba(255,255,255,.82);
+  --ds-blur:18px;
+}
+
+:root[data-palette='tokyo-night'][data-theme='glass'].dark {
+  --ds-surface:rgba(31,32,43,.74);
+  --ds-surface-hover:rgba(41,42,56,.88);
+  --ds-surface-strong:rgba(41,42,56,.88);
+  --ds-line:rgba(169,177,214,.24);
+  --ds-shadow:0 14px 34px rgba(0,0,0,.34), inset 0 1px 0 rgba(221,227,255,.07);
+  --ds-shadow-hover:0 19px 42px rgba(0,0,0,.44), inset 0 1px 0 rgba(221,227,255,.12);
+}
+
+:root[data-palette='tokyo-night'] body,
+:root[data-palette='tokyo-night'] .life-os-app-shell {
+  background:var(--ds-page) !important;
+  color:var(--ds-text);
+}
+:root[data-palette='tokyo-night'] .life-os-sidebar {
+  background:var(--ds-surface) !important;
+  border-color:var(--ds-line) !important;
+  color:var(--ds-text);
+}
+:root[data-palette='tokyo-night'] .life-os-topbar {
+  background:color-mix(in srgb, var(--ds-page) 84%, transparent) !important;
+  border-color:var(--ds-line) !important;
+}
+:root[data-palette='tokyo-night'][data-theme='glass'] .life-os-app-shell {
+  background:radial-gradient(circle at 83% -12%,rgba(122,162,247,.18),transparent 31rem),radial-gradient(circle at 22% 108%,rgba(187,154,247,.14),transparent 29rem),var(--ds-page) !important;
+}
+:root[data-palette='tokyo-night'][data-theme='glass'].dark .life-os-app-shell {
+  background:radial-gradient(circle at 83% -12%,rgba(122,162,247,.20),transparent 31rem),radial-gradient(circle at 22% 108%,rgba(187,154,247,.12),transparent 29rem),var(--ds-page) !important;
+}
+:root[data-palette='tokyo-night'][data-theme='glass'] .life-os-sidebar,
+:root[data-palette='tokyo-night'][data-theme='glass'] .life-os-topbar {
+  backdrop-filter:blur(var(--ds-blur));
+  -webkit-backdrop-filter:blur(var(--ds-blur));
+}
+
+/* The existing app still contains Tailwind utility colours. Map the shared
+ * neutral utilities to the palette without changing semantic status colours. */
+:root[data-palette='tokyo-night'] :is(.bg-white,.bg-gray-50,.bg-slate-50) { background-color:var(--ds-surface) !important; }
+:root[data-palette='tokyo-night'] :is(.bg-gray-100,.bg-slate-100) { background-color:var(--ds-surface-hover) !important; }
+:root[data-palette='tokyo-night'] :is(.text-gray-900,.text-gray-800,.text-slate-950,.text-slate-900,.text-slate-800) { color:var(--ds-text) !important; }
+:root[data-palette='tokyo-night'] :is(.text-gray-700,.text-gray-600,.text-gray-500,.text-gray-400,.text-slate-700,.text-slate-600,.text-slate-500,.text-slate-400) { color:var(--ds-muted) !important; }
+:root[data-palette='tokyo-night'] :is(.border-gray-50,.border-gray-100,.border-gray-200,.border-gray-300,.border-slate-200,.border-slate-300) { border-color:var(--ds-line) !important; }
+:root[data-palette='tokyo-night'].dark :is(.dark\\:bg-gray-950,.dark\\:bg-slate-950) { background-color:var(--ds-page) !important; }
+:root[data-palette='tokyo-night'].dark :is(.dark\\:bg-gray-900,.dark\\:bg-slate-900,.dark\\:bg-gray-800,.dark\\:bg-slate-800) { background-color:var(--ds-surface) !important; }
+:root[data-palette='tokyo-night'].dark :is(.dark\\:text-gray-100,.dark\\:text-gray-200,.dark\\:text-slate-100,.dark\\:text-slate-200) { color:var(--ds-text) !important; }
+:root[data-palette='tokyo-night'].dark :is(.dark\\:text-gray-600,.dark\\:text-gray-500,.dark\\:text-gray-400,.dark\\:text-slate-600,.dark\\:text-slate-500,.dark\\:text-slate-400) { color:var(--ds-muted) !important; }
+:root[data-palette='tokyo-night'].dark :is(.dark\\:border-gray-800,.dark\\:border-gray-700,.dark\\:border-gray-600,.dark\\:border-slate-800,.dark\\:border-slate-700,.dark\\:border-slate-600) { border-color:var(--ds-line) !important; }
+
+:root[data-palette='tokyo-night'] .card,
+:root[data-palette='tokyo-night'] .ds-surface,
+:root[data-palette='tokyo-night'] .theme-switcher,
+:root[data-palette='tokyo-night'] .pool-filter-panel,
+:root[data-palette='tokyo-night'] .pool-filter-button {
+  background:var(--ds-surface) !important;
+  border-color:var(--ds-line) !important;
+  box-shadow:var(--ds-shadow);
+  color:var(--ds-text);
+}
+:root[data-palette='tokyo-night'] :is(.card,.ds-surface):hover { background:var(--ds-surface-hover) !important; box-shadow:var(--ds-shadow-hover) !important; }
+:root[data-palette='tokyo-night'] :is(.sidebar-item.active,.btn-primary,.ds-button--primary,.ds-fab,.theme-switcher button.is-selected,.pool-filter-button.is-open) {
+  background:var(--ds-accent-strong) !important;
+  color:var(--ds-on-accent) !important;
+}
+:root[data-palette='tokyo-night'] :is(.btn-ghost,.sidebar-item) { color:var(--ds-muted); }
+:root[data-palette='tokyo-night'] :is(.btn-ghost,.sidebar-item):hover { background:var(--ds-surface-hover) !important; color:var(--ds-text) !important; }
+:root[data-palette='tokyo-night'] :is(input:not([type='checkbox']),textarea,select) {
+  background-color:var(--ds-surface) !important;
+  border-color:var(--ds-line) !important;
+  color:var(--ds-text) !important;
+}
+:root[data-palette='tokyo-night'] :is(button,a,input,textarea,select):focus-visible { outline:3px solid color-mix(in srgb, var(--ds-accent) 72%, transparent) !important; outline-offset:3px; }
+:root[data-palette='tokyo-night'] ::-webkit-scrollbar-thumb { background:var(--ds-line); }
+
+/* Dense first-party surfaces use literal colours in their existing dark Glass
+ * rules. Keep those reading surfaces opaque enough for the high-contrast set. */
+:root[data-palette='tokyo-night'].dark :is(.feed-stack .card,.feed-focus-card,.today-attention,.today-context,.today-habit,.today-detail,.goals-overview-card,.goals-drill,.pool-page .card,.inbox-item,.news-card,.insight-card,.memory-entry) {
+  background:var(--ds-surface) !important;
+  border-color:var(--ds-line) !important;
+  color:var(--ds-text);
+}
+:root[data-palette='tokyo-night'].dark :is(.feed-stack .card,.feed-focus-card,.today-attention,.today-context,.today-habit,.today-detail,.goals-overview-card,.goals-drill,.pool-page .card,.inbox-item,.news-card,.insight-card,.memory-entry):hover { background:var(--ds-surface-hover) !important; }
+:root[data-palette='tokyo-night'].dark .ai-reviews-page :is(section,article,aside,.bg-white,.ai-review-dialog,.ai-report-sidebar,.ai-report-evidence) {
+  background:var(--ds-surface) !important;
+  border-color:var(--ds-line) !important;
+  color:var(--ds-text) !important;
+}
+:root[data-palette='tokyo-night'] :is(.today-header,.feed-header,.goals-header,.pool-page,.calendar-titleblock,.lists-header,.insights-header,.memories-header,.news-header,.inbox-header) h1 { color:var(--ds-text) !important; }
+
+/*
+ * Ambient Glass convergence.
+ *
+ * The page canvas owns the atmosphere; individual route containers only own
+ * their reading surfaces. This prevents a gradient from being clipped by a
+ * max-width page and keeps the Base and Tokyo Night palettes as colour
+ * variations rather than separate material systems.
+ */
+:root {
+  --ds-chrome:rgba(255,255,255,.88);
+  --ds-control:rgba(255,255,255,.82);
+  --ds-dense:#f8fafc;
+  --ds-highlight:#f1f5f9;
+  --ds-overlay:#ffffff;
+  --ds-ambient-primary:rgba(79,211,222,.36);
+  --ds-ambient-secondary:rgba(133,139,242,.27);
+  --ds-ambient-warm:rgba(247,180,130,.18);
+  --ds-focus-ring:rgba(20,150,170,.72);
+}
+:root.dark {
+  --ds-page:#090d16;
+  --ds-surface:#131b29;
+  --ds-surface-hover:#1b2637;
+  --ds-surface-strong:#202b3e;
+  --ds-text:#edf4fb;
+  --ds-ink:#edf4fb;
+  --ds-muted:#a9b6c6;
+  --ds-line:#2b3a4f;
+  --ds-accent:#55cad4;
+  --ds-accent-strong:#d8f4f7;
+  --ds-on-accent:#10212d;
+  --ds-shadow:0 12px 30px rgba(0,0,0,.26);
+  --ds-shadow-hover:0 18px 38px rgba(0,0,0,.36);
+  --ds-chrome:rgba(11,18,30,.9);
+  --ds-control:rgba(18,29,45,.86);
+  --ds-dense:#172235;
+  --ds-highlight:#1c2a3d;
+  --ds-overlay:#101b2b;
+  --ds-ambient-primary:rgba(55,178,192,.34);
+  --ds-ambient-secondary:rgba(101,87,196,.29);
+  --ds-ambient-warm:rgba(217,126,111,.13);
+  --ds-focus-ring:rgba(121,226,235,.82);
+}
+:root[data-theme='glass'] {
+  --ds-chrome:rgba(246,253,255,.58);
+  --ds-control:rgba(250,254,255,.5);
+  --ds-dense:rgba(242,252,255,.64);
+  --ds-highlight:rgba(255,255,255,.74);
+  --ds-overlay:rgba(249,253,255,.92);
+}
+:root[data-theme='glass'].dark {
+  --ds-chrome:rgba(8,22,37,.68);
+  --ds-control:rgba(14,32,50,.64);
+  --ds-dense:rgba(16,37,58,.78);
+  --ds-highlight:rgba(25,53,76,.8);
+  --ds-overlay:rgba(10,28,45,.94);
+}
+:root[data-palette='tokyo-night'] {
+  --ds-ambient-primary:rgba(122,162,247,.28);
+  --ds-ambient-secondary:rgba(187,154,247,.22);
+  --ds-ambient-warm:rgba(224,175,104,.14);
+}
+:root[data-palette='tokyo-night'].dark {
+  --ds-ambient-primary:rgba(122,162,247,.27);
+  --ds-ambient-secondary:rgba(187,154,247,.18);
+  --ds-ambient-warm:rgba(224,175,104,.1);
+}
+
+.life-os-app-shell {
+  position:relative;
+  isolation:isolate;
+  color:var(--ds-text);
+  background:var(--ds-page) !important;
+  transition:background .3s ease,color .25s ease;
+}
+:root[data-theme='glass'] .life-os-app-shell {
+  background:
+    radial-gradient(ellipse 56rem 38rem at 92% -12%,var(--ds-ambient-primary),transparent 72%),
+    radial-gradient(ellipse 49rem 35rem at 20% 112%,var(--ds-ambient-secondary),transparent 73%),
+    radial-gradient(ellipse 42rem 28rem at 108% 82%,var(--ds-ambient-warm),transparent 76%),
+    var(--ds-page) !important;
+}
+.life-os-main {
+  position:relative;
+  min-width:0;
+  background:transparent;
+  color:var(--ds-text);
+}
+.life-os-topbar,
+.life-os-sidebar {
+  border-color:var(--ds-line) !important;
+  background:var(--ds-chrome) !important;
+  color:var(--ds-text);
+}
+.life-os-topbar {
+  min-height:56px;
+  box-shadow:0 1px 0 color-mix(in srgb,var(--ds-line) 70%,transparent);
+}
+:root[data-theme='glass'] :is(.life-os-topbar,.life-os-sidebar) {
+  backdrop-filter:blur(20px) saturate(1.08);
+  -webkit-backdrop-filter:blur(20px) saturate(1.08);
+}
+
+.theme-menu { position:relative; display:flex; }
+.theme-menu__trigger {
+  display:grid;
+  width:36px;
+  height:36px;
+  place-items:center;
+  border:1px solid var(--ds-line);
+  border-radius:12px;
+  background:var(--ds-control);
+  color:var(--ds-text);
+  box-shadow:var(--ds-shadow);
+  transition:background .2s ease,border-color .2s ease,transform .2s ease,box-shadow .2s ease;
+}
+.theme-menu__trigger:hover { background:var(--ds-surface-hover); box-shadow:var(--ds-shadow-hover); transform:translateY(-1px); }
+.theme-menu__trigger:focus-visible,
+.theme-switcher__radio:focus-visible + .theme-switcher__option { outline:3px solid var(--ds-focus-ring); outline-offset:3px; }
+.theme-switcher {
+  position:absolute;
+  top:calc(100% + 8px);
+  right:0;
+  z-index:40;
+  display:grid;
+  width:min(20rem,calc(100vw - 3rem));
+  gap:12px;
+  margin:0;
+  padding:14px;
+  border:1px solid var(--ds-line);
+  border-radius:18px;
+  background:var(--ds-overlay);
+  color:var(--ds-text);
+  box-shadow:0 20px 48px rgba(4,14,27,.22),inset 0 1px rgba(255,255,255,.16);
+  backdrop-filter:blur(24px) saturate(1.08);
+  -webkit-backdrop-filter:blur(24px) saturate(1.08);
+}
+.theme-switcher__heading { display:flex; align-items:baseline; justify-content:space-between; gap:12px; font-size:12px; font-weight:750; letter-spacing:-.01em; }
+.theme-switcher__heading span:last-child { color:var(--ds-muted); font-size:11px; font-weight:600; }
+.theme-switcher__group { display:block; min-inline-size:0; margin:0; padding:0; border:0; }
+.theme-switcher__group legend { margin:0 0 6px; padding:0; color:var(--ds-muted); font-size:10px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; }
+.theme-switcher__choices { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px; }
+.theme-switcher__choice { position:relative; min-width:0; }
+.theme-switcher__radio { position:absolute; width:1px; height:1px; opacity:0; }
+.theme-switcher__option {
+  display:flex;
+  min-height:34px;
+  align-items:center;
+  justify-content:space-between;
+  gap:7px;
+  padding:7px 9px;
+  border:1px solid transparent;
+  border-radius:10px;
+  color:var(--ds-muted);
+  cursor:pointer;
+  font-size:12px;
+  font-weight:700;
+  line-height:1;
+  transition:background .2s ease,border-color .2s ease,color .2s ease,box-shadow .2s ease;
+}
+.theme-switcher__option > span { display:inline-flex; min-width:0; align-items:center; gap:5px; }
+.theme-switcher__option:hover { border-color:var(--ds-line); background:var(--ds-control); color:var(--ds-text); }
+.theme-switcher__radio:checked + .theme-switcher__option {
+  border-color:color-mix(in srgb,var(--ds-accent) 42%,var(--ds-line));
+  background:var(--ds-accent-strong);
+  color:var(--ds-on-accent);
+  box-shadow:0 4px 12px color-mix(in srgb,var(--ds-accent-strong) 22%,transparent);
+}
+
+.life-os-onboarding {
+  border-color:var(--ds-line) !important;
+  background:var(--ds-overlay) !important;
+  color:var(--ds-text) !important;
+  box-shadow:0 24px 58px rgba(2,12,26,.28),inset 0 1px rgba(255,255,255,.14) !important;
+  backdrop-filter:blur(22px);
+  -webkit-backdrop-filter:blur(22px);
+}
+.life-os-onboarding__close { color:var(--ds-muted); }
+.life-os-onboarding__close:hover { background:var(--ds-control); color:var(--ds-text); }
+.life-os-onboarding__icon { border-color:var(--ds-line); background:var(--ds-control); color:var(--ds-accent); }
+.life-os-onboarding__copy { color:var(--ds-muted); }
+.life-os-onboarding__action { color:var(--ds-text); text-decoration-color:var(--ds-muted); }
+
+/* Page containers reveal the common canvas; their inner cards retain local hierarchy. */
+:root[data-theme='glass'] :is(.habits-page,.people-page,.lists-page,.insights-page,.memories-page) { background:transparent !important; }
+:root[data-theme='glass'].dark :is(.habits-page,.people-page,.lists-page,.insights-page,.memories-page) { color:var(--ds-text); }
+:root[data-theme='glass'].dark :is(.habits-page,.people-page,.lists-page,.insights-page,.memories-page) :is([class*='text-gray-900'],[class*='text-gray-800'],[class*='text-gray-700'],[class*='dark:text-gray-100'],[class*='dark:text-gray-200']) { color:var(--ds-text) !important; }
+:root[data-theme='glass'].dark :is(.habits-page,.people-page,.lists-page,.insights-page,.memories-page) :is([class*='text-gray-600'],[class*='text-gray-500'],[class*='text-gray-400'],[class*='text-gray-300'],[class*='dark:text-gray-400']) { color:var(--ds-muted) !important; }
+:root[data-theme='glass'].dark :is(
+  .habits-score,.habits-foundation,.habits-category,.habits-history,.people-directory,
+  .people-empty > div,.people-profile-head,.people-fields,.lists-collections,
+  .lists-controls,.lists-item,.insights-controls,.insight-card,.memories-switcher,.memory-entry
+) {
+  border-color:var(--ds-line) !important;
+  background:var(--ds-dense) !important;
+  box-shadow:var(--ds-shadow) !important;
+}
+:root[data-theme='glass'].dark :is(
+  .habits-tabs,.habits-date-nav,.lists-header .btn,.insights-tabs button,
+  .insights-search input,.insights-controls,.memories-switcher
+) {
+  border-color:var(--ds-line) !important;
+  background:var(--ds-control) !important;
+  color:var(--ds-text) !important;
+  box-shadow:inset 0 1px rgba(214,252,255,.07) !important;
+}
+:root[data-theme='glass'].dark :is(
+  .habits-tabs button.bg-white,.lists-controls button.bg-gray-100,
+  .memories-switcher button.bg-white,.insights-tabs button.border-gray-900
+) {
+  background:var(--ds-highlight) !important;
+  color:var(--ds-text) !important;
+  box-shadow:0 3px 10px rgba(0,0,0,.18) !important;
+}
+:root[data-theme='glass'].dark :is(.people-empty strong,.people-profile h2,.lists-header h1,.insights-header h1,.memories-header h1,.habits-header h1) { color:var(--ds-text) !important; }
+
+/* AI Reviews is a controlled-decision surface: it uses the same material
+ * roles as the application shell, while keeping evidence and actions legible. */
+.ai-reviews-page { color:var(--ds-text); }
+.ai-reviews-header h1,
+.ai-review-section > h2 { color:var(--ds-text); letter-spacing:-.025em; }
+.ai-reviews-header p { color:var(--ds-muted); }
+.ai-reviews-error { border:1px solid color-mix(in srgb,#ef4444 34%,var(--ds-line)); background:color-mix(in srgb,#ef4444 11%,var(--ds-surface)); color:var(--ds-text); }
+.ai-review-priority {
+  position:relative;
+  overflow:hidden;
+  border-color:color-mix(in srgb,var(--ds-accent) 38%,var(--ds-line)) !important;
+  background:linear-gradient(132deg,color-mix(in srgb,var(--ds-accent) 13%,var(--ds-surface)),var(--ds-surface)) !important;
+  color:var(--ds-text) !important;
+  box-shadow:var(--ds-shadow) !important;
+}
+.ai-review-priority h2 { color:var(--ds-text); }
+.ai-review-priority > p:not(.ai-review-priority__recheck) { color:var(--ds-muted); }
+.ai-review-priority__candidates { padding:0; list-style:none; }
+.ai-review-priority__candidates li {
+  padding:6px 8px;
+  border:1px solid color-mix(in srgb,var(--ds-line) 76%,transparent);
+  border-radius:9px;
+  background:color-mix(in srgb,var(--ds-control) 74%,transparent);
+  color:var(--ds-text);
+}
+.ai-review-priority__recheck,
+.ai-review-card__provenance,
+.ai-review-initiative__state { color:var(--ds-muted); }
+.ai-reviews-page .btn-primary { background:var(--ds-accent-strong); color:var(--ds-on-accent); }
+.ai-reviews-page .btn-ghost { color:var(--ds-text); }
+.ai-reviews-page .btn-ghost:hover { background:var(--ds-control); color:var(--ds-text); }
+.ai-reviews-page > .ai-review-section { background:transparent !important; border:0 !important; box-shadow:none !important; backdrop-filter:none; }
+.ai-review-card,
+.ai-review-initiative {
+  border-color:var(--ds-line) !important;
+  background:var(--ds-surface) !important;
+  color:var(--ds-text);
+  box-shadow:var(--ds-shadow) !important;
+}
+.ai-review-card:hover,
+.ai-review-initiative:hover { background:var(--ds-surface-hover) !important; box-shadow:var(--ds-shadow-hover) !important; }
+.ai-review-card__summary { color:var(--ds-muted); }
+
+:root[data-theme='glass'] .ai-review-priority {
+  background:radial-gradient(circle at 88% 6%,color-mix(in srgb,var(--ds-ambient-primary) 88%,transparent),transparent 18rem),linear-gradient(132deg,rgba(255,255,255,.79),rgba(232,249,252,.49)) !important;
+  border-color:rgba(255,255,255,.78) !important;
+  box-shadow:0 18px 40px rgba(42,94,124,.12),inset 0 1px rgba(255,255,255,.84) !important;
+}
+:root[data-theme='glass'] :is(.ai-review-card,.ai-review-initiative) {
+  background:linear-gradient(125deg,rgba(255,255,255,.68),rgba(239,251,255,.43)) !important;
+  border-color:rgba(255,255,255,.73) !important;
+  box-shadow:0 10px 25px rgba(42,94,124,.07),inset 0 1px rgba(255,255,255,.78) !important;
+}
+:root[data-theme='classic'].dark .ai-review-priority {
+  background:linear-gradient(132deg,#17283d,#111c2c) !important;
+  border-color:#40516a !important;
+}
+:root[data-theme='glass'].dark .ai-review-priority {
+  background:radial-gradient(circle at 86% 3%,rgba(67,188,202,.2),transparent 19rem),linear-gradient(132deg,rgba(28,62,87,.88),rgba(10,29,46,.84)) !important;
+  border-color:rgba(128,220,230,.34) !important;
+  box-shadow:0 19px 44px rgba(0,0,0,.3),inset 0 1px rgba(216,252,255,.1) !important;
+}
+:root[data-theme='glass'].dark :is(.ai-review-card,.ai-review-initiative) {
+  background:linear-gradient(125deg,rgba(23,49,72,.82),rgba(12,30,48,.75)) !important;
+  border-color:rgba(165,216,235,.2) !important;
+}
+
+/* Tokyo Night changes the hue of AI Reviews, but must not collapse Glass back
+ * into the palette's opaque generic surfaces. */
+:root[data-palette='tokyo-night'].dark .ai-reviews-page > .ai-review-section {
+  border-color:transparent !important;
+  background:transparent !important;
+}
+:root[data-palette='tokyo-night'][data-theme='glass'].dark .ai-reviews-page .ai-review-priority {
+  background:radial-gradient(circle at 86% 3%,color-mix(in srgb,var(--ds-ambient-primary) 78%,transparent),transparent 19rem),linear-gradient(132deg,color-mix(in srgb,var(--ds-ambient-primary) 17%,var(--ds-surface)),color-mix(in srgb,var(--ds-ambient-secondary) 8%,var(--ds-page))) !important;
+  border-color:color-mix(in srgb,var(--ds-ambient-primary) 48%,var(--ds-line)) !important;
+}
+:root[data-palette='tokyo-night'][data-theme='glass'].dark .ai-reviews-page :is(.ai-review-card,.ai-review-initiative) {
+  background:linear-gradient(125deg,color-mix(in srgb,var(--ds-ambient-primary) 11%,var(--ds-surface)),color-mix(in srgb,var(--ds-ambient-secondary) 5%,var(--ds-surface))) !important;
+  border-color:color-mix(in srgb,var(--ds-line) 84%,var(--ds-ambient-primary)) !important;
+}
+
+/* Theme closure: JSX still contains Tailwind colour utilities from before the
+ * token system. They describe a visual role, not a fixed palette value. */
+:root {
+  --ds-success:#15803d;
+  --ds-success-soft:#e9f8ef;
+  --ds-success-line:#9fd9b3;
+  --ds-warning:#a16207;
+  --ds-warning-soft:#fff6dc;
+  --ds-warning-line:#edca7b;
+  --ds-danger:#c2414b;
+  --ds-danger-soft:#fff0f1;
+  --ds-danger-line:#f0a5ab;
+  --ds-info:#2563eb;
+  --ds-info-soft:#edf4ff;
+  --ds-info-line:#a9c5fb;
+  --ds-violet:#7356c8;
+  --ds-violet-soft:#f2efff;
+  --ds-violet-line:#c8baf3;
+  --ds-relation:#b64780;
+  --ds-relation-soft:#fff0f7;
+  --ds-relation-line:#efb0cd;
+  --ds-graph-grid:rgba(100,116,139,.2);
+  --ds-graph-line:rgba(100,116,139,.46);
+  --ds-graph-label:var(--ds-text);
+  --ds-graph-session:#3b82c4;
+  --ds-graph-signal:#8061c6;
+  --ds-graph-verification:var(--ds-warning);
+  --ds-graph-decision:#138a9c;
+  --ds-graph-delivery:#718394;
+  --ds-graph-effect:var(--ds-success);
+}
+:root.dark {
+  --ds-success:#75d69a;
+  --ds-success-soft:rgba(31,102,63,.44);
+  --ds-success-line:rgba(117,214,154,.46);
+  --ds-warning:#f4c76d;
+  --ds-warning-soft:rgba(132,91,20,.42);
+  --ds-warning-line:rgba(244,199,109,.48);
+  --ds-danger:#fb8f99;
+  --ds-danger-soft:rgba(137,42,57,.44);
+  --ds-danger-line:rgba(251,143,153,.5);
+  --ds-info:#8bb9ff;
+  --ds-info-soft:rgba(42,87,153,.44);
+  --ds-info-line:rgba(139,185,255,.5);
+  --ds-violet:#c3b2ff;
+  --ds-violet-soft:rgba(95,68,151,.44);
+  --ds-violet-line:rgba(195,178,255,.5);
+  --ds-relation:#ffacd2;
+  --ds-relation-soft:rgba(137,48,91,.44);
+  --ds-relation-line:rgba(255,172,210,.5);
+  --ds-graph-grid:rgba(172,194,214,.18);
+  --ds-graph-line:rgba(177,202,225,.42);
+  --ds-graph-label:var(--ds-text);
+  --ds-graph-session:#7bb6ff;
+  --ds-graph-signal:#bea9ff;
+  --ds-graph-decision:#70d5df;
+  --ds-graph-delivery:#a9b7c7;
+}
+:root[data-palette='tokyo-night'] {
+  --ds-success:#5fae6f;
+  --ds-success-soft:#e8f2e8;
+  --ds-success-line:#9cc8a4;
+  --ds-warning:#b27621;
+  --ds-warning-soft:#fff2dd;
+  --ds-warning-line:#e9c486;
+  --ds-danger:#c25c70;
+  --ds-danger-soft:#fcecef;
+  --ds-danger-line:#eab0bb;
+  --ds-info:#4b83df;
+  --ds-info-soft:#eaf0ff;
+  --ds-info-line:#adc3ef;
+  --ds-violet:#8b70d4;
+  --ds-violet-soft:#f1ecff;
+  --ds-violet-line:#c9b9ec;
+  --ds-relation:#c76f9f;
+  --ds-relation-soft:#fcedf5;
+  --ds-relation-line:#eab6cf;
+  --ds-graph-session:#4b83df;
+  --ds-graph-signal:#8b70d4;
+  --ds-graph-decision:#279aa6;
+}
+:root[data-palette='tokyo-night'].dark {
+  --ds-success:#9ece6a;
+  --ds-success-soft:rgba(76,118,67,.5);
+  --ds-success-line:rgba(158,206,106,.48);
+  --ds-warning:#e0af68;
+  --ds-warning-soft:rgba(130,91,39,.5);
+  --ds-warning-line:rgba(224,175,104,.48);
+  --ds-danger:#f7768e;
+  --ds-danger-soft:rgba(129,54,75,.5);
+  --ds-danger-line:rgba(247,118,142,.48);
+  --ds-info:#7aa2f7;
+  --ds-info-soft:rgba(63,88,149,.5);
+  --ds-info-line:rgba(122,162,247,.48);
+  --ds-violet:#bb9af7;
+  --ds-violet-soft:rgba(101,76,151,.5);
+  --ds-violet-line:rgba(187,154,247,.48);
+  --ds-relation:#f5a6c9;
+  --ds-relation-soft:rgba(133,65,104,.5);
+  --ds-relation-line:rgba(245,166,201,.48);
+  --ds-graph-session:#7aa2f7;
+  --ds-graph-signal:#bb9af7;
+  --ds-graph-decision:#7dcfff;
+}
+:root[data-theme='glass'].dark {
+  --ds-surface:rgba(17,39,61,.72);
+  --ds-surface-hover:rgba(27,56,81,.82);
+  --ds-surface-strong:rgba(31,65,90,.9);
+}
+:root[data-palette='tokyo-night'][data-theme='glass'].dark {
+  --ds-surface:rgba(31,32,43,.74);
+  --ds-surface-hover:rgba(41,42,56,.88);
+  --ds-surface-strong:rgba(41,42,56,.9);
+}
+
+/* Neutral utility bridge — page code may keep its structural Tailwind names
+ * while their visible colours obey the active theme and palette. */
+:root .life-os-app-shell :is(.bg-white,.bg-gray-50,.bg-slate-50,.bg-gray-50\/30,.bg-gray-50\/50,.bg-gray-50\/60,.bg-gray-50\/70,.bg-gray-50\/80,.bg-white\/70,.bg-white\/90,.bg-white\/95) { background-color:var(--ds-surface) !important; }
+:root .life-os-app-shell :is(.bg-gray-100,.bg-gray-200,.bg-gray-300,.bg-slate-100) { background-color:var(--ds-surface-hover) !important; }
+:root .life-os-app-shell :is(.bg-gray-400,.bg-gray-600,.bg-gray-700,.bg-gray-800,.bg-slate-900,.bg-gray-800\/30,.bg-gray-800\/35,.bg-gray-800\/40,.bg-gray-800\/50,.bg-gray-800\/60) { background-color:var(--ds-dense) !important; }
+:root .life-os-app-shell .bg-gray-900 { background-color:var(--ds-accent-strong) !important; }
+:root .life-os-app-shell :is(.bg-gray-900\/10,.bg-gray-900\/20,.bg-gray-900\/30,.bg-gray-900\/40,.bg-gray-900\/50,.bg-gray-900\/60,.bg-gray-900\/95) { background-color:var(--ds-control) !important; }
+:root .life-os-app-shell :is(.bg-gray-950,.bg-slate-950,.bg-gray-950\/30,.bg-gray-950\/55,.bg-gray-950\/60) { background-color:var(--ds-page) !important; }
+:root .life-os-app-shell :is(.text-gray-900,.text-gray-800,.text-gray-700,.text-slate-700) { color:var(--ds-text) !important; }
+:root .life-os-app-shell :is(.text-gray-600,.text-gray-500,.text-gray-400,.text-gray-300,.text-slate-400,.text-slate-300,.text-slate-200) { color:var(--ds-muted) !important; }
+:root .life-os-app-shell :is(.text-gray-200,.text-gray-100) { color:var(--ds-text) !important; }
+:root .life-os-app-shell :is(.border-gray-50,.border-gray-100,.border-gray-200,.border-gray-300,.border-gray-400,.border-gray-500,.border-slate-200,.border-white,.border-white\/70) { border-color:var(--ds-line) !important; }
+:root .life-os-app-shell :is(.border-gray-600,.border-gray-700,.border-gray-800,.border-gray-900,.border-slate-600,.border-slate-700\/70,.border-slate-700\/80,.border-gray-800\/30,.border-gray-800\/50) { border-color:var(--ds-line) !important; }
+:root.dark .life-os-app-shell [class*='dark:bg-gray-950'],
+:root.dark .life-os-app-shell [class*='dark:bg-slate-950'] { background-color:var(--ds-page) !important; }
+:root.dark .life-os-app-shell [class*='dark:bg-gray-900'],
+:root.dark .life-os-app-shell [class*='dark:bg-gray-800'],
+:root.dark .life-os-app-shell [class*='dark:bg-slate-900'] { background-color:var(--ds-dense) !important; }
+:root.dark .life-os-app-shell [class*='dark:bg-white'] { background-color:var(--ds-accent-strong) !important; }
+:root.dark .life-os-app-shell [class*='dark:text-gray-100'],
+:root.dark .life-os-app-shell [class*='dark:text-gray-200'] { color:var(--ds-text) !important; }
+:root.dark .life-os-app-shell [class*='dark:text-gray-900'] { color:var(--ds-on-accent) !important; }
+:root.dark .life-os-app-shell [class*='dark:text-gray-300'],
+:root.dark .life-os-app-shell [class*='dark:text-gray-400'],
+:root.dark .life-os-app-shell [class*='dark:text-gray-500'],
+:root.dark .life-os-app-shell [class*='dark:text-gray-600'] { color:var(--ds-muted) !important; }
+:root.dark .life-os-app-shell [class*='dark:border-gray'],
+:root.dark .life-os-app-shell [class*='dark:border-slate'] { border-color:var(--ds-line) !important; }
+
+/* Semantic utilities inherit palette-aware status roles rather than Tailwind's
+ * fixed red/amber/blue/violet ramps. */
+:root .life-os-app-shell :is(.text-green-400,.text-green-500,.text-green-600,.text-green-700,.text-emerald-200,.text-emerald-300,.text-emerald-400,.text-emerald-500,.text-emerald-600,.text-emerald-700,.text-emerald-800,.text-emerald-900) { color:var(--ds-success) !important; }
+:root .life-os-app-shell :is(.bg-green-50,.bg-green-100,.bg-emerald-50,.bg-emerald-100) { background-color:var(--ds-success-soft) !important; }
+:root .life-os-app-shell :is(.bg-green-300,.bg-green-400,.bg-green-500,.bg-green-700,.bg-emerald-500,.bg-emerald-600,.bg-emerald-700,.bg-emerald-800) { background-color:var(--ds-success) !important; }
+:root .life-os-app-shell :is(.border-green-200,.border-green-300,.border-green-400,.border-green-700,.border-green-800,.border-emerald-200,.border-emerald-300\/80,.border-emerald-400,.border-emerald-600,.border-emerald-800) { border-color:var(--ds-success-line) !important; }
+:root .life-os-app-shell :is(.text-amber-100,.text-amber-200,.text-amber-300,.text-amber-400,.text-amber-500,.text-amber-600,.text-amber-700,.text-amber-800,.text-amber-900,.text-amber-950,.text-yellow-400,.text-yellow-700,.text-orange-300,.text-orange-400,.text-orange-700) { color:var(--ds-warning) !important; }
+:root .life-os-app-shell :is(.bg-amber-50,.bg-amber-100,.bg-amber-900,.bg-amber-950,.bg-yellow-100,.bg-yellow-900\/40,.bg-orange-100,.bg-orange-900\/40) { background-color:var(--ds-warning-soft) !important; }
+:root .life-os-app-shell :is(.bg-amber-200,.bg-amber-300,.bg-amber-400,.bg-amber-500,.bg-yellow-400) { background-color:var(--ds-warning) !important; }
+:root .life-os-app-shell :is(.border-amber-100,.border-amber-200,.border-amber-300,.border-amber-400,.border-amber-800,.border-amber-900\/60,.border-yellow-200) { border-color:var(--ds-warning-line) !important; }
+:root .life-os-app-shell :is(.text-red-200,.text-red-300,.text-red-400,.text-red-500,.text-red-600,.text-red-700,.text-red-900) { color:var(--ds-danger) !important; }
+:root .life-os-app-shell :is(.bg-red-50,.bg-red-100,.bg-red-900,.bg-red-950) { background-color:var(--ds-danger-soft) !important; }
+:root .life-os-app-shell :is(.bg-red-300,.bg-red-400,.bg-red-500) { background-color:var(--ds-danger) !important; }
+:root .life-os-app-shell :is(.border-red-200,.border-red-800,.border-red-900,.border-red-900\/60) { border-color:var(--ds-danger-line) !important; }
+:root .life-os-app-shell :is(.text-blue-300,.text-blue-400,.text-blue-500,.text-blue-600,.text-blue-700,.text-cyan-100,.text-cyan-300,.text-cyan-500,.text-cyan-700,.text-cyan-900,.text-teal-300,.text-teal-700) { color:var(--ds-info) !important; }
+:root .life-os-app-shell :is(.bg-blue-50,.bg-blue-100,.bg-blue-900,.bg-blue-950,.bg-cyan-50,.bg-cyan-950,.bg-teal-100,.bg-teal-900) { background-color:var(--ds-info-soft) !important; }
+:root .life-os-app-shell :is(.bg-blue-400,.bg-blue-500,.bg-blue-600) { background-color:var(--ds-info) !important; }
+:root .life-os-app-shell :is(.border-blue-100,.border-blue-200,.border-blue-400,.border-blue-800,.border-cyan-100,.border-cyan-500,.border-cyan-900) { border-color:var(--ds-info-line) !important; }
+:root .life-os-app-shell :is(.text-indigo-400,.text-indigo-500,.text-indigo-600,.text-violet-200,.text-violet-300,.text-violet-400,.text-violet-500,.text-violet-600,.text-violet-700,.text-violet-900,.text-purple-200,.text-purple-300,.text-purple-400,.text-purple-500,.text-purple-700) { color:var(--ds-violet) !important; }
+:root .life-os-app-shell :is(.bg-violet-50,.bg-violet-100,.bg-violet-800,.bg-violet-900,.bg-violet-950,.bg-purple-50,.bg-purple-100,.bg-purple-900,.bg-purple-950) { background-color:var(--ds-violet-soft) !important; }
+:root .life-os-app-shell :is(.bg-violet-400,.bg-violet-500,.bg-violet-600,.bg-violet-700,.bg-purple-400) { background-color:var(--ds-violet) !important; }
+:root .life-os-app-shell :is(.border-violet-100,.border-violet-200,.border-violet-400,.border-violet-800,.border-violet-900,.border-purple-200) { border-color:var(--ds-violet-line) !important; }
+:root .life-os-app-shell :is(.text-pink-300,.text-pink-500) { color:var(--ds-relation) !important; }
+:root .life-os-app-shell :is(.bg-pink-300,.bg-pink-500) { background-color:var(--ds-relation) !important; }
+
+/* Legacy one-off Glass paints are normalised to reusable material roles. */
+:root[data-theme='glass'] .life-os-main :is(.feed-page,.today-page,.goals-page,.pool-page,.calendar-page,.habits-page,.people-page,.lists-page,.insights-page,.memories-page,.news-page,.inbox-page) { background:transparent !important; }
+:root[data-theme='glass'] .life-os-main :is(.feed-stack .card,.feed-focus-card,.focus-dock,.today-attention,.today-context,.today-habit,.today-detail,.goals-overview-card,.goals-drill,.pool-page .card,.calendar-toolbar > button,.calendar-toolbar > div,.calendar-period,.calendar-sources,.calendar-grid,.calendar-week-grid,.habits-score,.habits-foundation,.habits-category,.habits-history,.people-directory,.people-empty > div,.people-profile-head,.people-fields,.lists-collections,.lists-controls,.lists-item,.insights-controls,.insight-card,.memories-switcher,.memory-entry,.news-card,.inbox-item,.inbox-empty) { background:var(--ds-surface) !important; border-color:var(--ds-line) !important; box-shadow:var(--ds-shadow) !important; color:var(--ds-text); }
+:root[data-theme='glass'] .life-os-main :is(.feed-stack .card,.feed-focus-card,.focus-dock,.today-attention,.today-context,.today-habit,.today-detail,.goals-overview-card,.goals-drill,.pool-page .card,.news-card,.inbox-item):hover { background:var(--ds-surface-hover) !important; box-shadow:var(--ds-shadow-hover) !important; }
+:root[data-theme='glass'] .life-os-main :is(.today-header,.feed-header,.goals-header,.calendar-header,.habits-header,.people-directory-heading,.lists-header,.insights-header,.memories-header,.news-header,.inbox-header) :is(h1,p) { color:var(--ds-text) !important; }
+:root[data-theme='glass'] .life-os-main :is(.today-header,.feed-header,.goals-header,.calendar-header,.habits-header,.news-header,.inbox-header)::after { background:linear-gradient(90deg,var(--ds-accent),var(--ds-ambient-secondary)) !important; }
+:root .life-os-app-shell .habits-foundation > div:first-child { background:var(--ds-control) !important; border-color:var(--ds-line) !important; }
+:root .life-os-app-shell .habits-foundation [class*='text-amber'] { color:var(--ds-muted) !important; }
+:root .life-os-app-shell .habits-foundation > div:first-child span:last-child { color:var(--ds-accent) !important; }
+
+/* Product graph and the daily scene used one-off literal colours before the
+ * system existed. They are deliberately separate roles because both sit on
+ * imagery/dense data, but every value below still follows the active theme. */
+.product-graph { background:var(--ds-surface) !important; border-color:var(--ds-line) !important; color:var(--ds-text); box-shadow:var(--ds-shadow); }
+.product-graph__board { background-image:radial-gradient(circle at 1px 1px,var(--ds-graph-grid) 1px,transparent 1.2px); background-size:18px 18px; }
+.product-graph__tooltip { border:1px solid var(--ds-line); background:var(--ds-overlay); color:var(--ds-text); box-shadow:var(--ds-shadow-hover); }
+.product-graph__tooltip p:nth-child(2) { color:var(--ds-muted); }
+.product-graph__tooltip p:last-child { color:var(--ds-info); }
+.feed-focus-card { background:var(--ds-surface); border-color:var(--ds-line); box-shadow:var(--ds-shadow); }
+.daily-scene { background:var(--ds-page); color:var(--ds-on-accent); }
+.daily-scene__veil { background:linear-gradient(to top,color-mix(in srgb,var(--ds-page) 92%,transparent),color-mix(in srgb,var(--ds-page) 26%,transparent),color-mix(in srgb,var(--ds-page) 6%,transparent)); }
+.daily-scene__veil--strong { background:linear-gradient(to top,color-mix(in srgb,var(--ds-page) 88%,transparent),color-mix(in srgb,var(--ds-page) 16%,transparent),transparent); }
+.daily-scene-dialog { background:color-mix(in srgb,var(--ds-page) 72%,transparent); }
+.daily-scene-dialog__panel { border-color:var(--ds-line); background:var(--ds-overlay); color:var(--ds-text); }
+.daily-scene-dialog__hero { background:var(--ds-page); }
+.daily-scene-dialog__close { background:color-mix(in srgb,var(--ds-page) 36%,transparent); }
+.daily-scene-dialog__close:hover { background:color-mix(in srgb,var(--ds-page) 56%,transparent); }
+.calendar-item-chip { border-color:color-mix(in srgb,var(--calendar-item-accent, var(--ds-line)) 26%,var(--ds-line)) !important; border-left:3px solid var(--calendar-item-accent, var(--ds-muted)) !important; }
+.calendar-item-chip--tooltip { background:var(--ds-overlay) !important; color:var(--ds-text) !important; box-shadow:var(--ds-shadow-hover) !important; }
+
+/* Final route normalisation. Older route recipes remain as layout and spacing
+ * recipes, while all of their paint now comes from the shared roles. */
+.feed-stack .card { background:var(--ds-surface) !important; border-color:var(--ds-line) !important; box-shadow:var(--ds-shadow) !important; }
+.feed-stack .card:hover { border-color:var(--ds-line) !important; box-shadow:var(--ds-shadow-hover) !important; }
+:root[data-theme='glass'] .life-os-main :is(
+  .feed-status-rail,.goals-switcher,.calendar-toolbar > button,.calendar-toolbar > div,.calendar-period,
+  .habits-tabs,.habits-date-nav,.lists-header .btn,.insights-search input,.insights-controls,
+  .memories-switcher,.news-search input,.news-source-list,.news-source-editor,.inbox-count,.inbox-item-actions
+) { background:var(--ds-control) !important; border-color:var(--ds-line) !important; color:var(--ds-text) !important; box-shadow:var(--ds-shadow) !important; }
+:root[data-theme='glass'] .life-os-main :is(
+  .goals-switcher button.bg-gray-900,.calendar-toolbar > div button.bg-gray-900,.habits-tabs button.bg-white,
+  .lists-collections button.bg-gray-900,.insights-header > button,.memories-header .btn-primary
+) { background:var(--ds-accent-strong) !important; border-color:var(--ds-accent-strong) !important; color:var(--ds-on-accent) !important; box-shadow:var(--ds-shadow) !important; }
+:root[data-theme='glass'] .life-os-main :is(
+  .today-kicker,.feed-kicker,.goals-kicker,.pool-kicker,.calendar-titleblock p,.calendar-sources > div:first-child span,
+  .habits-kicker,.people-directory-heading p,.people-directory-heading span,.lists-kicker,.insights-kicker,
+  .memories-kicker,.news-kicker,.inbox-kicker,.inbox-count,.people-empty p
+) { color:var(--ds-muted) !important; }
+:root[data-theme='glass'] .life-os-main :is(
+  .today-attention h2,.today-details-heading,.goals-overview-card .text-base,.calendar-period span,
+  .people-empty strong,.people-profile h2,.lists-controls button.bg-gray-100,.memories-switcher button.bg-white,
+  .news-source-list button.bg-gray-100
+) { color:var(--ds-text) !important; }
+:root[data-theme='glass'] .life-os-main :is(.today-context a,.today-secondary-link) { color:var(--ds-accent) !important; text-decoration-color:color-mix(in srgb,var(--ds-accent) 34%,transparent) !important; }
+:root[data-theme='glass'] .life-os-main :is(.lists-item,.lists-item:hover)::before { background:linear-gradient(var(--ds-accent),var(--ds-ambient-secondary)) !important; }
+:root[data-theme='glass'] .life-os-main .calendar-item-chip { background:var(--ds-control) !important; color:var(--ds-text) !important; box-shadow:var(--ds-shadow) !important; }
+:root[data-theme='glass'] .life-os-main .calendar-item-chip:hover { background:var(--ds-surface-hover) !important; }
+:root[data-theme='glass'] .life-os-main :is(.people-avatar,.people-profile-avatar,.people-empty span) { color:var(--ds-on-accent) !important; background:var(--ds-accent) !important; border-color:var(--ds-line) !important; }
+:root[data-theme='glass'] .life-os-main .people-person.bg-gray-100 { background:var(--ds-accent-strong) !important; color:var(--ds-on-accent) !important; }
+:root[data-theme='glass'] .life-os-main .people-person.bg-gray-100 .people-avatar { background:color-mix(in srgb,var(--ds-on-accent) 18%,transparent) !important; color:var(--ds-on-accent) !important; }
+
+/* AI Reviews has additional reading layers and dialogs, but never receives a
+ * parallel fixed palette. */
+.ai-reviews-page .ai-review-decision { border-color:var(--ds-info) !important; background:color-mix(in srgb,var(--ds-info) 12%,var(--ds-surface)) !important; }
+.ai-reviews-page .ai-review-health { background:var(--ds-success-soft) !important; color:var(--ds-text) !important; }
+.ai-reviews-page :is(button,a,[role='tab']):focus-visible,
+.ai-review-dialog :is(button,a,summary):focus-visible { outline-color:var(--ds-focus-ring) !important; }
+.ai-review-dialog { background:var(--ds-overlay) !important; color:var(--ds-text) !important; border-color:var(--ds-line) !important; box-shadow:var(--ds-shadow-hover) !important; }
+.ai-report-sidebar,.ai-report-evidence { background:var(--ds-dense) !important; color:var(--ds-muted) !important; border-color:var(--ds-line) !important; }
+.ai-report-sidebar a,.ai-report-evidence summary { color:var(--ds-accent) !important; }
+.ai-report-heading { color:var(--ds-text) !important; border-color:var(--ds-line) !important; }
+
+/* Image content needs a stable contrast token, not a hard-coded text-white
+ * utility. The token stays intentionally bright in every palette. */
+.daily-scene :is(.text-white,[class*='text-white']),
+.daily-scene-dialog__hero :is(.text-white,[class*='text-white']) { color:var(--ds-on-media) !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .life-os-app-shell,.theme-menu__trigger,.theme-switcher__option { transition:none; }
+}
 
 /* Isolated concept route: /design-preview. No production surfaces inherit these rules. */
 .glass-lab { --ink:#1b2235; --muted:#72809a; --line:rgba(255,255,255,.62); --glass:rgba(250,253,255,.58); --aqua:#22c7d9; --violet:#8d7bff; --peach:#ff9b79; --lime:#a4db57; min-height:100vh; color:var(--ink); background:linear-gradient(145deg,#f5fbfc 0%,#dbeff1 48%,#d9e6fa 100%); display:flex; font-family:Inter,ui-sans-serif,system-ui,sans-serif; overflow:hidden; position:relative; }

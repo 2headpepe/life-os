@@ -82,7 +82,7 @@ export default function GlobalSearch({ open, onClose }) {
         {results.length > 0 ? (
           <div className="max-h-[360px] overflow-y-auto py-2">
             {results.map((r, i) => {
-              const color = SPHERE_COLORS[r.sphere] || '#6B7280'
+              const color = SPHERE_COLORS[r.sphere] || 'var(--ds-muted)'
               const Icon = TYPE_ICON[r.type]
               return (
                 <button

@@ -812,7 +812,7 @@ export function GoalCard({ card, onDismiss, note, onNote, onQuickReply, onEdit }
       <CardHeader icon={Target} label="Прогресс цели" trace={card.trace} />
       <p className="font-medium text-gray-900 dark:text-gray-100">{goal.title}</p>
       <div className="mt-2 h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: goal.color || '#6B7280' }} />
+        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: goal.color || 'var(--ds-muted)' }} />
       </div>
       <div className="mt-1.5 flex justify-between text-xs text-gray-400">
         <span>{done}/{total} · {pct}%</span>
