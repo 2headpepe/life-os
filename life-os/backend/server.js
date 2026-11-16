@@ -2849,10 +2849,16 @@ async function triggerGoalAnalysis(monday, force = false) {
   const cardRef = `ai-goals-week-${monday}`
   if (GOAL_ANALYSIS_STATUS.get(cardRef)?.status === 'running') return
   const started_at = new Date().toISOString()
+  const startedAtMs = Date.now()
+  const runId = `${cardRef}:${started_at}`
+  let aiPid = null
+  let heartbeat = null
   GOAL_ANALYSIS_STATUS.set(cardRef, { status: 'running', started_at })
+  console.info('[ai/goals] started', { runId, cardRef, force })
   const existing = await readAiCards()
   if (!force && existing.some(c => c.ref.startsWith(cardRef))) {
     GOAL_ANALYSIS_STATUS.set(cardRef, { status: 'idle' })
+    console.info('[ai/goals] skipped', { runId, cardRef, reason: 'cards_exist' })
     return
   }
   const mode = weeklyMode(monday)
@@ -3060,7 +3066,32 @@ Rules:
 - No two cards about the same thing
 - No generic advice — everything must reference actual data`
 
-    const raw = await runAiTask(prompt, { cwd: WORK_DIR, timeoutMs: 120000 })
+    console.info('[ai/goals] input_ready', {
+      runId,
+      promptChars: prompt.length,
+      spheres: treeSummary.length,
+      manualMemories: manualMemories.length,
+      insights: recentInsights.length,
+      habits: habitSummary.length,
+      inboxItems: inboxItems.length,
+      overdueTasks: overdueTasks.length,
+      listItems: allListItems.length,
+    })
+    const raw = await runAiTask(prompt, {
+      cwd: WORK_DIR,
+      timeoutMs: 120000,
+      onStart: ({ pid, command }) => {
+        aiPid = pid
+        console.info('[ai/goals] spawned', { runId, pid: aiPid, command })
+        heartbeat = setInterval(() => {
+          console.info('[ai/goals] waiting', { runId, pid: aiPid, durationMs: Date.now() - startedAtMs })
+        }, 30_000)
+      },
+      onStderr: message => console.info('[ai/goals] stderr', { runId, pid: aiPid, message }),
+      onExit: ({ exitCode, signal }) => console.info('[ai/goals] process_exit', {
+        runId, pid: aiPid, exitCode, signal, durationMs: Date.now() - startedAtMs,
+      }),
+    })
     const specs = extractJson(raw)
     const traceData = {
       'Режим': mode.id,
@@ -3085,9 +3116,22 @@ Rules:
     const withoutThisWeek = existingCards.filter(c => !c.ref.startsWith(cardRef))
     await writeAiCards([...withoutThisWeek, ...newCards])
     GOAL_ANALYSIS_STATUS.set(cardRef, { status: 'done', started_at, finished_at: new Date().toISOString() })
+    console.info('[ai/goals] completed', { runId, cardRef, durationMs: Date.now() - startedAtMs, cards: newCards.length })
   } catch (e) {
+    const diagnostic = e.aiDiagnostic || {}
+    console.error('[ai/goals] failed', {
+      runId,
+      cardRef,
+      durationMs: Date.now() - startedAtMs,
+      code: diagnostic.code || e.code || 'runtime_error',
+      pid: diagnostic.pid ?? aiPid,
+      stderr: diagnostic.stderr || undefined,
+      message: e.message,
+    })
     console.error('Goal analysis failed:', e.message)
     GOAL_ANALYSIS_STATUS.set(cardRef, { status: 'error', started_at, finished_at: new Date().toISOString(), error: e.message })
+  } finally {
+    clearInterval(heartbeat)
   }
 }
 
