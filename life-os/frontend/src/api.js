@@ -1,10 +1,34 @@
+import { trackMutation } from './analytics'
+
 const BASE = '/api'
+
+async function trackedMutation(path, method, body, outcomeCategory = null, options = {}) {
+  try {
+    const response = await fetch(`${BASE}${path}`, {
+      method,
+      ...(options.headers ? { headers: options.headers } : {}),
+      ...(body === undefined ? {} : { body: options.rawBody ? body : JSON.stringify(body) }),
+    })
+    const result = await response.json().catch(() => ({ error: 'Некорректный ответ сервера.' }))
+    const outcome = response.ok && !result?.error ? 'success' : 'failure'
+    trackMutation(method, path, outcome, outcomeCategory)
+    if (outcome === 'success' && typeof window !== 'undefined' && /^\/(tree|events|planner)(\/|$)/.test(path)) {
+      window.dispatchEvent(new Event('life-os:planning-changed'))
+    }
+    return result
+  } catch (error) {
+    trackMutation(method, path, 'failure', outcomeCategory)
+    throw error
+  }
+}
 
 export const api = {
   get: (path) => fetch(`${BASE}${path}`).then(r => r.json()),
-  put: (path, body) => fetch(`${BASE}${path}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()),
-  post: (path, body) => fetch(`${BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()),
-  patch: (path, body) => fetch(`${BASE}${path}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()),
+  put: (path, body, outcomeCategory = null) => trackedMutation(path, 'PUT', body, outcomeCategory, { headers: { 'Content-Type': 'application/json' } }),
+  post: (path, body, outcomeCategory = null) => trackedMutation(path, 'POST', body, outcomeCategory, { headers: { 'Content-Type': 'application/json' } }),
+  patch: (path, body, outcomeCategory = null) => trackedMutation(path, 'PATCH', body, outcomeCategory, { headers: { 'Content-Type': 'application/json' } }),
+  delete: (path, outcomeCategory = null) => trackedMutation(path, 'DELETE', undefined, outcomeCategory),
+  rawPost: (path, body, outcomeCategory = null) => trackedMutation(path, 'POST', body, outcomeCategory, { rawBody: true }),
 }
 
 export const spheres = {
@@ -28,7 +52,7 @@ export const events = {
   all: () => api.get('/content/events/index.json'),
   add: (event) => api.post('/events', event),
   update: (id, patch) => api.patch(`/events/${id}`, patch),
-  delete: (id) => fetch(`/api/events/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  delete: (id) => api.delete(`/events/${id}`),
 }
 
 export const habits = {
@@ -41,7 +65,7 @@ export const habits = {
 export const inbox = {
   all: () => api.get('/content/inbox/current.json'),
   add: (text, tags = []) => api.post('/inbox', { text, tags }),
-  delete: (id) => fetch(`/api/inbox/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  delete: (id) => api.delete(`/inbox/${id}`),
 }
 
 
@@ -51,7 +75,7 @@ export const tree = {
   create: (node)      => api.post('/tree', node),
   add:    (node)      => api.post('/tree', node),
   update: (id, patch) => api.patch(`/tree/${id}`, patch),
-  delete: (id)        => fetch(`/api/tree/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  delete: (id)        => api.delete(`/tree/${id}`),
   createDependency: (id, payload) => api.post(`/tree/${id}/dependencies`, payload),
   eligibleExistingDependencies: (id) => api.get(`/tree/${id}/eligible-existing-dependencies`),
   linkExistingDependency: (id, dependency_id) => api.post(`/tree/${id}/existing-dependencies`, { dependency_id }),
@@ -62,6 +86,7 @@ export const tree = {
 export const planner = {
   queue: () => api.get('/planner/queue'),
   updateTask: (id, plannerPatch) => api.patch(`/planner/tasks/${id}`, { planner: plannerPatch }),
+  transitionTask: (id, plannerPatch, expectedLane, start = false) => api.patch(`/planner/tasks/${id}`, { planner: plannerPatch, expected_lane: expectedLane, ...(start ? { start: true } : {}) }),
   reorder: (lane, ordered_ids) => api.post('/planner/reorder', { lane, ordered_ids }),
   migrate: () => api.post('/planner/migrate'),
 }
@@ -77,7 +102,7 @@ export const config = {
 
 export const profile = {
   get: () => api.get('/profile'),
-  update: (data) => fetch('/api/profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  update: (data) => api.put('/profile', data),
 }
 
 export const insights = {
@@ -94,7 +119,7 @@ export const news = {
     all:    ()          => api.get('/news/sources'),
     add:    (source)    => api.post('/news/sources', source),
     update: (id, patch) => api.patch(`/news/sources/${id}`, patch),
-    delete: (id)        => fetch(`/api/news/sources/${id}`, { method: 'DELETE' }).then(r => r.json()),
+    delete: (id)        => api.delete(`/news/sources/${id}`),
   },
 }
 
@@ -115,7 +140,7 @@ export const calendars = {
   all:    ()          => api.get('/calendars'),
   add:    (cal)       => api.post('/calendars', cal),
   update: (id, patch) => api.patch(`/calendars/${id}`, patch),
-  delete: (id)        => fetch(`/api/calendars/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  delete: (id)        => api.delete(`/calendars/${id}`),
 }
 
 export const sync = {
@@ -184,8 +209,8 @@ export const ai = {
 }
 
 export const aiReviews = {
-  all: () => api.get('/ai-reviews'),
-  action: (action, target_ref) => api.post('/product-intelligence/review-actions', { action, target_ref }),
+  all: (analyticsWindowId = null) => api.get(`/ai-reviews${analyticsWindowId ? `?analytics_window=${encodeURIComponent(analyticsWindowId)}` : ''}`),
+  action: (action, target_ref, outcomeCategory = null) => api.post('/product-intelligence/review-actions', { action, target_ref }, outcomeCategory),
   reminder: (action, candidate_set_checksum) => api.post('/product-intelligence/priority-loop/reminder', { action, candidate_set_checksum }),
   recheck: (action, delivery_task_id, candidate_set_checksum) => api.post('/product-intelligence/priority-loop/recheck-drafts', { action, delivery_task_id, candidate_set_checksum }),
   createInitiative: (payload) => api.post('/product-intelligence/initiatives', payload),
@@ -198,12 +223,11 @@ export const memories = {
   all: (date = null) => api.get(date ? `/memories?date=${date}` : '/memories'),
   add: (entry) => api.post('/memories', entry),
   update: (id, patch) => api.patch(`/memories/${id}`, patch),
-  delete: (id) => fetch(`/api/memories/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  delete: (id) => api.delete(`/memories/${id}`),
   uploadPhotos: (id, files) => {
     const formData = new FormData()
     for (const f of files) formData.append('photos', f)
-    return fetch(`/api/memories/${id}/photos`, { method: 'POST', body: formData })
-      .then(r => r.json())
+    return api.rawPost(`/memories/${id}/photos`, formData)
   },
   mediaUrl: (filename) => `/api/memories/photos/${filename}`,
 }

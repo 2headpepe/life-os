@@ -3,8 +3,8 @@ import cors from 'cors'
 import fs from 'fs/promises'
 import path from 'path'
 import os from 'os'
-import { exec } from 'child_process'
-import { randomUUID } from 'crypto'
+import { exec, execFile } from 'child_process'
+import { createHash, randomUUID } from 'crypto'
 import { google } from 'googleapis'
 import multer from 'multer'
 import { aiRuntimeConfig, checkAiRuntime, promptFromMessages, runAiTask } from './ai-runtime.js'
@@ -13,6 +13,9 @@ import { OpenCodeServerError } from './opencode-server.js'
 import { ManagedOpenCodeServer, ManagedOpenCodeServerError } from './managed-opencode-server.js'
 import { productIntelligenceStore } from './product-intelligence.js'
 import { isLoopbackAddress } from './ai-review-overview.js'
+import { appendAnalyticsEvents } from './analytics.js'
+import { eventStore, saveWorkBlock, pushWorkBlocks } from './work-blocks.js'
+import { taskDateError } from './task-dates.js'
 import { assertDeliveryTransition, handoffIsComplete, hasDependencyCycle, inboundDependencyReferences, isBlocked, workContext } from './task-lifecycle.js'
 import { assertEligibleExecutor, assertEligibleVerifier } from './agent-registry.js'
 import { isPlannerCandidate, migratePlannerState, patchPlanner, plannerQueue, plannerRoots, plannerTaskFromCommit, reorderPlannerTasks, nextPlannerRank } from './planner-queue.js'
@@ -99,6 +102,25 @@ function requireLocalPlanner(req, res, next) {
   next()
 }
 
+function requireLocalAnalytics(req, res, next) {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) {
+    return res.status(403).json({ error: 'Analytics is available only on this computer.' })
+  }
+  next()
+}
+
+app.post('/api/analytics/events', requireLocalAnalytics, async (req, res) => {
+  try {
+    const result = await appendAnalyticsEvents({
+      rootDir: path.join(WORK_DIR, 'ops', 'life-os-analytics'),
+      events: req.body?.events,
+    })
+    res.status(202).json(result)
+  } catch (error) {
+    res.status(400).json({ error: error.message })
+  }
+})
+
 // ─── Memories photo upload ───────────────────────────────────────
 const MEMORIES_DIR = path.join(VAULT, 'memories')
 const PHOTOS_DIR = path.join(MEMORIES_DIR, 'photos')
@@ -171,6 +193,24 @@ function propagateDoneStatus(nodes, startId) {
   }
 }
 
+function assertValidParentChange(nodes, node, parentId) {
+  if (!parentId) throw new Error('a node cannot be moved to the root')
+  if (node.parent_id === null) throw new Error('a root domain cannot be moved')
+  const byId = new Map(nodes.map(item => [item.id, item]))
+  const parent = byId.get(parentId)
+  if (!parent) throw new Error('parent node not found')
+  if (parent.id === node.id) throw new Error('a node cannot be its own parent')
+  if (workContext(parent) !== workContext(node)) throw new Error('a node can only be moved within its work context')
+
+  const seen = new Set()
+  let current = parent
+  while (current?.parent_id && !seen.has(current.id)) {
+    if (current.parent_id === node.id) throw new Error('a node cannot be moved into its descendant')
+    seen.add(current.id)
+    current = byId.get(current.parent_id)
+  }
+}
+
 
 // ─── Content read/write ────────────────────────────────────────────
 
@@ -184,6 +224,7 @@ app.get('/api/content/*', async (req, res) => {
 })
 
 app.put('/api/content/*', async (req, res) => {
+  if (req.params[0] === 'tree/nodes.json') return res.status(409).json({ error: 'tree writes require a typed API operation' })
   const filePath = path.join(VAULT, req.params[0])
   try {
     await fs.mkdir(path.dirname(filePath), { recursive: true })
@@ -276,56 +317,40 @@ app.delete('/api/inbox/:id', async (req, res) => {
 
 // ─── Events ───────────────────────────────────────────────────────
 
-app.post('/api/events', async (req, res) => {
-  const filePath = path.join(VAULT, 'events/index.json')
-  try {
-    const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
-    const event = {
-      id: `event-${Date.now()}`,
-      title: '',
-      date: new Date().toISOString().slice(0, 10),
-      time: null,
-      duration_min: null,
-      type: 'event',
-      notes: '',
-      ...req.body,
-    }
-    data.events.push(event)
-    data.updated = new Date().toISOString().slice(0, 10)
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2))
-    res.json(event)
-  } catch (e) {
-    res.status(500).json({ error: e.message })
-  }
-})
+const changeEvents = eventStore(path.join(VAULT, 'events/index.json'))
 
-app.patch('/api/events/:id', async (req, res) => {
-  const filePath = path.join(VAULT, 'events/index.json')
+async function mutateEvents(req, res) {
   try {
-    const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
-    const idx = data.events.findIndex(e => e.id === req.params.id)
-    if (idx === -1) return res.status(404).json({ error: 'not found' })
-    data.events[idx] = { ...data.events[idx], ...req.body }
-    data.updated = new Date().toISOString().slice(0, 10)
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2))
-    res.json(data.events[idx])
-  } catch (e) {
-    res.status(500).json({ error: e.message })
+    const result = await changeEvents(async data => {
+      const input = req.body || {}
+      const old = data.events.find(event => event.id === req.params.id)
+      if (req.method === 'DELETE') {
+        data.events = data.events.filter(event => event.id !== req.params.id)
+        return { ok: true }
+      }
+      if (req.method === 'PATCH' && !old) throw Object.assign(new Error('not found'), { status: 404 })
+      if (input.type === 'work_block' || old?.type === 'work_block') {
+        if (old && old.type !== 'work_block') throw Object.assign(new Error('Cannot replace an existing event'), { status: 409 })
+        return saveWorkBlock(data, input, (await readTree()).nodes, (await readCalendars()).calendars, old)
+      }
+      if (old) {
+        Object.assign(old, input, { id: old.id })
+        return old
+      }
+      const event = { id: 'event-' + randomUUID(), title: '', date: new Date().toISOString().slice(0, 10), time: null, duration_min: null, type: 'event', notes: '', ...input }
+      if (data.events.some(item => item.id === event.id)) throw Object.assign(new Error('Event id already exists'), { status: 409 })
+      data.events.push(event)
+      return event
+    })
+    res.json(result)
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message })
   }
-})
+}
 
-app.delete('/api/events/:id', async (req, res) => {
-  const filePath = path.join(VAULT, 'events/index.json')
-  try {
-    const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
-    data.events = data.events.filter(e => e.id !== req.params.id)
-    data.updated = new Date().toISOString().slice(0, 10)
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2))
-    res.json({ ok: true })
-  } catch (e) {
-    res.status(500).json({ error: e.message })
-  }
-})
+app.post('/api/events', mutateEvents)
+app.patch('/api/events/:id', mutateEvents)
+app.delete('/api/events/:id', mutateEvents)
 
 // ─── Context for local AI runtimes ────────────────────────────────
 
@@ -987,7 +1012,7 @@ app.post('/api/pulse/ack', async (req, res) => {
     }
     res.json({ ok: true, snoozed_until })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(treeErrorStatus(e)).json({ error: e.message })
   }
 })
 
@@ -1041,6 +1066,7 @@ app.post('/api/calendars', async (req, res) => {
       title: req.body.title || '',
       color: req.body.color || '#6B7280',
       sync_to_gcal: req.body.sync_to_gcal ?? false,
+      gcal_calendar_id: req.body.gcal_calendar_id || 'primary',
     }
     data.calendars.push(cal)
     await writeCalendars(data)
@@ -1071,6 +1097,11 @@ app.delete('/api/calendars/:id', async (req, res) => {
     const data = await readCalendars()
     data.calendars = data.calendars.filter(c => c.id !== req.params.id)
     await writeCalendars(data)
+    await changeEvents(events => {
+      for (const event of events.events) {
+        if (event.type === 'work_block' && event.calendar_id === req.params.id) event.calendar_id = null
+      }
+    })
     res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -1080,19 +1111,52 @@ app.delete('/api/calendars/:id', async (req, res) => {
 // ─── Tree ─────────────────────────────────────────────────────────
 
 const TREE_FILE = path.join(VAULT, 'tree/nodes.json')
+const TREE_VERSION = Symbol('treeVersion')
+let treeWriteQueue = Promise.resolve()
+const treeVersion = content => content == null ? null : createHash('sha256').update(content).digest('hex')
+const treeErrorStatus = error => error?.code === 'TREE_CONFLICT' ? 409 : 500
 
 async function readTree() {
   try {
-    return JSON.parse(await fs.readFile(TREE_FILE, 'utf-8'))
-  } catch {
-    return { _type: 'tree', updated: new Date().toISOString().slice(0, 10), nodes: [] }
+    const content = await fs.readFile(TREE_FILE, 'utf-8')
+    const data = JSON.parse(content)
+    Object.defineProperty(data, TREE_VERSION, { value: treeVersion(content), writable: true })
+    return data
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+    const data = { _type: 'tree', updated: new Date().toISOString().slice(0, 10), nodes: [] }
+    Object.defineProperty(data, TREE_VERSION, { value: null, writable: true })
+    return data
   }
 }
 
 async function writeTree(data) {
-  await fs.mkdir(path.dirname(TREE_FILE), { recursive: true })
-  data.updated = new Date().toISOString().slice(0, 10)
-  await fs.writeFile(TREE_FILE, JSON.stringify(data, null, 2))
+  const save = async () => {
+    await fs.mkdir(path.dirname(TREE_FILE), { recursive: true })
+    const current = await fs.readFile(TREE_FILE, 'utf-8').catch(error => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (data[TREE_VERSION] !== treeVersion(current)) {
+      const error = new Error('tree changed during this request; reload and retry')
+      error.code = 'TREE_CONFLICT'
+      throw error
+    }
+    data.updated = new Date().toISOString().slice(0, 10)
+    const content = JSON.stringify(data, null, 2)
+    const temporary = `${TREE_FILE}.${randomUUID()}.tmp`
+    try {
+      await fs.writeFile(temporary, content)
+      await fs.rename(temporary, TREE_FILE)
+    } catch (error) {
+      await fs.unlink(temporary).catch(() => {})
+      throw error
+    }
+    data[TREE_VERSION] = treeVersion(content)
+  }
+  const result = treeWriteQueue.then(save)
+  treeWriteQueue = result.catch(() => {})
+  return result
 }
 
 // Setup reset is intentionally a server-side, two-step operation.  Opening
@@ -1119,7 +1183,9 @@ app.post('/api/setup/reset', requireLifeOsUiOrigin, async (req, res) => {
   }
   try {
     const listsIndex = JSON.parse(await fs.readFile(path.join(VAULT, 'lists/_index.json'), 'utf8').catch(() => '{"collections":[]}'))
-    await writeTree({ _type: 'tree', updated: new Date().toISOString().slice(0, 10), nodes: [] })
+    const emptyTree = await readTree()
+    emptyTree.nodes = []
+    await writeTree(emptyTree)
     await fs.writeFile(path.join(VAULT, 'habits/definitions.json'), JSON.stringify({ categories: [] }, null, 2))
     await fs.writeFile(path.join(VAULT, 'inbox/current.json'), JSON.stringify({ _type: 'inbox', updated: new Date().toISOString().slice(0, 10), items: [] }, null, 2))
     await fs.writeFile(path.join(VAULT, 'insights/index.json'), JSON.stringify({ updated: new Date().toISOString().slice(0, 10), insights: [] }, null, 2))
@@ -1142,14 +1208,15 @@ app.post('/api/setup/reset', requireLifeOsUiOrigin, async (req, res) => {
     await fs.mkdir(path.join(BRAIN_DIR, 'people'), { recursive: true })
     await fs.writeFile(PEOPLE_INDEX, JSON.stringify({ people: [] }, null, 2))
     res.json({ ok: true })
-  } catch (error) { res.status(500).json({ error: error.message }) }
+  } catch (error) { res.status(treeErrorStatus(error)).json({ error: error.message }) }
 })
 
 // Local-only AI Review read model. It exposes compressed generated-report
 // results, never a transcript, source path, credential, or personal note.
 app.get('/api/ai-reviews', async (req, res) => {
   if (!isLoopbackAddress(req.socket.remoteAddress)) return res.status(403).json({ error: 'AI Reviews summaries are available only on this computer.' })
-  try { res.json(await productIntelligence.readModel({ includeLocalOverview: true })) }
+  const analyticsWindowId = typeof req.query.analytics_window === 'string' ? req.query.analytics_window : null
+  try { res.json(await productIntelligence.readModel({ includeLocalOverview: true, analyticsWindowId })) }
   catch (error) { res.status(500).json({ error: error.message }) }
 })
 
@@ -1274,7 +1341,7 @@ app.post('/api/planner/commit', requireLocalPlanner, async (req, res) => {
     await writeTree(tree)
     res.status(201).json({ task })
   } catch (error) {
-    res.status(400).json({ error: error.message })
+    res.status(error?.code === 'TREE_CONFLICT' ? 409 : 400).json({ error: error.message })
   }
 })
 
@@ -1288,7 +1355,7 @@ app.post('/api/planner/migrate', requireLocalPlanner, async (req, res) => {
     }
     res.json({ changed: migrated.changed, tasks: plannerQueue(migrated.nodes) })
   } catch (error) {
-    res.status(500).json({ error: error.message })
+    res.status(treeErrorStatus(error)).json({ error: error.message })
   }
 })
 
@@ -1298,23 +1365,60 @@ app.patch('/api/planner/tasks/:id', requireLocalPlanner, async (req, res) => {
     const index = tree.nodes.findIndex(node => node.id === req.params.id)
     if (index === -1) return res.status(404).json({ error: 'task not found' })
     const previous = tree.nodes[index]
-    if (!isPlannerCandidate(previous, tree.nodes)) return res.status(409).json({ error: 'task is not available in planner' })
+    const start = req.body?.start === true
+    if (req.body?.start != null && !start) return res.status(400).json({ error: 'start must be true' })
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tomsk' })
+    const blocked = isBlocked(previous, new Map(tree.nodes.map(node => [node.id, node])))
+    const appointmentUnavailable = Boolean(previous.due && previous.date_kind !== 'deadline' && (
+      previous.due !== today || (previous.time && new Date(`${previous.due}T${previous.time}:00+07:00`).getTime() > Date.now())
+    ))
+    const unavailable = previous.available_from > today || blocked || appointmentUnavailable
+    const hasChildren = tree.nodes.some(node => node.parent_id === previous.id)
+    const personalPath = (() => {
+      const byId = new Map(tree.nodes.map(node => [node.id, node]))
+      const seen = new Set()
+      let node = previous
+      while (node) {
+        if (workContext(node) !== 'personal' || seen.has(node.id)) return false
+        if (!node.parent_id) return true
+        seen.add(node.id)
+        node = byId.get(node.parent_id)
+      }
+      return false
+    })()
+    if (!previous.parent_id || hasChildren || !personalPath) return res.status(409).json({ error: 'task is not available in planner' })
+    if (start) {
+      if (!['undefined', 'scheduled', 'in_progress'].includes(previous.status || 'undefined') || unavailable) {
+        return res.status(409).json({ error: 'task is not available to start' })
+      }
+    } else if (!isPlannerCandidate(previous, tree.nodes)) return res.status(409).json({ error: 'task is not available in planner' })
+    const requestedLane = req.body?.planner?.lane || previous.planner?.lane || 'next'
+    if (Object.hasOwn(req.body || {}, 'expected_lane') && req.body.expected_lane !== (previous.planner?.lane || null) &&
+        previous.planner?.lane !== requestedLane) {
+      return res.status(409).json({ error: 'task moved since it was shown; reload and retry' })
+    }
     if (req.body?.planner === null || req.body?.planner?.lane === 'triage') {
       const task = { ...previous, planner: null, updated: new Date().toISOString().slice(0, 10) }
       tree.nodes[index] = task
       await writeTree(tree)
       return res.json({ task })
     }
-    const requestedLane = req.body?.planner?.lane || previous.planner?.lane || 'next'
-    const planner = patchPlanner(previous.planner, req.body?.planner, {
+    if (requestedLane === 'waiting' && req.body?.planner?.follow_up_on &&
+        !/^\d{4}-\d{2}-\d{2}$/.test(req.body.planner.follow_up_on)) return res.status(400).json({ error: 'invalid follow-up date' })
+    const changedLane = previous.planner?.lane !== requestedLane
+    const planner = patchPlanner(previous.planner, {
+      ...req.body?.planner,
+      ...(changedLane ? { rank: nextPlannerRank(tree.nodes, requestedLane) } : {}),
+      ...(requestedLane !== 'waiting' ? { follow_up_on: null } : {}),
+    }, {
       fallbackRank: nextPlannerRank(tree.nodes, requestedLane),
     })
-    const task = { ...previous, planner, updated: new Date().toISOString().slice(0, 10) }
+    const task = { ...previous, status: start ? 'in_progress' : previous.status, planner, updated: new Date().toISOString().slice(0, 10) }
     tree.nodes[index] = task
-    await writeTree(tree)
+    if (JSON.stringify(task) !== JSON.stringify(previous)) await writeTree(tree)
     res.json({ task })
   } catch (error) {
-    res.status(400).json({ error: error.message })
+    res.status(error?.code === 'TREE_CONFLICT' ? 409 : 400).json({ error: error.message })
   }
 })
 
@@ -1328,7 +1432,7 @@ app.post('/api/planner/reorder', requireLocalPlanner, async (req, res) => {
     await writeTree(tree)
     res.json({ tasks: plannerQueue(tree.nodes) })
   } catch (error) {
-    res.status(400).json({ error: error.message })
+    res.status(error?.code === 'TREE_CONFLICT' ? 409 : 400).json({ error: error.message })
   }
 })
 
@@ -1377,7 +1481,7 @@ app.post('/api/tree/:id/dependencies', async (req, res) => {
     tree.nodes.push(dependency)
     await writeTree(tree)
     res.status(201).json({ source, dependency })
-  } catch (error) { res.status(500).json({ error: error.message }) }
+  } catch (error) { res.status(treeErrorStatus(error)).json({ error: error.message }) }
 })
 
 app.get('/api/tree/:id/eligible-existing-dependencies', async (req, res) => {
@@ -1390,6 +1494,7 @@ app.get('/api/tree/:id/eligible-existing-dependencies', async (req, res) => {
 })
 
 app.post('/api/tree/:id/existing-dependencies', async (req, res) => {
+  try {
   const dependency_id = String(req.body?.dependency_id || '')
   const tree = await readTree()
   const source = tree.nodes.find(node => node.id === req.params.id)
@@ -1404,9 +1509,11 @@ app.post('/api/tree/:id/existing-dependencies', async (req, res) => {
   source.blocked_by = [...new Set([...(source.blocked_by || []), dependency.id])]
   await writeTree(tree)
   res.status(201).json({ source, dependency })
+  } catch (error) { res.status(treeErrorStatus(error)).json({ error: error.message }) }
 })
 
 app.patch('/api/tree/:id/handoff-contract', async (req, res) => {
+  try {
   const tree = await readTree()
   const node = tree.nodes.find(item => item.id === req.params.id)
   if (!node) return res.status(404).json({ error: 'node not found' })
@@ -1416,9 +1523,11 @@ app.patch('/api/tree/:id/handoff-contract', async (req, res) => {
   if (node.status === 'needs_grooming') node.status = 'backlog'
   await writeTree(tree)
   res.json(node)
+  } catch (error) { res.status(treeErrorStatus(error)).json({ error: error.message }) }
 })
 
 app.post('/api/tree/:id/verification', async (req, res) => {
+  try {
   const tree = await readTree()
   const node = tree.nodes.find(item => item.id === req.params.id)
   if (!node) return res.status(404).json({ error: 'node not found' })
@@ -1430,6 +1539,7 @@ app.post('/api/tree/:id/verification', async (req, res) => {
   node.status = req.body.state === 'passed' ? 'done' : 'backlog'
   await writeTree(tree)
   res.json(node)
+  } catch (error) { res.status(treeErrorStatus(error)).json({ error: error.message }) }
 })
 
 app.post('/api/tree', async (req, res) => {
@@ -1438,6 +1548,8 @@ app.post('/api/tree', async (req, res) => {
     if (req.body?.status === 'blocked') return res.status(400).json({ error: 'blocked is derived from blocked_by and cannot be stored' })
     const data = await readTree()
     const today = new Date().toISOString().slice(0, 10)
+    const dateError = taskDateError(req.body || {})
+    if (dateError) return res.status(400).json({ error: dateError })
     if (req.body?.id && data.nodes.some(item => item.id === req.body.id)) {
       return res.status(409).json({ error: 'node id already exists' })
     }
@@ -1478,7 +1590,7 @@ app.post('/api/tree', async (req, res) => {
     }
     res.json(node)
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(treeErrorStatus(e)).json({ error: e.message })
   }
 })
 
@@ -1489,18 +1601,33 @@ app.patch('/api/tree/:id', async (req, res) => {
     if (idx === -1) return res.status(404).json({ error: 'node not found' })
     const today = new Date().toISOString().slice(0, 10)
     const oldNode = data.nodes[idx]
-    if (workContext(oldNode) === 'delivery' && (req.body?.status === 'in_progress' || req.body?.status === 'waiting_for_review')) {
-      assertEligibleExecutor(await agentRegistry(), req.body?.execution?.actor || oldNode.execution?.actor, oldNode.handoff_contract?.target_role)
+    const { complete_leaf_only: leafOnly, ...patch } = req.body || {}
+    if (leafOnly !== undefined && (leafOnly !== true || patch.status !== 'done' ||
+        workContext(oldNode) !== 'personal' || !oldNode.parent_id || data.nodes.some(node => node.parent_id === oldNode.id))) {
+      return res.status(400).json({ error: 'complete_leaf_only requires closing a personal leaf' })
     }
-    assertDeliveryTransition(oldNode, req.body?.status ?? oldNode.status, { ...oldNode, ...req.body })
-    data.nodes[idx] = { ...oldNode, ...req.body, updated: today }
+    const dateError = taskDateError(patch, oldNode)
+    if (dateError) return res.status(400).json({ error: dateError })
+    if (Object.hasOwn(patch, 'parent_id') && patch.parent_id !== oldNode.parent_id) {
+      try {
+        assertValidParentChange(data.nodes, oldNode, patch.parent_id)
+      } catch (error) {
+        return res.status(400).json({ error: error.message })
+      }
+    }
+    if (workContext(oldNode) === 'delivery' && (patch.status === 'in_progress' || patch.status === 'waiting_for_review')) {
+      assertEligibleExecutor(await agentRegistry(), patch.execution?.actor || oldNode.execution?.actor, oldNode.handoff_contract?.target_role)
+    }
+    assertDeliveryTransition(oldNode, patch.status ?? oldNode.status, { ...oldNode, ...patch })
+    data.nodes[idx] = { ...oldNode, ...patch, updated: today }
+    if (!data.nodes[idx].due && oldNode.date_kind) data.nodes[idx].date_kind = null
     if (workContext(data.nodes[idx]) === 'personal' && data.nodes[idx].planner && !isPlannerCandidate(data.nodes[idx], data.nodes)) {
       data.nodes[idx].planner = null
     }
     const newNode = data.nodes[idx]
 
     // Auto-memory: node changed
-    const changedFields = Object.keys(req.body)
+    const changedFields = Object.keys(patch)
     if (changedFields.includes('status')) {
       autoMemory('Задача', `${oldNode.title || req.params.id}: ${oldNode.status} → ${newNode.status}`)
     } else if (changedFields.length > 0) {
@@ -1509,17 +1636,18 @@ app.patch('/api/tree/:id', async (req, res) => {
 
     // Recurring node: completing it spawns the next scheduled instance.
     let nextNode = null
-    if (req.body.status === 'done' && oldNode.status !== 'done' && oldNode.recurrence && oldNode.due) {
+    if (patch.status === 'done' && oldNode.status !== 'done' && oldNode.recurrence && oldNode.due) {
       const nextDue = nextRecurrenceDate(oldNode.due, oldNode.recurrence)
       if (nextDue) {
         nextNode = { ...oldNode, id: `node-${Date.now()}`, status: 'scheduled', due: nextDue, created: today, updated: today }
+        delete nextNode.remaining_min
         delete nextNode.gcal_event_id
         data.nodes.push(nextNode)
       }
     }
 
     // Keep ancestor containers in sync with their leaves (done ↔ active).
-    if (req.body.status !== undefined) propagateDoneStatus(data.nodes, req.params.id)
+    if (patch.status !== undefined && !leafOnly) propagateDoneStatus(data.nodes, req.params.id)
 
     await writeTree(data)
     const cal = await getCalendarClient()
@@ -1550,7 +1678,7 @@ app.patch('/api/tree/:id', async (req, res) => {
     }
     res.json(newNode)
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(treeErrorStatus(e)).json({ error: e.message })
   }
 })
 
@@ -1576,6 +1704,9 @@ app.delete('/api/tree/:id', async (req, res) => {
     const deletedNames = data.nodes.filter(n => toDelete.has(n.id)).map(n => n.title || n.id)
     data.nodes = data.nodes.filter(n => !toDelete.has(n.id))
     await writeTree(data)
+    await changeEvents(events => {
+      events.events = events.events.filter(event => event.type !== 'work_block' || !toDelete.has(event.task_id))
+    })
     autoMemory('Задача удалена', deletedNames.slice(0, 3).join(', ') + (deletedNames.length > 3 ? ` +${deletedNames.length - 3}` : ''))
     if (gcalIds.length) {
       const cal = await getCalendarClient()
@@ -1583,7 +1714,7 @@ app.delete('/api/tree/:id', async (req, res) => {
     }
     res.json({ ok: true, deleted: toDelete.size })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(treeErrorStatus(e)).json({ error: e.message })
   }
 })
 
@@ -1981,6 +2112,17 @@ app.post('/api/ai/open', requireLifeOsUiOrigin, async (req, res) => {
   }
 })
 
+// Only brings the desktop application forward. Page text stays in the browser
+// clipboard; there is no supported browser-to-existing-Codex-chat message API.
+app.post('/api/codex/activate', requireLifeOsUiOrigin, (req, res) => {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return res.status(403).json({ error: 'Available only on this computer.' })
+  if (process.platform !== 'darwin') return res.status(501).json({ error: 'Codex activation is available on macOS only.' })
+  execFile('open', ['-b', 'com.openai.codex'], error => {
+    if (error) return res.status(503).json({ error: 'Codex desktop application could not be opened.' })
+    res.json({ ok: true })
+  })
+})
+
 // ─── Feed ─────────────────────────────────────────────────────────
 
 const FEED_REACTIONS_FILE = path.join(VAULT, 'feed/reactions.json')
@@ -2141,8 +2283,7 @@ app.get('/api/feed', async (req, res) => {
       return kids.flatMap(k => leafDescendants(k.id))
     }
 
-    // Personal status `in_progress` admits work to the active queue; planner
-    // placement then supplies its explicit order without rewriting the status.
+    // Personal planner placement expresses priority independently of task status.
     const plannerTasks = plannerQueue(treeData.nodes)
     const nowTasks = plannerTasks.filter(node => node.planner_lane === 'focus')
     if (nowTasks.length > 0 && !dismissed.has(`planner-focus:${today}`)) {
@@ -2157,29 +2298,9 @@ app.get('/api/feed', async (req, res) => {
           is_blocked: node.is_blocked,
         })),
         trace: makeTrace({ generated_by: 'rules',
-          description: `${nowTasks.length} задач(и) сейчас в активной работе`,
-          data: { 'Сейчас в работе': nowTasks.length, 'Показано': Math.min(3, nowTasks.length), 'Задачи': nowTasks.slice(0, 5).map(node => node.title).join('; ') },
+          description: `${nowTasks.length} задач(и) в приоритете на сегодня`,
+          data: { 'Приоритет на сегодня': nowTasks.length, 'Показано': Math.min(3, nowTasks.length), 'Задачи': nowTasks.slice(0, 5).map(node => node.title).join('; ') },
           truncation: nowTasks.length > 3 ? { shown: 3, total: nowTasks.length } : undefined,
-        }),
-      })
-    }
-    const dueFollowUps = plannerTasks
-      .filter(node => node.planner_lane === 'waiting' && node.planner?.follow_up_on && node.planner.follow_up_on <= today)
-      .sort((left, right) => left.planner.follow_up_on.localeCompare(right.planner.follow_up_on) || (left.planner_rank ?? Number.MAX_SAFE_INTEGER) - (right.planner_rank ?? Number.MAX_SAFE_INTEGER))
-    if (dueFollowUps.length > 0 && !dismissed.has(`planner-follow-up:${today}`)) {
-      pinnedPlannerCards.push({
-        ref: `planner-follow-up:${today}`,
-        type: 'planner_follow_up',
-        ts: today,
-        tasks: dueFollowUps.slice(0, 3).map(node => ({
-          id: node.id, title: node.title, follow_up_on: node.planner.follow_up_on,
-          urgency: node.planner?.urgency || 'unknown', is_blocked: node.is_blocked,
-          priority_note: node.planner?.priority_note || null,
-        })),
-        trace: makeTrace({ generated_by: 'rules',
-          description: `${dueFollowUps.length} follow-up из Waiting наступил(о)`,
-          data: { 'Follow-up всего': dueFollowUps.length, 'Показано': Math.min(3, dueFollowUps.length), 'Задачи': dueFollowUps.slice(0, 5).map(node => `${node.title} (${node.planner.follow_up_on})`).join('; ') },
-          truncation: dueFollowUps.length > 3 ? { shown: 3, total: dueFollowUps.length } : undefined,
         }),
       })
     }
@@ -2506,9 +2627,9 @@ app.get('/api/feed', async (req, res) => {
       }
     }
 
-    // Stale active work — a task has remained in the personal queue for 5+ days.
+    // Stale active work is based on task status, not priority placement.
     const staleActiveWork = plannerTasks
-      .filter(n => n.updated && daysSince(n.updated) >= 5)
+      .filter(n => n.status === 'in_progress' && n.updated && daysSince(n.updated) >= 5)
       .sort((a, b) => a.updated.localeCompare(b.updated))
     if (staleActiveWork.length > 0) {
       const ref = 'stale-active-work'
@@ -2517,7 +2638,7 @@ app.get('/api/feed', async (req, res) => {
           ref, type: 'stale_active_work', ts: today, count: staleActiveWork.length,
           tasks: staleActiveWork.slice(0, 3).map(n => ({ id: n.id, title: n.title, days: daysSince(n.updated) })),
           trace: makeTrace({ generated_by: 'rules',
-            description: `${staleActiveWork.length} задач зависло в активной очереди`,
+            description: `${staleActiveWork.length} задач со статусом «В работе» давно не обновлялись`,
             data: { 'Всего': staleActiveWork.length, 'Показано': Math.min(3, staleActiveWork.length), 'Самая старая': staleActiveWork[0] ? `${daysSince(staleActiveWork[0].updated)} дн. (${staleActiveWork[0].title})` : '—', 'Все задачи': staleActiveWork.slice(0, 10).map(n => `${n.title} (${daysSince(n.updated)}дн)`).join('; ') },
             truncation: staleActiveWork.length > 3 ? { shown: 3, total: staleActiveWork.length } : undefined,
           }),
@@ -2662,18 +2783,18 @@ app.get('/api/feed', async (req, res) => {
       }
     }
 
-    // No active queue — scheduled personal work exists but nothing has been started.
-    const hasActiveQueue = plannerTasks.length > 0
+    // Priority placement does not imply work has started.
+    const hasActiveQueue = leaves.some(n => n.status === 'in_progress' && workContext(n) === 'personal' && !(leavesByParent[n.id] || []).length)
     const hasScheduled = leaves.some(n => n.status === 'scheduled' && workContext(n) === 'personal' && !(leavesByParent[n.id] || []).length)
     if (!hasActiveQueue && hasScheduled) {
       const ref = `nudge:no-active-queue:${today}`
       if (!dismissed.has(ref)) {
         cards.push({ ref, type: 'nudge', ts: today, nudge_type: 'no_active_queue',
-          message: 'Нет задач в активной работе. Выбери что-то из запланированного.',
+          message: 'Нет задач со статусом «В работе». Можно выбрать дело из запланированного.',
           action_label: 'К пулу', action_target: null, action_link: '/pool',
           trace: makeTrace({ generated_by: 'rules',
-            description: 'Нет активной очереди, но есть scheduled',
-            data: { 'nudge_type': 'no_active_queue', 'В активной работе': hasActiveQueue ? 'да' : 'нет', 'Запланировано': hasScheduled ? 'да' : 'нет' },
+            description: 'Нет личных задач в работе, но есть запланированные',
+            data: { 'nudge_type': 'no_active_queue', 'В работе': hasActiveQueue ? 'да' : 'нет', 'Запланировано': hasScheduled ? 'да' : 'нет' },
             nudge_type: 'no_active_queue',
           }),
         })
@@ -3709,8 +3830,15 @@ app.post('/api/sync/push', async (req, res) => {
       }
     }
     await writeTree(data)
-    res.json({ ok: true, synced, cleaned })
+    const blockCount = await changeEvents((events, commit) =>
+      pushWorkBlocks(events, cals.calendars, cal, commit, process.env.GOOGLE_TIMEZONE || 'Europe/Moscow'))
+    res.json({ ok: true, synced: synced + blockCount, cleaned })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(treeErrorStatus(e)).json({ error: e.message })
   }
+})
+
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error)
+  res.status(treeErrorStatus(error)).json({ error: error.message })
 })

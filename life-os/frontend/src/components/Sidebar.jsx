@@ -45,7 +45,7 @@ export default function Sidebar({ onCapture, onSearch, sphere, setSphere }) {
   const w = collapsed ? 'w-12' : 'w-56'
 
   return (
-    <aside className={`${w} life-os-sidebar flex-shrink-0 h-screen sticky top-0 border-r
+    <aside data-page-context-ignore className={`${w} life-os-sidebar flex-shrink-0 h-screen sticky top-0 border-r
                       flex flex-col py-5 px-2 gap-1 overflow-y-auto overflow-x-hidden transition-all duration-200`}>
 
       {/* Header */}

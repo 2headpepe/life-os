@@ -1,11 +1,11 @@
 export const PLANNER_LANES = {
-  focus: { label: 'Сейчас', className: 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200' },
+  focus: { label: 'Сегодня', className: 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200' },
   next: { label: 'Следующая', className: 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200' },
-  waiting: { label: 'Ожидание', className: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200' },
+  waiting: { label: 'Позже', className: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200' },
 }
 
 export function plannerLane(node) {
-  if (node?.status !== 'in_progress') return null
+  if (!['undefined', 'scheduled', 'in_progress', 'someday'].includes(node?.status || 'undefined')) return null
   const lane = node?.planner?.lane
   return PLANNER_LANES[lane] ? lane : null
 }
@@ -15,7 +15,7 @@ export function plannerRank(node) {
 }
 
 export function plannerFollowUpDue(node, today) {
-  return plannerLane(node) === 'waiting' && Boolean(node?.planner?.follow_up_on) && node.planner.follow_up_on <= today
+  return false
 }
 
 export function plannerLabel(node) {
@@ -32,7 +32,7 @@ export function plannerMeta(node) {
     label: PLANNER_LANES[lane].label,
     className: PLANNER_LANES[lane].className,
     urgency: node?.planner?.urgency || 'unknown',
-    followUpOn: node?.planner?.follow_up_on || null,
+    followUpOn: null,
     priorityNote: node?.planner?.priority_note || null,
   }
 }

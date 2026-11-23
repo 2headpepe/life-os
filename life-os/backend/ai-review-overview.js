@@ -30,44 +30,43 @@ async function directoryEntries(directory, matcher) {
   try { return (await fs.readdir(directory)).filter(matcher).sort() } catch { return [] }
 }
 
-function concise(value, limit = 480) {
+function cleanReportText(value) {
   const cleaned = String(value || '')
     .replace(/\[(.*?)\]\([^)]*\)/g, '$1')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/(?:^|\s)(?:ops|brain|life-os)\/[\w./:-]+/g, ' локальный источник')
     .replace(/(?:^|\s)\/(?:[\w.-]+\/)+[\w.-]+/g, ' локальный источник')
-    .replace(/\s+/g, ' ')
+    .replace(/[^\S\n]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim()
+  return cleaned
+}
+
+function concise(value, limit = 480) {
+  const cleaned = cleanReportText(value).replace(/\s+/g, ' ')
   if (cleaned.length <= limit) return cleaned
   const sentence = cleaned.slice(0, limit).replace(/[,:;\s]+[^.?!]*$/, '').trim()
   return `${sentence || cleaned.slice(0, limit).trim()}…`
 }
 
 function reportSections(markdown) {
-  const accepted = [
-    ['что обработано', 'Что произошло'],
-    ['что подтвердилось', 'Что подтвердилось'],
-    ['что требует проверки', 'Что нужно проверить'],
-    ['предложения для обсуждения', 'Что можно решить'],
-    ['следующее действие', 'Следующий шаг'],
-    ['bounded automated result', 'Что проверено'],
-    ['missing inputs', 'Чего не хватает'],
-  ]
   const collected = []
-  let heading = null
+  let heading = 'Обзор'
   let lines = []
   const flush = () => {
-    if (!heading || !lines.length || collected.length >= 3) return
-    const text = concise(lines.join(' ').replace(/^[-*]\s*/gm, ''), 520)
+    if (!heading || !lines.length) return
+    const text = cleanReportText(lines.join('\n'))
     if (text) collected.push({ heading, text })
   }
   for (const rawLine of String(markdown || '').split('\n')) {
-    const match = rawLine.match(/^#{2,3}\s+(.+)/)
+    if (rawLine.trim() === '---' && !collected.length && !lines.length) { heading = null; continue }
+    const match = rawLine.match(/^#{1,3}\s+(.+)/)
     if (match) {
       flush()
       const normalized = match[1].trim().toLocaleLowerCase('ru')
-      const found = accepted.find(([needle]) => normalized.includes(needle))
-      heading = found?.[1] || null
+      if (/доказательств|доказательства|work_groups|^coverage$|^daily_receipts$|^source_reports$/.test(normalized)) { lines = []; break }
+      heading = match[0].startsWith('# ') ? 'Обзор' : match[1].trim()
       lines = []
       continue
     }
@@ -120,7 +119,7 @@ async function receiptEntry(root, kind, receipt) {
     period: date || 'Нет даты',
     status: receiptStatus(receipt),
     status_label: STATUS_LABELS[receiptStatus(receipt)],
-    summary: sections[0]?.text || receiptReason(receipt),
+    summary: sections[0]?.text ? concise(sections[0].text) : receiptReason(receipt),
     sections,
     has_detail: sections.length > 0,
     generated_at: receipt?.generated_at || null,
@@ -161,7 +160,7 @@ async function designEntry(root, health) {
     period: coverage.last_run_id?.replace('weekly-design-review:', '') || 'Нет запуска',
     status: coverage.freshness === 'fresh' ? 'healthy' : coverage.last_run_id ? 'degraded' : 'unknown',
     status_label: STATUS_LABELS[coverage.freshness === 'fresh' ? 'healthy' : coverage.last_run_id ? 'degraded' : 'unknown'],
-    summary: sections[0]?.text || (coverage.last_run_id ? 'Автоматическая проверка ограничена имеющимися evidence.' : 'Design review ещё не запускался.'),
+    summary: sections[0]?.text ? concise(sections[0].text) : (coverage.last_run_id ? 'Автоматическая проверка ограничена имеющимися evidence.' : 'Design review ещё не запускался.'),
     sections,
     has_detail: sections.length > 0,
     generated_at: index?.generated_at || null,
@@ -192,7 +191,7 @@ async function analyticsEntry(root, health) {
 function workSummary(initiative, nodes) {
   const byId = new Map(nodes.map(node => [node.id, node]))
   const workItems = (initiative.work_item_ids || []).map(id => byId.get(id)).filter(Boolean).map(node => ({
-    id: node.id, title: concise(node.title, 140), status: node.status || 'not_started', blockers: (node.blocked_by || []).length,
+    id: node.id, title: cleanReportText(node.title), status: node.status || 'not_started', blockers: (node.blocked_by || []).length,
   }))
   const counts = workItems.reduce((result, item) => ({ ...result, [item.status]: (result[item.status] || 0) + 1 }), {})
   return {

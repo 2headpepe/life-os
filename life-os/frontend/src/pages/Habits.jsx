@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Check, X, Target, GripVertical, MoreHorizontal, Clock3, Power } from 'lucide-react'
 import { habits, tree as treeApi } from '../api'
 import { useRecoveryMode } from '../context/RecoveryModeContext'
 import { computeHabitScore, habitIsDone, inTimeWindow } from '../utils/habitScoring'
 import { HabitDynamics } from './Stats'
-import { directEntityId, entityPath } from '../utils/entityLinks'
+import { directEntityId, entityPath, nodePath } from '../utils/entityLinks'
 import { moveHabitToCategory, orderedFoundationHabits, orderedHabits, reorderFoundationHabits, reorderHabitsInCategory } from '../utils/habitOrdering'
 
 export { computeHabitScore, habitIsDone, inTimeWindow } from '../utils/habitScoring'
@@ -559,13 +559,28 @@ export default function Habits() {
     await saveDefs(updated)
   }
 
-  const toggleFoundation = async (habitId) => {
-    const foundationCount = rawCategories.flatMap(category => category.habits || []).filter(habit => habit.foundation).length
-    const updated = rawCategories.map(c => ({
+  const setFoundation = (categories, habitId, foundation) => {
+    const foundationCount = categories.flatMap(category => category.habits || []).filter(habit => habit.foundation).length
+    return categories.map(c => ({
       ...c, habits: c.habits.map(h => h.id === habitId
-        ? { ...h, foundation: !h.foundation, ...(!h.foundation ? { foundation_order: foundationCount } : {}) }
+        ? { ...h, foundation, ...(foundation ? { foundation_order: foundationCount } : {}) }
         : h)
     }))
+  }
+
+  const dropIntoFoundation = async () => {
+    if (!draggedHabit || draggedHabit.scope === 'foundation') return
+    await saveDefs(setFoundation(rawCategories, draggedHabit.id, true))
+    setDraggedHabit(null)
+    setDragOverCategoryId(null)
+  }
+
+  const dropFoundationIntoCategory = async (categoryId) => {
+    if (!draggedHabit) return
+    const withoutFoundation = setFoundation(rawCategories, draggedHabit.id, false)
+    const updated = draggedHabit.categoryId === categoryId
+      ? withoutFoundation
+      : moveHabitToCategory(withoutFoundation, draggedHabit.id, categoryId)
     await saveDefs(updated)
   }
 
@@ -587,7 +602,9 @@ export default function Habits() {
 
   const dropIntoCategory = async (categoryId, targetHabitId = null) => {
     if (!draggedHabit) return
-    if (draggedHabit.categoryId === categoryId) {
+    if (draggedHabit.scope === 'foundation') {
+      await dropFoundationIntoCategory(categoryId)
+    } else if (draggedHabit.categoryId === categoryId) {
       if (targetHabitId) await reorderCategory(categoryId, draggedHabit.id, targetHabitId)
     } else {
       await moveCategory(draggedHabit.id, categoryId)
@@ -698,16 +715,28 @@ export default function Habits() {
             {/* Foundation section — always at top */}
             {(() => {
               const foundationHabits = orderedFoundationHabits(defs.filter(h => h.foundation))
-              if (!foundationHabits.length) return null
               const foundationDone = foundationHabits.filter(h => habitIsDone(h, dayLog[h.id])).length
-              const allDone = foundationDone === foundationHabits.length
+              const allDone = foundationHabits.length > 0 && foundationDone === foundationHabits.length
               return (
                 <div className={`habits-foundation card overflow-hidden border-2 ${allDone ? 'border-green-200 dark:border-green-800' : 'border-amber-200 dark:border-amber-800/60'}`}>
-                  <div className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider bg-amber-50/50 dark:bg-amber-900/10 border-b border-amber-100 dark:border-amber-800/40">
+                  <div
+                    onDragOver={event => event.preventDefault()}
+                    onDrop={event => { event.preventDefault(); dropIntoFoundation() }}
+                    className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider bg-amber-50/50 dark:bg-amber-900/10 border-b border-amber-100 dark:border-amber-800/40"
+                  >
                     <span className="text-amber-500 dark:text-amber-400">◈</span>
                     <span className="flex-1 text-left text-amber-600 dark:text-amber-400">Фундамент</span>
                     <span className={`normal-case tracking-normal tabular-nums font-medium ${allDone ? 'text-green-500' : 'text-amber-500'}`}>{foundationDone}/{foundationHabits.length}</span>
                   </div>
+                  {foundationHabits.length === 0 && (
+                    <div
+                      onDragOver={event => event.preventDefault()}
+                      onDrop={event => { event.preventDefault(); dropIntoFoundation() }}
+                      className="px-4 py-5 text-center text-sm text-gray-500 dark:text-gray-400"
+                    >
+                      Перетащите сюда привычку из категории, чтобы добавить её в фундамент.
+                    </div>
+                  )}
                   {foundationHabits.map((h, idx) => (
                     <div
                       key={h.id}
@@ -715,7 +744,7 @@ export default function Habits() {
                       draggable
                       onDragStart={() => setDraggedHabit({ id: h.id, scope: 'foundation', categoryId: h.categoryId })}
                       onDragOver={event => event.preventDefault()}
-                      onDrop={() => { if (draggedHabit?.scope === 'foundation') reorderFoundation(draggedHabit.id, h.id); setDraggedHabit(null); setDragOverCategoryId(null) }}
+                      onDrop={event => { event.preventDefault(); if (draggedHabit?.scope === 'foundation') reorderFoundation(draggedHabit.id, h.id); else dropIntoFoundation(); setDraggedHabit(null); setDragOverCategoryId(null) }}
                       onDragEnd={() => { setDraggedHabit(null); setDragOverCategoryId(null) }}
                       className={`flex items-center gap-4 px-4 py-3 ${h.id === habitId ? 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500' : ''} ${idx < foundationHabits.length - 1 ? 'border-b border-gray-50 dark:border-gray-800/50' : ''}`}
                     >
@@ -723,6 +752,11 @@ export default function Habits() {
                       <div className="min-w-0 flex-1">
                         <button type="button" onClick={() => navigate(entityPath.habit(h.id))} className="text-left text-sm text-gray-800 dark:text-gray-200 font-medium hover:text-blue-600 dark:hover:text-blue-400">{h.label}</button>
                         {h.detail && <div className="text-xs text-gray-400 mt-0.5">{h.detail}</div>}
+                        {h.node_id && nodeById[h.node_id] && (
+                          <Link to={nodePath(treeNodes, h.node_id) || '/goals'} className="flex items-center gap-1 mt-1 text-xs text-blue-500 hover:underline">
+                            <Target size={11} /> {nodeById[h.node_id].title}
+                          </Link>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <TrackInput habit={h} value={dayLog[h.id]} onChange={(val) => updateHabit(h.id, val)} editable={trackDate <= todayStr} />
@@ -785,9 +819,9 @@ export default function Habits() {
                         </div>
                       )}
                       {h.node_id && nodeById[h.node_id] && goalPickerFor !== h.id && (
-                        <div className="flex items-center gap-1 mt-1 text-xs text-blue-500">
+                        <Link to={nodePath(treeNodes, h.node_id) || '/goals'} className="flex items-center gap-1 mt-1 text-xs text-blue-500 hover:underline">
                           <Target size={11} /> {nodeById[h.node_id].title}
-                        </div>
+                        </Link>
                       )}
                       {goalPickerFor === h.id && (
                         <div className="flex items-center gap-2 mt-2">

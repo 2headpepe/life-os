@@ -129,7 +129,7 @@ export default function QuickCapture({ open, onClose }) {
                          '→ Inbox'
 
   return (
-    <div className="fixed inset-0 bg-black/30 dark:bg-black/60 z-50 flex items-start justify-center pt-32"
+    <div className="fixed inset-0 overflow-y-auto bg-black/30 dark:bg-black/60 z-50 flex items-start justify-center pt-8 sm:pt-32"
          onClick={onClose}>
       <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-5"
            onClick={e => e.stopPropagation()}>
@@ -274,8 +274,8 @@ export default function QuickCapture({ open, onClose }) {
           </div>
         )}
 
-        <div className="flex justify-between items-center mt-3">
-          <span className="text-xs text-gray-400">{destination} · ⌘Enter</span>
+        <div className="flex flex-wrap justify-between items-center gap-2 mt-3">
+          <span className="min-w-0 text-xs text-gray-500 dark:text-gray-400" role="status">{destination} · ⌘Enter</span>
           <div className="flex gap-2">
             <button onClick={onClose} className="btn btn-ghost">Отмена</button>
             <button onClick={save} disabled={!canSave || saving} className="btn btn-primary">

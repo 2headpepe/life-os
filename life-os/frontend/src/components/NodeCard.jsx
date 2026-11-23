@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Circle, Clock, CircleDot, CheckCircle2, CircleDashed, CircleMinus, Lock, Sparkles, Repeat, Star } from 'lucide-react'
 import { planner as plannerApi, tree as treeApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
+import TaskDates from './TaskDates'
 import { plannerMeta } from '../utils/plannerSignals'
 
 function formatDue(dueStr) {
@@ -38,7 +39,7 @@ const RECURRENCE_LABELS = { daily: 'каждый день', weekly: 'кажду�
 function PlannerMetaBadge({ node }) {
   const planner = plannerMeta(node)
   if (!planner) return null
-  return <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${planner.className}`}>{planner.label}{planner.urgency === 'urgent' ? ' · срочно' : ''}{planner.followUpOn ? ` · ${planner.followUpOn}` : ''}</span>
+  return <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${planner.className}`}>{planner.label}{planner.urgency === 'urgent' ? ' · срочно' : ''}</span>
 }
 
 function PlannerControls({ node, onUpdate }) {
@@ -47,7 +48,7 @@ function PlannerControls({ node, onUpdate }) {
   const [startLane, setStartLane] = useState('next')
   const isPersonalTask = node.parent_id && (node.work_context || 'personal') === 'personal'
   if (!isPersonalTask) return null
-  const canEnterQueue = node.status === 'in_progress'
+  const canEnterQueue = ['undefined', 'scheduled', 'in_progress', 'someday'].includes(node.status || 'undefined')
   const current = node.planner || null
   const save = async patch => {
     setSaving(true); setError(null)
@@ -63,12 +64,12 @@ function PlannerControls({ node, onUpdate }) {
   }
   return <section className="rounded-xl border border-violet-100 bg-violet-50/50 p-3 dark:border-violet-900/50 dark:bg-violet-950/20" aria-label="Ручная очередь задачи">
     <div className="flex items-center justify-between gap-3"><span className="text-xs font-medium text-violet-800 dark:text-violet-200">Ручная очередь</span>{saving && <span className="text-[11px] text-violet-500">сохраняю…</span>}</div>
-    {!canEnterQueue ? <p className="mt-2 text-xs text-violet-800/80 dark:text-violet-200/80">Сначала поставь статус «В работе» — после этого задачу можно добавить в одну из очередей.</p> : !current ? <div className="mt-2 flex flex-wrap items-end gap-2"><label className="min-w-36 flex-1 text-xs text-gray-500 dark:text-gray-400">Добавить в работу<select value={startLane} disabled={saving} onChange={event => setStartLane(event.target.value)} className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"><option value="focus">Сейчас</option><option value="next">Следующая</option><option value="waiting">Ожидание</option></select></label><button type="button" disabled={saving} onClick={() => save({ lane: startLane })} className="btn btn-primary text-xs">Добавить в очередь</button></div> : <><div className="mt-2 grid gap-2 sm:grid-cols-2"><label className="text-xs text-gray-500 dark:text-gray-400">Порядок работы<select value={current.lane} disabled={saving} onChange={event => save({ lane: event.target.value })} className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"><option value="focus">Сейчас</option><option value="next">Следующая</option><option value="waiting">Ожидание</option></select></label><label className="text-xs text-gray-500 dark:text-gray-400">Срочность<select value={current.urgency || 'unknown'} disabled={saving} onChange={event => save({ urgency: event.target.value })} className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"><option value="unknown">Не задана</option><option value="normal">Обычная</option><option value="urgent">Срочно</option></select></label>{current.lane === 'waiting' && <label className="text-xs text-gray-500 dark:text-gray-400">Вернуться<input type="date" defaultValue={current.follow_up_on || ''} disabled={saving} onBlur={event => save({ follow_up_on: event.target.value || null })} className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" /></label>}</div><label className="mt-2 block text-xs text-gray-500 dark:text-gray-400">Заметка о приоритете<textarea defaultValue={current.priority_note || ''} disabled={saving} onBlur={event => save({ priority_note: event.target.value || null })} rows={2} className="mt-1 block w-full resize-y rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" placeholder="Почему это сейчас важно" /></label><button type="button" disabled={saving} onClick={() => save(null)} className="mt-2 text-xs font-medium text-gray-500 hover:text-rose-600 dark:text-gray-400 dark:hover:text-rose-300">Убрать из очереди</button></>}
+    {!canEnterQueue ? <p className="mt-2 text-xs text-violet-800/80 dark:text-violet-200/80">Для завершённой задачи приоритет не задаётся.</p> : !current ? <div className="mt-2 flex flex-wrap items-end gap-2"><label className="min-w-36 flex-1 text-xs text-gray-500 dark:text-gray-400">Приоритет<select value={startLane} disabled={saving} onChange={event => setStartLane(event.target.value)} className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"><option value="focus">Сегодня</option><option value="next">Следующая</option><option value="waiting">Позже</option></select></label><button type="button" disabled={saving} onClick={() => save({ lane: startLane })} className="btn btn-primary text-xs">Задать приоритет</button></div> : <><div className="mt-2 grid gap-2 sm:grid-cols-2"><label className="text-xs text-gray-500 dark:text-gray-400">Приоритет<select value={current.lane} disabled={saving} onChange={event => save({ lane: event.target.value })} className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"><option value="focus">Сегодня</option><option value="next">Следующая</option><option value="waiting">Позже</option></select></label><label className="text-xs text-gray-500 dark:text-gray-400">Срочность<select value={current.urgency || 'unknown'} disabled={saving} onChange={event => save({ urgency: event.target.value })} className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"><option value="unknown">Не задана</option><option value="normal">Обычная</option><option value="urgent">Срочно</option></select></label></div><label className="mt-2 block text-xs text-gray-500 dark:text-gray-400">Заметка о приоритете<textarea defaultValue={current.priority_note || ''} disabled={saving} onBlur={event => save({ priority_note: event.target.value || null })} rows={2} className="mt-1 block w-full resize-y rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" placeholder="Почему это важно" /></label><button type="button" disabled={saving} onClick={() => save(null)} className="mt-2 text-xs font-medium text-gray-500 hover:text-rose-600 dark:text-gray-400 dark:hover:text-rose-300">Убрать приоритет</button></>}
     {error && <p role="alert" className="mt-2 text-xs text-rose-600 dark:text-rose-400">{error}</p>}
   </section>
 }
 
-function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecurrenceSave, onDelete, onConsole, onCore, onPlannerUpdate, compact = false }) {
+function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecurrenceSave, onDelete, onConsole, onCore, onPlannerUpdate, onUpdate, compact = false }) {
   const [editingDue, setEditingDue] = useState(false)
   const [editingTime, setEditingTime] = useState(false)
 
@@ -98,7 +99,7 @@ function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecur
       </div>
 
       <div className="flex items-center gap-4 flex-wrap">
-        {/* Due date */}
+        {node.work_context !== 'delivery' ? <TaskDates node={node} onUpdate={onUpdate} /> : <>
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-400">Дата:</span>
           {editingDue ? (
@@ -135,6 +136,8 @@ function ExpandedDetail({ node, status, onStatus, onDueSave, onTimeSave, onRecur
             </button>
           )}
         </div>
+
+        </>}
 
         {/* Recurrence */}
         <div className="flex items-center gap-2">
@@ -237,7 +240,7 @@ export default function NodeCard({ node, onUpdate, row = false, draggable: isDra
     onUpdate?.()
   }
 
-  const consoleCtx = `Задача: "${node.title}"\nДомен: ${node.root_title}${node.path?.length ? `\nПуть: ${node.path.join(' › ')}` : ''}${node.due ? `\nДедлайн: ${node.due}` : ''}${node.time ? `\nВремя: ${node.time}` : ''}${node.notes ? `\nЗаметки: ${node.notes}` : ''}`
+  const consoleCtx = `Задача: "${node.title}"\nДомен: ${node.root_title}${node.path?.length ? `\nПуть: ${node.path.join(' › ')}` : ''}${node.due ? `\nДата (${node.date_kind === 'deadline' ? 'срок' : node.date_kind === 'scheduled' ? 'назначено' : 'значение не уточнено'}): ${node.due}` : ''}${node.time ? `\nВремя: ${node.time}` : ''}${node.notes ? `\nЗаметки: ${node.notes}` : ''}`
 
   if (node.status === 'done' || node.status === 'dropped') return null
 
@@ -245,6 +248,7 @@ export default function NodeCard({ node, onUpdate, row = false, draggable: isDra
     <ExpandedDetail
       node={node} status={status}
       onStatus={handleStatus}
+      onUpdate={onUpdate}
       onDueSave={handleDueSave}
       onTimeSave={handleTimeSave}
       onRecurrenceSave={handleRecurrenceSave}

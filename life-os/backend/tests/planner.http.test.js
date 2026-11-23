@@ -50,7 +50,7 @@ async function stopServer(child) {
   await once(child, 'exit')
 }
 
-test('planner requires active personal status and migrates previous lane names', async () => {
+test('planner changes priority without starting personal tasks and migrates previous lane names', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'life-os-planner-http-'))
   const vault = path.join(root, 'vault')
   const work = path.join(root, 'work')
@@ -61,6 +61,9 @@ test('planner requires active personal status and migrates previous lane names',
     { id: 'root-delivery', title: 'Delivery', parent_id: null, work_context: 'delivery', color: '#654321' },
     { id: 'inactive', title: 'Не начато', parent_id: 'root-work' },
     { id: 'transition', title: 'Сменит состояние', parent_id: 'root-work' },
+    { id: 'scheduled-start', title: 'Начать из Сегодня', parent_id: 'root-work', status: 'scheduled', first_step: 'Первый шаг', due: null },
+    { id: 'someday', title: 'Идея на потом', parent_id: 'root-work', status: 'someday' },
+    { id: 'calendar-item', title: 'Встреча', parent_id: 'root-work', status: 'scheduled', due: '2026-11-24', date_kind: 'scheduled', calendar_id: 'calendar-1' },
     { id: 'now-one', title: 'Первое', parent_id: 'root-work', status: 'in_progress', planner: { lane: 'focus', rank: 1024, urgency: 'unknown', follow_up_on: null, priority_note: null } },
     { id: 'review', title: 'На проверке', parent_id: 'root-work', status: 'waiting_for_review', planner: { lane: 'focus', rank: 1, urgency: 'unknown', follow_up_on: null, priority_note: null } },
     { id: 'legacy', title: 'Старое', parent_id: 'root-work', status: 'in_progress', planner: { lane: 'now', rank: 1024, urgency: 'unknown', follow_up_on: null, priority_note: null } },
@@ -73,11 +76,12 @@ test('planner requires active personal status and migrates previous lane names',
     const before = await (await fetch(`${api}/queue`)).json()
     assert.deepEqual(before.tasks.map(task => task.id), ['now-one'])
 
-    const rejectedInactive = await fetch(`${api}/tasks/inactive`, {
+    const prioritizedInactive = await fetch(`${api}/tasks/inactive`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ planner: { lane: 'next' } }),
     })
-    assert.equal(rejectedInactive.status, 409)
+    assert.equal(prioritizedInactive.status, 200)
+    assert.equal((await prioritizedInactive.json()).task.status, undefined)
 
     const startedTransitionStatus = await fetch(`${treeApi}/transition`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -112,6 +116,12 @@ test('planner requires active personal status and migrates previous lane names',
       body: JSON.stringify({ lane: 'next', ordered_ids: ['inactive'] }),
     })
     assert.equal(reorderedResponse.status, 200)
+    const statusOnly = await fetch(`${treeApi}/inactive`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'undefined' }),
+    })
+    assert.equal(statusOnly.status, 200)
+    assert.equal((await statusOnly.json()).planner.lane, 'next')
 
     const removeResponse = await fetch(`${api}/tasks/inactive`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -134,6 +144,45 @@ test('planner requires active personal status and migrates previous lane names',
     assert.equal(stored.nodes.find(node => node.id === 'legacy').status, 'in_progress')
     assert.equal(stored.nodes.find(node => node.id === 'legacy').planner.lane, 'focus')
     assert.equal(stored.nodes.find(node => node.id === 'review').planner, null)
+
+    const startBody = { start: true, expected_lane: null, planner: { lane: 'focus', follow_up_on: null } }
+    const startResponse = await fetch(`${api}/tasks/scheduled-start`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(startBody) })
+    assert.equal(startResponse.status, 200)
+    const started = (await startResponse.json()).task
+    assert.equal(started.status, 'in_progress')
+    assert.equal(started.first_step, 'Первый шаг')
+    const repeatResponse = await fetch(`${api}/tasks/scheduled-start`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(startBody) })
+    assert.equal(repeatResponse.status, 200)
+    assert.equal((await repeatResponse.json()).task.planner.rank, started.planner.rank)
+    const waitingResponse = await fetch(`${api}/tasks/scheduled-start`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expected_lane: 'focus', planner: { lane: 'waiting', follow_up_on: '2026-11-21' } }) })
+    assert.equal(waitingResponse.status, 200)
+    const staleResponse = await fetch(`${api}/tasks/scheduled-start`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expected_lane: 'focus', planner: { lane: 'next' } }) })
+    assert.equal(staleResponse.status, 409)
+    const returnResponse = await fetch(`${api}/tasks/scheduled-start`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expected_lane: 'waiting', planner: { lane: 'focus' } }) })
+    assert.equal(returnResponse.status, 200)
+    assert.equal((await returnResponse.json()).task.planner.follow_up_on, null)
+    const competing = await Promise.all([
+      fetch(`${api}/tasks/scheduled-start`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expected_lane: 'focus', planner: { lane: 'next' } }) }),
+      fetch(`${api}/tasks/scheduled-start`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expected_lane: 'focus', planner: { lane: 'waiting', follow_up_on: '2026-11-22' } }) }),
+    ])
+    assert.deepEqual(competing.map(response => response.status).sort(), [200, 409])
+    const afterCompetition = JSON.parse(await fs.readFile(treeFile, 'utf8'))
+    assert.equal(afterCompetition.nodes.find(node => node.id === 'scheduled-start').first_step, 'Первый шаг')
+    const beforeInvalid = await fs.readFile(treeFile, 'utf8')
+    const invalid = await fetch(`${api}/tasks/scheduled-start`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planner: { lane: 'waiting', follow_up_on: '2026-11-31' } }) })
+    assert.equal(invalid.status, 400)
+    assert.equal(await fs.readFile(treeFile, 'utf8'), beforeInvalid)
+    const rawWrite = await fetch(`http://127.0.0.1:${port}/api/content/tree/nodes.json`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: beforeInvalid })
+    assert.equal(rawWrite.status, 409)
+    assert.equal(await fs.readFile(treeFile, 'utf8'), beforeInvalid)
+    for (const [id, status] of [['someday', 'someday'], ['calendar-item', 'scheduled']]) {
+      const prioritized = await fetch(`${api}/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planner: { lane: 'waiting' } }) })
+      assert.equal(prioritized.status, 200)
+      assert.equal((await prioritized.json()).task.status, status)
+    }
+    const allPriorities = await (await fetch(`${api}/queue`)).json()
+    assert.equal(allPriorities.tasks.some(task => task.id === 'someday'), true)
+    assert.equal(allPriorities.tasks.some(task => task.id === 'calendar-item'), true)
   } finally {
     await stopServer(server)
     await fs.rm(root, { recursive: true, force: true })

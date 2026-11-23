@@ -32,7 +32,7 @@ function serializeCardContext(card) {
     case 'upcoming':
       return `[Скоро] ${(card.tasks || []).slice(0, 5).map(t => t.title).join(', ')}`
     case 'planner_focus':
-      return `[Сейчас в работе] ${(card.tasks || []).slice(0, 5).map(t => t.title).join(', ')}`
+      return `[Приоритет на сегодня] ${(card.tasks || []).slice(0, 5).map(t => t.title).join(', ')}`
     case 'planner_follow_up':
       return `[Вернуться] ${(card.tasks || []).slice(0, 5).map(t => `${t.title} (${t.follow_up_on})`).join(', ')}`
     case 'habits_stale':
@@ -813,8 +813,8 @@ function PlannerTaskRow({ task, date }) {
 
 export function PlannerNowCard({ card, onDismiss, note, onNote, onQuickReply, onEdit }) {
   return <div className="card p-4 ring-1 ring-violet-200 dark:ring-violet-900">
-    <CardHeader icon={ListTodo} label="Сейчас в работе" iconClass="text-violet-500" trace={card.trace} />
-    <p className="text-sm text-gray-600 dark:text-gray-400">Это активная работа. Порядок внутри карточки совпадает с очередью.</p>
+    <CardHeader icon={ListTodo} label="Приоритет на сегодня" iconClass="text-violet-500" trace={card.trace} />
+    <p className="text-sm text-gray-600 dark:text-gray-400">Порядок задан вручную и не меняет статус задач.</p>
     <div className="mt-3 space-y-2">{card.tasks.map(task => <PlannerTaskRow key={task.id} task={task} />)}</div>
     <div className="mt-3 flex justify-end"><Link to="/pool" className="btn btn-primary text-xs">Открыть очередь →</Link></div>
     <GenerationTrace trace={card.trace} meta={card.meta} />

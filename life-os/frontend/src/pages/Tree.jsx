@@ -1,11 +1,15 @@
+import TaskDates from '../components/TaskDates'
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, Fragment } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, useDraggable, useDroppable, useSensor, useSensors } from '@dnd-kit/core'
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { Circle, Clock, CircleDot, CheckCircle2, CircleDashed, CircleMinus, Lock,
-         ChevronDown, ChevronRight, Sparkles, Plus, X, AlignJustify } from 'lucide-react'
+         ChevronDown, ChevronRight, Sparkles, Plus, X, AlignJustify, GripVertical } from 'lucide-react'
 import { tree as treeApi, habits as habitsApi, productIntelligence } from '../api'
 import { openInConsole } from '../utils/openInConsole'
-import { legacyNodePath, nodeLineage, nodePath, resolveNodePath } from '../utils/entityLinks'
+import { entityPath, legacyNodePath, nodeLineage, nodePath, resolveNodePath } from '../utils/entityLinks'
 import { plannerMeta } from '../utils/plannerSignals'
+import { leafStats, goalProgressLabel } from '../utils/goalProgress'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
@@ -45,25 +49,6 @@ function buildTree(nodes) {
   return roots
 }
 
-function leafStats(node, nodesMap) {
-  if (node.status === 'done' || node.status === 'dropped') {
-    return { total: 1, done: 1, undef: 0 }
-  }
-  if (node.children.length === 0) {
-    const blocked = (node.blocked_by?.length > 0) &&
-      node.blocked_by.some(bid => nodesMap[bid]?.status !== 'done')
-    return {
-      total: 1,
-      done: 0,
-      undef: !blocked && (node.status === 'undefined' || !node.status) ? 1 : 0,
-    }
-  }
-  return node.children.reduce(
-    (acc, c) => { const s = leafStats(c, nodesMap); return { total: acc.total + s.total, done: acc.done + s.done, undef: acc.undef + s.undef } },
-    { total: 0, done: 0, undef: 0 }
-  )
-}
-
 function findInTree(nodeList, id) {
   for (const n of nodeList) {
     if (n.id === id) return n
@@ -89,6 +74,18 @@ function parentPath(nodes, nodeId) {
   return path.slice(0, -1)
 }
 
+function isDescendant(nodes, ancestorId, candidateId) {
+  const byId = Object.fromEntries(nodes.map(node => [node.id, node]))
+  const seen = new Set()
+  let current = byId[candidateId]
+  while (current?.parent_id && !seen.has(current.id)) {
+    if (current.parent_id === ancestorId) return true
+    seen.add(current.id)
+    current = byId[current.parent_id]
+  }
+  return false
+}
+
 // ── Config ───────────────────────────────────────────────────────────────────
 
 const PRESET_COLORS = ['#3B82F6','#22C55E','#EF4444','#06B6D4','#EC4899','#EAB308','#F97316','#14B8A6','#A855F7','#6B7280']
@@ -112,7 +109,7 @@ const NODE_STATUSES = ['done', 'someday', 'dropped']
 function PlannerBadge({ node }) {
   const planner = plannerMeta(node)
   if (!planner) return null
-  return <span className={`inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-medium ${planner.className}`}>{planner.label}{planner.urgency === 'urgent' ? ' · срочно' : ''}{planner.followUpOn ? ` · ${planner.followUpOn}` : ''}</span>
+  return <span className={`inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-medium ${planner.className}`}>{planner.followUpOn ? `Проверить ${new Date(planner.followUpOn + 'T12:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}` : planner.label}{planner.urgency === 'urgent' ? ' · срочно' : ''}</span>
 }
 
 // ── Shared sub-components ────────────────────────────────────────────────────
@@ -162,9 +159,9 @@ function AddChildInput({ onAdd, onCancel, placeholder = 'Название...' })
         placeholder={placeholder}
         className="flex-1 text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-700 dark:text-gray-300"
       />
-      <button onClick={() => title.trim() && onAdd(title.trim())}
-        className="text-xs px-3 py-1.5 rounded-lg bg-gray-900 dark:bg-white text-white dark:text-gray-900 flex-shrink-0">+</button>
-      <button onClick={onCancel} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={14} /></button>
+      <button type="button" onClick={() => title.trim() && onAdd(title.trim())}
+        className="text-xs px-3 py-1.5 rounded-lg bg-gray-900 dark:bg-white text-white dark:text-gray-900 flex-shrink-0">Добавить</button>
+      <button type="button" onClick={onCancel} aria-label="Отменить добавление" className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={14} /></button>
     </div>
   )
 }
@@ -277,12 +274,12 @@ function OverviewCard({ node, nodesMap, onEnter, onUpdate }) {
             {/* Stats */}
             <div className="flex items-center gap-3 flex-shrink-0">
               {stats.undef > 0 && <span className="text-xs text-red-400 font-medium">{stats.undef} ⚠</span>}
-              {stats.total > 0 && (
+              {(stats.total > 0 || stats.dropped > 0) && (
                 <>
-                  <div className="w-24 h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                  {stats.total > 0 && <div className="w-24 h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
                     <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: color }} />
-                  </div>
-                  <span className="text-xs text-gray-400 tabular-nums">{stats.done}/{stats.total}</span>
+                  </div>}
+                  <span className="text-xs text-gray-400 tabular-nums">{goalProgressLabel(stats)}</span>
                 </>
               )}
               <ChevronRight size={15} className="text-gray-300 group-hover:text-gray-500 transition-colors" />
@@ -629,7 +626,7 @@ function DirectInitiativeDialog({ onClose, onCreated }) {
 
 // ── Outliner row (inside drill-down) ─────────────────────────────────────────
 
-function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onUnblock, onZoom, hideDone }) {
+function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onUnblock, onZoom, hideDone, draggingNodeId }) {
   const [expanded, setExpanded] = useState(depth === 0)
   const [adding, setAdding] = useState(false)
   const [showStatus, setShowStatus] = useState(false)
@@ -639,6 +636,22 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
   const [editingDue, setEditingDue] = useState(false)
   const [editingReviewBy, setEditingReviewBy] = useState(false)
   const [deliveryDialog, setDeliveryDialog] = useState(null)
+
+  const draggedNode = draggingNodeId ? nodesMap[draggingNodeId] : null
+  const isValidDropTarget = Boolean(
+    draggedNode &&
+    node.children.length > 0 &&
+    node.id !== draggedNode.id &&
+    node.id !== draggedNode.parent_id &&
+    (node.work_context || 'personal') === (draggedNode.work_context || 'personal') &&
+    !isDescendant(allNodes, draggedNode.id, node.id)
+  )
+  const { attributes, listeners, setNodeRef: setDraggableNodeRef, isDragging } = useDraggable({ id: node.id })
+  const { setNodeRef: setDroppableNodeRef, isOver } = useDroppable({ id: `goal:${node.id}`, disabled: !isValidDropTarget })
+  const setNodeRef = useCallback(element => {
+    setDraggableNodeRef(element)
+    setDroppableNodeRef(element)
+  }, [setDraggableNodeRef, setDroppableNodeRef])
 
   const isLeaf = node.children.length === 0
   const isDone = node.status === 'done'
@@ -709,13 +722,24 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
   return (
     <div className={isDone || isDropped ? 'opacity-40' : ''}>
       <div
+        ref={setNodeRef}
         className={`group flex items-center gap-1.5 py-1.5 rounded-lg transition-colors ${
           isLeaf && (node.status === 'undefined' || !node.status) && !isBlocked
             ? 'hover:bg-red-50/50 dark:hover:bg-red-950/10'
             : 'hover:bg-gray-50 dark:hover:bg-gray-900/40'
-        }`}
+        } ${isDragging ? 'opacity-35' : ''} ${isOver ? 'bg-indigo-50 ring-1 ring-inset ring-indigo-300 dark:bg-indigo-950/30 dark:ring-indigo-700' : ''}`}
         style={{ paddingLeft: pl, paddingRight: 8 }}
       >
+        <button
+          type="button"
+          aria-label={`Перетащить «${node.title}»`}
+          className="flex h-6 w-4 flex-shrink-0 cursor-grab items-center justify-center rounded text-gray-300 opacity-0 transition-opacity hover:bg-gray-100 hover:text-gray-600 focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 group-hover:opacity-100 active:cursor-grabbing dark:hover:bg-gray-800 dark:hover:text-gray-400"
+          onClick={event => event.stopPropagation()}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical size={14} />
+        </button>
         {/* Status icon */}
         <div className="relative flex-shrink-0">
           {isLeaf && isBlocked
@@ -759,13 +783,13 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
         </div>
 
         {/* Right: progress or date */}
-        {!isLeaf && stats.total > 0 && (
+        {!isLeaf && (stats.total > 0 || stats.dropped > 0) && (
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {stats.undef > 0 && <span className="text-[11px] text-red-400">{stats.undef}⚠</span>}
-            <div className="w-14 h-1 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+            {stats.total > 0 && <div className="w-14 h-1 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
               <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: rootColor }} />
-            </div>
-            <span className="text-[11px] text-gray-400 tabular-nums w-8 text-right">{stats.done}/{stats.total}</span>
+            </div>}
+            <span className="text-[11px] text-gray-400 tabular-nums text-right">{goalProgressLabel(stats)}</span>
           </div>
         )}
 
@@ -815,7 +839,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
         )}
 
         {/* Hover actions */}
-        <div className="hidden group-hover:flex items-center gap-0.5 flex-shrink-0 ml-1">
+        <div className="flex items-center gap-0.5 flex-shrink-0 ml-1">
           {!isLeaf && (
             <button onClick={e => { e.stopPropagation(); onZoom(node.id) }} title="Войти"
               className="w-6 h-6 flex items-center justify-center text-gray-300 hover:text-indigo-400 rounded hover:bg-gray-100 dark:hover:bg-gray-800">
@@ -826,7 +850,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
             className={`w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${showDetail ? 'text-blue-400' : 'text-gray-300 hover:text-gray-500'}`}>
             <AlignJustify size={12} />
           </button>
-          <button onClick={e => { e.stopPropagation(); setAdding(true); setExpanded(true) }} title="Добавить"
+          <button onClick={e => { e.stopPropagation(); setAdding(true); setExpanded(true) }} title={node.parent_id ? 'Добавить подзадачу' : 'Добавить задачу'} aria-label={node.parent_id ? 'Добавить подзадачу' : 'Добавить задачу'}
             className="w-6 h-6 flex items-center justify-center text-gray-300 hover:text-gray-600 dark:hover:text-gray-400 rounded hover:bg-gray-100 dark:hover:bg-gray-800">
             <Plus size={12} />
           </button>
@@ -862,6 +886,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
               className="text-xs text-gray-600 dark:text-gray-400"
             />
           </div>
+          {isLeaf && node.work_context !== 'delivery' && <TaskDates node={node} onUpdate={onUpdate} />}
           {isLeaf && node.planner && <div><div className="text-xs text-gray-400 mb-0.5">Ручная очередь</div><PlannerBadge node={node} />{node.planner.priority_note && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{node.planner.priority_note}</p>}</div>}
           {node.work_context === 'delivery' && isLeaf && (
             <div className="flex items-center justify-between gap-3 rounded-lg border border-violet-100 bg-violet-50/40 px-2.5 py-2 dark:border-violet-900/50 dark:bg-violet-950/10">
@@ -889,7 +914,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
           {node.children.map(child => (
             <OutlinerRow key={child.id} node={child} depth={depth + 1} rootColor={rootColor}
               nodesMap={nodesMap} allNodes={allNodes} onUpdate={onUpdate}
-              onUnblock={onUnblock} onZoom={onZoom} hideDone={hideDone} />
+              onUnblock={onUnblock} onZoom={onZoom} hideDone={hideDone} draggingNodeId={draggingNodeId} />
           ))}
           {adding && (
             <div style={{ paddingLeft: pl + 20, paddingRight: 8 }} className="py-1">
@@ -924,6 +949,12 @@ export default function Tree() {
   const [showInitiativeForm, setShowInitiativeForm] = useState(() => initialParams.get('create') === 'initiative')
   const [initiativeCreated, setInitiativeCreated] = useState(null)
   const [routeState, setRouteState] = useState('overview')
+  const [draggingNodeId, setDraggingNodeId] = useState(null)
+  const [dragError, setDragError] = useState(null)
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
 
   const addToast = useCallback(items => {
     const id = Date.now()
@@ -982,6 +1013,24 @@ export default function Tree() {
   const openNode = id => {
     const path = nodePath(nodes, id)
     if (path) navigate(path)
+  }
+
+  const handleDragEnd = async ({ active, over }) => {
+    const sourceId = String(active.id)
+    setDraggingNodeId(null)
+    if (!over || !String(over.id).startsWith('goal:')) return
+    const targetId = String(over.id).slice('goal:'.length)
+    const source = nodes.find(node => node.id === sourceId)
+    const target = nodes.find(node => node.id === targetId)
+    if (!source || !target || source.parent_id === targetId || target.parent_id == null ||
+      (source.work_context || 'personal') !== (target.work_context || 'personal') || isDescendant(nodes, sourceId, targetId)) return
+    try {
+      setDragError(null)
+      await treeApi.update(sourceId, { parent_id: targetId })
+      await load()
+    } catch (error) {
+      setDragError(error.message || 'Не удалось перенести элемент.')
+    }
   }
 
   const nodesMap = Object.fromEntries(nodes.map(n => [n.id, n]))
@@ -1092,6 +1141,7 @@ export default function Tree() {
                   <div className="w-1 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: rootColor }} />
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-base text-gray-900 dark:text-gray-100 truncate">{focusNode.title}</div>
+                    {(focusNode.work_context || 'personal') === 'personal' && focusNode.children.length > 0 && <div className="mt-0.5 text-xs text-gray-500">Статус: {STATUS_CFG[focusNode.status || 'undefined']?.label || focusNode.status}</div>}
                     {focusNode.outcome && (
                       <div className="text-xs text-gray-400 mt-0.5 italic truncate">→ {focusNode.outcome}</div>
                     )}
@@ -1101,51 +1151,74 @@ export default function Tree() {
                         <div className="flex flex-wrap items-center gap-1 mt-1.5">
                           <span className="text-[10px] uppercase tracking-wider text-gray-400">привычки</span>
                           {driving.map(h => (
-                            <span key={h.id} className="text-xs px-1.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-500">{h.label}</span>
+                            <Link key={h.id} to={entityPath.habit(h.id)} className="text-xs px-1.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-500 hover:underline">{h.label}</Link>
                           ))}
                         </div>
                       )
                     })()}
                   </div>
-                  {s.total > 0 && (
+                  {focusNode.children.length === 0 && (focusNode.work_context || 'personal') === 'personal' && <span className="text-xs text-gray-500">{STATUS_CFG[focusNode.status || 'undefined']?.label || focusNode.status}</span>}
+                  {focusNode.children.length > 0 && (s.total > 0 || s.dropped > 0) && (
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {s.undef > 0 && <span className="text-xs text-red-400">{s.undef} ⚠</span>}
-                      <div className="w-24 h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                      {s.total > 0 && <div className="w-24 h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
                         <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: rootColor }} />
-                      </div>
-                      <span className="text-xs text-gray-400 tabular-nums">{s.done}/{s.total}</span>
+                      </div>}
+                      <span className="text-xs text-gray-400 tabular-nums">{goalProgressLabel(s)}</span>
                     </div>
                   )}
                 </div>
               )
             })()}
 
+            {focusNode?.parent_id && focusNode.children.length === 0 && (focusNode.work_context || 'personal') === 'personal' && (
+              <div className="space-y-3 border-b border-gray-100 px-5 py-3 dark:border-gray-800">
+                <TaskDates node={focusNode} onUpdate={load} />
+              </div>
+            )}
+
             {/* Outliner */}
-            <div className="py-1">
-              {displayNodes.length === 0 && !addingAtBottom && (
-                <p className="text-sm text-gray-400 px-5 py-4">Нет элементов</p>
-              )}
-              {displayNodes.map(node => (
-                <OutlinerRow key={node.id} node={node} depth={0} rootColor={rootColor}
-                  nodesMap={nodesMap} allNodes={nodes} onUpdate={load}
-                  onUnblock={addToast} onZoom={openNode}
-                  hideDone={hideDone} />
-              ))}
-              {addingAtBottom ? (
-                <div className="px-4 py-2">
-                  <AddChildInput onAdd={async title => {
-                    await treeApi.add({ title, parent_id: focusNodeId, status: 'undefined' })
-                    setAddingAtBottom(false)
-                    load()
-                  }} onCancel={() => setAddingAtBottom(false)} />
-                </div>
-              ) : (
-                <button onClick={() => setAddingAtBottom(true)}
-                  className="w-full text-left text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-5 py-2.5 transition-colors">
-                  + добавить
-                </button>
-              )}
-            </div>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={({ active }) => { setDragError(null); setDraggingNodeId(String(active.id)) }}
+              onDragCancel={() => setDraggingNodeId(null)}
+              onDragEnd={handleDragEnd}
+            >
+              <div className="py-1">
+                {dragError && <p role="alert" className="mx-4 my-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-950/30 dark:text-red-300">{dragError}</p>}
+                {displayNodes.length === 0 && !addingAtBottom && focusNode.children.length > 0 && (
+                  <p className="text-sm text-gray-400 px-5 py-4">Нет элементов</p>
+                )}
+                {displayNodes.map(node => (
+                  <OutlinerRow key={node.id} node={node} depth={0} rootColor={rootColor}
+                    nodesMap={nodesMap} allNodes={nodes} onUpdate={load}
+                    onUnblock={addToast} onZoom={openNode}
+                    hideDone={hideDone} draggingNodeId={draggingNodeId} />
+                ))}
+                {addingAtBottom ? (
+                  <div className="px-4 py-2">
+                    <AddChildInput onAdd={async title => {
+                      await treeApi.add({ title, parent_id: focusNodeId, status: 'undefined' })
+                      setAddingAtBottom(false)
+                      load()
+                    }} onCancel={() => setAddingAtBottom(false)} />
+                  </div>
+                ) : (
+                  <button onClick={() => setAddingAtBottom(true)}
+                    className="w-full text-left text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-5 py-2.5 transition-colors">
+                    {focusNode.parent_id ? '+ Добавить подзадачу' : '+ Добавить задачу'}
+                  </button>
+                )}
+              </div>
+              <DragOverlay dropAnimation={null}>
+                {draggingNodeId && nodesMap[draggingNodeId] && (
+                  <div className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-gray-700 shadow-lg dark:border-indigo-800 dark:bg-gray-900 dark:text-gray-200">
+                    {nodesMap[draggingNodeId].title}
+                  </div>
+                )}
+              </DragOverlay>
+            </DndContext>
           </div>
         )}
       </div>
