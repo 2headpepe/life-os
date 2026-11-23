@@ -1,11 +1,9 @@
 import { plannerLane, plannerRank } from './plannerSignals.js'
+import { localDay } from './calendarDay.js'
+export { localDay } from './calendarDay.js'
 
 const STARTABLE = new Set(['undefined', 'scheduled', 'in_progress'])
 const INACTIVE = new Set(['done', 'dropped', 'someday', 'waiting_for_review'])
-
-export function localDay(date) {
-  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-')
-}
 
 export function isOverdueTask(task, today) {
   return Boolean(task?.due && task.due < today && !['done', 'dropped', 'someday'].includes(task.status))

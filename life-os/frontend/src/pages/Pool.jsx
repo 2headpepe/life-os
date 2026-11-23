@@ -453,7 +453,7 @@ export default function Pool({ sphere: rootFilter }) {
         <ListGroup
           key={s}
           label={label}
-          items={active.filter(n => (n.status || 'undefined') === s)}
+          items={active.filter(n => s === 'blocked' ? n.is_blocked : (n.status || 'undefined') === s)}
           onUpdate={load}
         />
       ))

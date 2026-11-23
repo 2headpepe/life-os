@@ -1,29 +1,39 @@
-import { trackMutation } from './analytics'
+import { trackMutation } from './analytics.js'
 
 const BASE = '/api'
 
 async function trackedMutation(path, method, body, outcomeCategory = null, options = {}) {
+  let response
   try {
-    const response = await fetch(`${BASE}${path}`, {
+    response = await fetch(`${BASE}${path}`, {
       method,
       ...(options.headers ? { headers: options.headers } : {}),
       ...(body === undefined ? {} : { body: options.rawBody ? body : JSON.stringify(body) }),
     })
-    const result = await response.json().catch(() => ({ error: 'Некорректный ответ сервера.' }))
-    const outcome = response.ok && !result?.error ? 'success' : 'failure'
-    trackMutation(method, path, outcome, outcomeCategory)
-    if (outcome === 'success' && typeof window !== 'undefined' && /^\/(tree|events|planner)(\/|$)/.test(path)) {
-      window.dispatchEvent(new Event('life-os:planning-changed'))
-    }
-    return result
   } catch (error) {
     trackMutation(method, path, 'failure', outcomeCategory)
     throw error
   }
+  const result = await response.json().catch(() => ({ error: 'Некорректный ответ сервера.' }))
+  const success = response.ok && !result?.error
+  trackMutation(method, path, success ? 'success' : 'failure', outcomeCategory)
+  if (!success) throw new Error(result?.error || `Ошибка сервера: ${response.status}`)
+  if (typeof window !== 'undefined' && /^\/(tree|events|planner)(\/|$)/.test(path)) {
+    window.dispatchEvent(new Event('life-os:planning-changed'))
+  }
+  return result
+}
+
+async function get(path, { notFoundValue } = {}) {
+  const response = await fetch(`${BASE}${path}`)
+  if (response.status === 404 && notFoundValue !== undefined) return notFoundValue
+  const result = await response.json().catch(() => ({ error: 'Некорректный ответ сервера.' }))
+  if (!response.ok || result?.error) throw new Error(result?.error || `Ошибка сервера: ${response.status}`)
+  return result
 }
 
 export const api = {
-  get: (path) => fetch(`${BASE}${path}`).then(r => r.json()),
+  get,
   put: (path, body, outcomeCategory = null) => trackedMutation(path, 'PUT', body, outcomeCategory, { headers: { 'Content-Type': 'application/json' } }),
   post: (path, body, outcomeCategory = null) => trackedMutation(path, 'POST', body, outcomeCategory, { headers: { 'Content-Type': 'application/json' } }),
   patch: (path, body, outcomeCategory = null) => trackedMutation(path, 'PATCH', body, outcomeCategory, { headers: { 'Content-Type': 'application/json' } }),
@@ -41,10 +51,15 @@ export const people = {
   get: (id) => api.get(`/people/${id}`),
 }
 
+export const topics = {
+  all: () => api.get('/topics'),
+  get: (slug) => api.get(`/topics/${encodeURIComponent(slug)}`),
+}
+
 export const lists = {
   index: () => api.get('/content/lists/_index.json'),
   get: (name) => api.get(`/content/lists/${name}.json`),
-  add: (list, item) => api.post(`/lists/${list}`, item),
+  add: (list, item, outcomeCategory = null) => api.post(`/lists/${list}`, item, outcomeCategory),
   update: (list, id, patch) => api.patch(`/lists/${list}/${id}`, patch),
 }
 
@@ -57,14 +72,14 @@ export const events = {
 
 export const habits = {
   definitions: () => api.get('/content/habits/definitions.json'),
-  log: (date) => api.get(`/content/habits/log/${date}.json`),
-  saveLog: (date, log) => api.put(`/content/habits/log/${date}.json`, log),
+  log: (date) => api.get(`/content/habits/log/${date}.json`, { notFoundValue: { date, habits: {} } }),
+  saveLog: (date, log, outcomeCategory = null) => api.put(`/content/habits/log/${date}.json`, log, outcomeCategory),
   saveDefinitions: (defs) => api.put('/content/habits/definitions.json', defs),
 }
 
 export const inbox = {
   all: () => api.get('/content/inbox/current.json'),
-  add: (text, tags = []) => api.post('/inbox', { text, tags }),
+  add: (text, tags = [], outcomeCategory = null) => api.post('/inbox', { text, tags }, outcomeCategory),
   delete: (id) => api.delete(`/inbox/${id}`),
 }
 
@@ -73,8 +88,8 @@ export const tree = {
   all:    ()          => api.get('/tree'),
   leaves: ()          => api.get('/tree/leaves'),
   create: (node)      => api.post('/tree', node),
-  add:    (node)      => api.post('/tree', node),
-  update: (id, patch) => api.patch(`/tree/${id}`, patch),
+  add:    (node, outcomeCategory = null) => api.post('/tree', node, outcomeCategory),
+  update: (id, patch, outcomeCategory = null) => api.patch(`/tree/${id}`, patch, outcomeCategory),
   delete: (id)        => api.delete(`/tree/${id}`),
   createDependency: (id, payload) => api.post(`/tree/${id}/dependencies`, payload),
   eligibleExistingDependencies: (id) => api.get(`/tree/${id}/eligible-existing-dependencies`),
@@ -107,7 +122,7 @@ export const profile = {
 
 export const insights = {
   all: () => api.get('/insights'),
-  add: (insight) => api.post('/insights', insight),
+  add: (insight, outcomeCategory = null) => api.post('/insights', insight, outcomeCategory),
   update: (id, patch) => api.patch(`/insights/${id}`, patch),
 }
 
@@ -152,7 +167,7 @@ export const sync = {
 export const feed = {
   all: () => api.get(`/feed?_t=${Date.now()}`),
   reactions: () => api.get('/feed/reactions'),
-  react: (ref, type, extra) => api.post('/feed/reactions', { ref, type, ...extra }),
+  react: (ref, type, extra = {}, outcomeCategory = null) => api.post('/feed/reactions', { ref, type, ...extra }, outcomeCategory),
   noteProcess: (ref, text, cardType) => api.post('/feed/note-process', { ref, text, card_type: cardType }),
   noteJobs: () => api.get('/feed/note-jobs'),
   aiStatus: () => api.get('/feed/ai-status'),
@@ -200,11 +215,7 @@ export const ai = {
   stopOpenCodeServer: () => api.post('/ai/opencode-server/stop', {}),
   run: async (task, params = {}) => {
     await ai.ensureOpenCode()
-    return fetch('/api/ai/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ task, params }),
-    }).then(r => r.json())
+    return api.post('/ai/run', { task, params })
   },
 }
 
@@ -221,7 +232,7 @@ export const productIntelligence = aiReviews
 
 export const memories = {
   all: (date = null) => api.get(date ? `/memories?date=${date}` : '/memories'),
-  add: (entry) => api.post('/memories', entry),
+  add: (entry, outcomeCategory = null) => api.post('/memories', entry, outcomeCategory),
   update: (id, patch) => api.patch(`/memories/${id}`, patch),
   delete: (id) => api.delete(`/memories/${id}`),
   uploadPhotos: (id, files) => {

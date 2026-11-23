@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, Plus, X, Loader2, Trash2, ImageIcon, CalendarDays } from 'lucide-react'
 import { memories as memoriesApi } from '../api'
 import { directEntityId, entityPath } from '../utils/entityLinks'
+import { addLocalDays, localDay } from '../utils/calendarDay'
 
 const MONTHS = ['января','февраля','марта','апреля','мая','июня',
                 'июля','августа','сентября','октября','ноября','декабря']
@@ -16,13 +17,11 @@ function fmtDateHeader(dateStr) {
 }
 
 function addDays(dateStr, n) {
-  const d = new Date(dateStr + 'T12:00:00')
-  d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
+  return addLocalDays(dateStr, n)
 }
 
 function isToday(dateStr) {
-  return dateStr === new Date().toISOString().slice(0, 10)
+  return dateStr === localDay()
 }
 
 /* ─── Media thumbnail with lightbox ──────────────────────────────── */
@@ -278,7 +277,7 @@ export default function Memories() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState('all') // 'all' | 'day'
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(() => localDay())
   const [adding, setAdding] = useState(false)
   const targetId = directEntityId(location.pathname, 'memories')
 
@@ -345,7 +344,7 @@ export default function Memories() {
               <ChevronLeft size={16} className="text-gray-500" />
             </button>
             <button
-              onClick={() => setDate(() => new Date().toISOString().slice(0, 10))}
+              onClick={() => setDate(() => localDay())}
               className={`text-sm font-medium px-2 py-0.5 rounded-lg transition-colors ${isToday(date) ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-900'}`}
             >
               {fmtDateHeader(date).short}
@@ -363,7 +362,7 @@ export default function Memories() {
       {/* Add form */}
       {adding && (
         <AddForm
-          date={view === 'day' ? date : new Date().toISOString().slice(0, 10)}
+          date={view === 'day' ? date : localDay()}
           onAdded={handleAdded}
           onClose={() => setAdding(false)}
         />

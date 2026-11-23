@@ -2,24 +2,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertCircle, ArrowUpRight, CalendarDays, ChevronDown, ChevronRight, CircleAlert, GripVertical, HeartPulse, Layers3, ListTodo, RefreshCw } from 'lucide-react'
 import { events as calendarEvents, habits, memories, planner as plannerApi, tree as treeApi } from '../api'
-import { computeHabitScore, TrackInput } from './Habits'
+import { computeHabitScore } from '../utils/habitScoring'
+import TrackInput from '../components/HabitTrackInput'
 import { useRecoveryMode } from '../context/RecoveryModeContext'
 import Surface from '../components/ui/Surface'
 import { Button } from '../components/ui/Button'
 import { entityPath, nodePath } from '../utils/entityLinks'
 import { localDay, selectNextSteps } from '../utils/activeWork'
+import { addLocalDays } from '../utils/calendarDay'
 import { calendarNodeVisible, loadFilters, loadHidden } from '../utils/calendarVisibility'
 import TodayWorkOptions, { DeadlineInfo, FirstStep, TaskResultActions } from '../components/TodayWorkOptions'
+import HabitInfo from '../components/HabitInfo'
 import { calendarCapacity, deadlineGuidance, workChoices } from '../utils/workWindows'
 import { usePlanningRefresh } from '../utils/usePlanningRefresh'
 import { plannerLane, plannerMeta, plannerRank } from '../utils/plannerSignals'
 import { orderedFoundationHabits, orderedHabits, reorderFoundationHabits } from '../utils/habitOrdering'
 
-const addDays = (date, offset) => {
-  const value = new Date(date + 'T12:00:00')
-  value.setDate(value.getDate() + offset)
-  return localDay(value)
-}
+const addDays = addLocalDays
 
 const formatDate = date => new Date(`${date}T12:00:00`).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })
 const formatShortDate = date => new Date(`${date}T12:00:00`).toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' })
@@ -174,7 +173,7 @@ function PlannerDetails({ tasks, nodes, waitingReasons, unavailable }) {
   </div>
 }
 
-function TodayHabits({ habits: foundationHabits, habitLog, saveHabit, savingHabit, draggedFoundation, setDraggedFoundation, reorderFoundation, open, onToggle }) {
+function TodayHabits({ habits: foundationHabits, nodes, habitLog, habitError, saveHabit, savingHabit, draggedFoundation, setDraggedFoundation, reorderFoundation, open, onToggle }) {
   return <Surface className="today-habits overflow-hidden" aria-labelledby="habit-heading">
     <div className={`flex items-center gap-3 px-4 py-3 ${open ? 'border-b border-gray-100 dark:border-gray-800' : ''}`}>
       <button type="button" onClick={onToggle} aria-expanded={open} aria-controls="today-habits-list" className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
@@ -184,7 +183,8 @@ function TodayHabits({ habits: foundationHabits, habitLog, saveHabit, savingHabi
       <Link to="/habits" className="shrink-0 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">Все привычки</Link>
       <button type="button" onClick={onToggle} aria-label={open ? 'Скрыть привычки' : 'Показать привычки'} aria-expanded={open} aria-controls="today-habits-list" className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"><ChevronDown size={18} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} /></button>
     </div>
-    {open && <div id="today-habits-list">{foundationHabits.map((habit, index) => <div key={habit.id} draggable onDragStart={() => setDraggedFoundation(habit.id)} onDragOver={event => event.preventDefault()} onDrop={() => { reorderFoundation(draggedFoundation, habit.id); setDraggedFoundation(null) }} onDragEnd={() => setDraggedFoundation(null)} className={`flex items-center gap-3 px-4 py-2.5 ${index < foundationHabits.length - 1 ? 'border-b border-gray-100 dark:border-gray-800' : ''}`}><GripVertical size={16} aria-hidden="true" className="shrink-0 cursor-grab text-gray-300 dark:text-gray-600" /><div className="min-w-0 flex-1"><Link to={entityPath.habit(habit.id)} className="text-sm font-medium text-gray-800 hover:text-blue-600 dark:text-gray-200 dark:hover:text-blue-400">{habit.label}</Link>{habit.detail && <p className="mt-0.5 text-xs text-gray-400">{habit.detail}</p>}</div><TrackInput habit={habit} value={habitLog[habit.id]} onChange={value => saveHabit(habit.id, value)} editable={!savingHabit} /></div>)}</div>}
+    {open && <div id="today-habits-list">{foundationHabits.map((habit, index) => <div key={habit.id} draggable onDragStart={() => setDraggedFoundation(habit.id)} onDragOver={event => event.preventDefault()} onDrop={() => { reorderFoundation(draggedFoundation, habit.id); setDraggedFoundation(null) }} onDragEnd={() => setDraggedFoundation(null)} className={`flex items-center gap-3 px-4 py-2.5 ${index < foundationHabits.length - 1 ? 'border-b border-gray-100 dark:border-gray-800' : ''}`}><GripVertical size={16} aria-hidden="true" className="shrink-0 cursor-grab text-gray-300 dark:text-gray-600" /><HabitInfo habit={habit} nodes={nodes} /><fieldset disabled={savingHabit} className="contents"><TrackInput habit={habit} value={habitLog[habit.id]} onChange={value => saveHabit(habit.id, value)} editable /></fieldset></div>)}</div>}
+    {habitError && <p role="alert" className="px-4 py-2 text-xs text-rose-600">{habitError}</p>}
   </Surface>
 }
 
@@ -196,6 +196,7 @@ export default function Today() {
   const [events, setEvents] = useState([])
   const [queueUnavailable, setQueueUnavailable] = useState(false)
   const [calendarUnavailable, setCalendarUnavailable] = useState(false)
+  const [habitError, setHabitError] = useState('')
   const revision = useRef(0)
   const load = useCallback(async () => {
     const request = ++revision.current
@@ -245,8 +246,8 @@ export default function Today() {
   const primaryStep = Object.values(choices).flat().find(option => option.firstStep && option.task.id === attention.task?.id)
   const deadlines = deadlineGuidance(tasks, schedule, attention.waitingReasons)
   const visibleHabits = useMemo(() => isRecoveryMode ? habitDefs.filter(habit => habit.foundation) : habitDefs, [habitDefs, isRecoveryMode]); const foundationHabits = useMemo(() => orderedFoundationHabits(habitDefs.filter(habit => habit.foundation)), [habitDefs]); const maxScore = visibleHabits.reduce((total, habit) => total + (habit.max_score || 1), 0); const score = computeHabitScore(visibleHabits, habitLog); const tomorrowCount = attention.appointments.filter(entry => entry.date === tomorrow).length
-  const saveHabit = async (habitId, value) => { const next = { ...habitLog, [habitId]: value }; setHabitLog(next); setSavingHabit(true); try { await habits.saveLog(today, { date: today, habits: next, score: computeHabitScore(visibleHabits, next), notes: '' }, 'habit_progress') } catch { setHabitLog(habitLog) } finally { setSavingHabit(false) } }
-  const reorderFoundation = async (sourceId, targetId) => { if (!sourceId || sourceId === targetId) return; const categories = reorderFoundationHabits(habitCategories, sourceId, targetId); await habits.saveDefinitions({ categories }); setHabitCategories(categories); setHabitDefs(activeHabits({ categories }, today)) }
+  const saveHabit = async (habitId, value) => { if (savingHabit) return; const next = { ...habitLog, [habitId]: value }; setHabitLog(next); setSavingHabit(true); setHabitError(''); try { await habits.saveLog(today, { date: today, habits: next, score: computeHabitScore(visibleHabits, next), notes: '' }, 'habit_progress') } catch { setHabitLog(habitLog); setHabitError('Не удалось сохранить привычку. Попробуй ещё раз.') } finally { setSavingHabit(false) } }
+  const reorderFoundation = async (sourceId, targetId) => { if (!sourceId || sourceId === targetId) return; const categories = reorderFoundationHabits(habitCategories, sourceId, targetId); try { await habits.saveDefinitions({ categories }); setHabitCategories(categories); setHabitDefs(activeHabits({ categories }, today)); setHabitError('') } catch { setHabitError('Не удалось сохранить порядок привычек.') } }
   const toggle = key => setExpanded(current => ({ ...current, [key]: !current[key] }))
   if (loading) return <div className="px-8 py-8 space-y-4" aria-busy="true" aria-live="polite"><div className="h-14 w-56 rounded-xl bg-gray-100 dark:bg-gray-800 animate-pulse" /><div className="h-64 rounded-2xl bg-gray-100 dark:bg-gray-800 animate-pulse" /><div className="h-16 rounded-2xl bg-gray-100 dark:bg-gray-800 animate-pulse" /></div>
   if (error) return <div className="px-8 py-8 max-w-2xl" aria-live="polite"><Surface className="p-6 flex gap-3"><AlertCircle className="text-red-600 dark:text-red-400 mt-0.5" /><div><h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Сегодня</h1><p className="mt-1 text-sm text-gray-600 dark:text-gray-400">{error}</p><Button type="button" onClick={load} variant="primary" className="mt-4 inline-flex items-center gap-2"><RefreshCw size={15} />Обновить</Button></div></Surface></div>
@@ -256,5 +257,5 @@ export default function Today() {
       <Obligation entry={calendarEntry} waitingReason={calendarWait} nodes={nodes} calendarUnavailable={calendarUnavailable} />
     </div>
     <TodayWorkOptions attention={attention} choices={choices} deadlines={deadlines} nodes={nodes} now={now} schedule={schedule} onRefresh={load} />
-  </Surface><OverdueNotice tasks={tasks} nodes={nodes} today={today} />{foundationHabits.length > 0 && <TodayHabits habits={foundationHabits} habitLog={habitLog} saveHabit={saveHabit} savingHabit={savingHabit} draggedFoundation={draggedFoundation} setDraggedFoundation={setDraggedFoundation} reorderFoundation={reorderFoundation} open={expanded.habits !== false} onToggle={() => setExpanded(current => ({ ...current, habits: current.habits !== false ? false : true }))} />}<ContextStrip memory={memory} memoryState={memoryState} tomorrowCount={tomorrowCount} calendarUnavailable={calendarUnavailable} /><section aria-labelledby="details-heading" className="pt-2"><h2 id="details-heading" className="today-details-heading mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">Подробнее</h2><div className="today-details-grid"><Detail id="life-status-planner" title="Приоритеты задач" Icon={ListTodo} open={Boolean(expanded.planner)} onToggle={() => toggle('planner')}><PlannerDetails tasks={plannerTasks} nodes={nodes} waitingReasons={attention.waitingReasons} unavailable={queueUnavailable} /></Detail><Detail id="life-status-upcoming" title="Ближайшие 3 дня" Icon={CalendarDays} open={Boolean(expanded.upcoming)} onToggle={() => toggle('upcoming')}><UpcomingDetails appointments={attention.appointments} today={today} calendarUnavailable={calendarUnavailable} /></Detail><Detail id="life-status-spheres" title="Сферы" Icon={Layers3} open={Boolean(expanded.spheres)} onToggle={() => toggle('spheres')}><SphereDetails nodes={nodes} tasks={tasks} today={today} /></Detail><Detail id="life-status-yesterday" title="Вчера" Icon={ListTodo} open={Boolean(expanded.yesterday)} onToggle={() => toggle('yesterday')}><YesterdayDetails memory={memory} state={memoryState} /></Detail></div></section></div></main>
+  </Surface><OverdueNotice tasks={tasks} nodes={nodes} today={today} />{foundationHabits.length > 0 && <TodayHabits habits={foundationHabits} nodes={nodes} habitLog={habitLog} habitError={habitError} saveHabit={saveHabit} savingHabit={savingHabit} draggedFoundation={draggedFoundation} setDraggedFoundation={setDraggedFoundation} reorderFoundation={reorderFoundation} open={expanded.habits !== false} onToggle={() => setExpanded(current => ({ ...current, habits: current.habits !== false ? false : true }))} />}<ContextStrip memory={memory} memoryState={memoryState} tomorrowCount={tomorrowCount} calendarUnavailable={calendarUnavailable} /><section aria-labelledby="details-heading" className="pt-2"><h2 id="details-heading" className="today-details-heading mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">Подробнее</h2><div className="today-details-grid"><Detail id="life-status-planner" title="Приоритеты задач" Icon={ListTodo} open={Boolean(expanded.planner)} onToggle={() => toggle('planner')}><PlannerDetails tasks={plannerTasks} nodes={nodes} waitingReasons={attention.waitingReasons} unavailable={queueUnavailable} /></Detail><Detail id="life-status-upcoming" title="Ближайшие 3 дня" Icon={CalendarDays} open={Boolean(expanded.upcoming)} onToggle={() => toggle('upcoming')}><UpcomingDetails appointments={attention.appointments} today={today} calendarUnavailable={calendarUnavailable} /></Detail><Detail id="life-status-spheres" title="Сферы" Icon={Layers3} open={Boolean(expanded.spheres)} onToggle={() => toggle('spheres')}><SphereDetails nodes={nodes} tasks={tasks} today={today} /></Detail><Detail id="life-status-yesterday" title="Вчера" Icon={ListTodo} open={Boolean(expanded.yesterday)} onToggle={() => toggle('yesterday')}><YesterdayDetails memory={memory} state={memoryState} /></Detail></div></section></div></main>
 }

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Zap, Paperclip } from 'lucide-react'
 import { inbox, tree as treeApi, memories as memoriesApi, insights as insightsApi, lists as listsApi } from '../api'
 import { useSpheres } from '../SpheresContext'
+import { localDay } from '../utils/calendarDay'
 
 const KINDS = [
   { id: 'task',    label: 'Задача' },
@@ -28,7 +29,7 @@ export default function QuickCapture({ open, onClose }) {
   const [kind, setKind] = useState('task')
   const [text, setText] = useState('')
   const [sphere, setSphere] = useState('')
-  const [memDate, setMemDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [memDate, setMemDate] = useState(() => localDay())
   const [photos, setPhotos] = useState([])
   const [insightTitle, setInsightTitle] = useState('')
   const [insightTag, setInsightTag] = useState('')
@@ -48,7 +49,7 @@ export default function QuickCapture({ open, onClose }) {
       setInsightTitle('')
       setInsightTag('')
       setSubtags('')
-      setMemDate(new Date().toISOString().slice(0, 10))
+      setMemDate(localDay())
       setTimeout(() => textRef.current?.focus(), 50)
     }
   }, [open])

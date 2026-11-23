@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, Search } from 'lucide-react'
-import { insights as insightsApi } from '../api'
+import { insights as insightsApi, topics as topicsApi } from '../api'
 import { useSpheres } from '../SpheresContext'
 import MarkdownContent from '../components/MarkdownContent'
 import { entityPath, routeSegments } from '../utils/entityLinks'
@@ -144,17 +144,24 @@ function NotesTab({ topicSlug, onOpen }) {
   const [selected, setSelected] = useState(null)
   const [content, setContent] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
-  useEffect(() => { fetch('/api/topics').then(r => r.json()).then(setTopics) }, [])
+  useEffect(() => { topicsApi.all().then(setTopics).catch(() => setError('Не удалось загрузить заметки.')) }, [])
 
   const select = async (topic, { toggle = true } = {}) => {
     if (toggle && selected?.slug === topic.slug) { setSelected(null); setContent(null); return }
     setSelected(topic)
     setContent(null)
     setLoading(true)
-    const data = await fetch(`/api/topics/${topic.slug}`).then(r => r.json())
-    setContent(data.content)
-    setLoading(false)
+    setError('')
+    try {
+      const data = await topicsApi.get(topic.slug)
+      setContent(data.content)
+    } catch {
+      setError('Не удалось загрузить заметку.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -180,6 +187,7 @@ function NotesTab({ topicSlug, onOpen }) {
         ))}
       </div>
       <div className="flex-1 overflow-y-auto">
+        {error && <p role="alert" className="px-10 py-4 text-sm text-rose-600">{error}</p>}
         {!selected && (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">Выбери заметку слева</div>
         )}

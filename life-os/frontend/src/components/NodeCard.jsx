@@ -4,6 +4,7 @@ import { planner as plannerApi, tree as treeApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
 import TaskDates from './TaskDates'
 import { plannerMeta } from '../utils/plannerSignals'
+import { localDay } from '../utils/calendarDay'
 
 function formatDue(dueStr) {
   const today = new Date()
@@ -201,7 +202,7 @@ export default function NodeCard({ node, onUpdate, row = false, draggable: isDra
   const color = node.root_color || 'var(--ds-muted)'
   const status = node.status || 'undefined'
   const cfg = STATUS_CFG[status] || STATUS_CFG.undefined
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const isOverdue = node.due && node.due < today && status !== 'done'
   const isBlocked = node.is_blocked
 

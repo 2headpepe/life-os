@@ -1,24 +1,30 @@
 import { useState, useEffect } from 'react'
 import MarkdownContent from '../components/MarkdownContent'
-
-const api = (path) => fetch(`/api${path}`).then(r => r.json())
+import { topics as topicsApi } from '../api'
 
 export default function Topics() {
   const [topics, setTopics] = useState([])
   const [selected, setSelected] = useState(null)
   const [content, setContent] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
-  useEffect(() => { api('/topics').then(setTopics) }, [])
+  useEffect(() => { topicsApi.all().then(setTopics).catch(() => setError('Не удалось загрузить темы.')) }, [])
 
   const select = async (topic) => {
     if (selected?.slug === topic.slug) { setSelected(null); setContent(null); return }
     setSelected(topic)
     setContent(null)
     setLoading(true)
-    const data = await api(`/topics/${topic.slug}`)
-    setContent(data.content)
-    setLoading(false)
+    setError('')
+    try {
+      const data = await topicsApi.get(topic.slug)
+      setContent(data.content)
+    } catch {
+      setError('Не удалось загрузить тему.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -41,6 +47,7 @@ export default function Topics() {
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {error && <p role="alert" className="px-10 py-4 text-sm text-rose-600">{error}</p>}
         {!selected && (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">
             Выбери тему слева

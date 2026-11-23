@@ -6,6 +6,7 @@ import { events as eventsApi, tree as treeApi, sync as syncApi, calendars as cal
 import { entityPath, nodePath, routeSegments } from '../utils/entityLinks'
 
 import { calendarNodeVisible, loadFilters, loadHidden, saveFilters, saveHidden } from '../utils/calendarVisibility'
+import { addLocalDays } from '../utils/calendarDay'
 
 // ─── Event form ────────────────────────────────────────────────────
 
@@ -107,7 +108,7 @@ function dateStr(date) {
   const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, '0'); const d = String(date.getDate()).padStart(2, '0')
   return `${y}-${m}-${d}`
 }
-function addDays(dateStr, n) { const d = new Date(dateStr + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
+const addDays = addLocalDays
 function getWeekDates(pivot) {
   const d = new Date(pivot + 'T12:00:00'); const dow = (d.getDay() + 6) % 7
   return Array.from({ length: 7 }, (_, i) => { const x = new Date(d); x.setDate(d.getDate() - dow + i); return dateStr(x) })

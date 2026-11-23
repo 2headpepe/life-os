@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { inbox, news as newsApi, memories as memoriesApi, insights as insightsApi, lists as listsApi, planner as plannerApi, tree as treeApi, feed as feedApi, habits as habitsApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
+import { localDay } from '../utils/calendarDay'
 
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
 
@@ -72,7 +73,7 @@ function fmtCardTs(ts) {
   if (!ts) return ''
   const d = new Date(ts.includes('T') ? ts : ts + 'T12:00:00')
   const now = new Date()
-  const sameDay = d.toISOString().slice(0, 10) === now.toISOString().slice(0, 10)
+  const sameDay = localDay(d) === localDay(now)
   if (sameDay) return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
   return fmtFeedDate(ts.slice(0, 10))
 }
@@ -228,11 +229,10 @@ function CardActions({ liked, onLike, onDismiss, note, onNote, hideDismiss, onEd
     }
   }
 
-  const sendReply = () => {
+  const sendReply = async () => {
     if (!replyText.trim()) return
     const ctx = serializeCardContext(card)
-    openInConsole(`${ctx}\n\n${replyText.trim()}`)
-    setReplyText('')
+    if (await openInConsole(`${ctx}\n\n${replyText.trim()}`)) setReplyText('')
   }
 
   const isEditable = onEdit && card && ['memory', 'insight', 'news'].includes(card.type)
@@ -444,7 +444,7 @@ export function PromptCard({ card, onSaved, onDismiss, note, onNote, onQuickRepl
     if (!text.trim() || saving) return
     setSaving(true)
     try {
-      const today = new Date().toISOString().slice(0, 10)
+      const today = localDay()
       if (card.target === 'memory') {
         await memoriesApi.add({ text: text.trim(), date: today })
       } else if (card.target === 'insight') {
@@ -633,7 +633,7 @@ export function InsightCard({ card, onDismiss, onSaved, note, onNote, onQuickRep
       } else {
         const d = new Date()
         d.setDate(d.getDate() + 30)
-        await insightsApi.update(insight.id, { snoozed_until: d.toISOString().slice(0, 10) })
+        await insightsApi.update(insight.id, { snoozed_until: localDay(d) })
       }
       await feedApi.react(card.ref, 'done')
       setDone(val)
@@ -895,7 +895,7 @@ export function DoneCard({ card, onDismiss, note, onNote, onQuickReply, onEdit }
 // ─── Upcoming (next 3 days) ────────────────────────────────────────
 
 function dueLabel(due) {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const diff = Math.round((new Date(due + 'T00:00:00Z') - new Date(today + 'T00:00:00Z')) / 86400000)
   if (diff <= 0) return 'сегодня'
   if (diff === 1) return 'завтра'
@@ -977,7 +977,7 @@ export function StaleActiveWorkCard({ card, onDismiss, onSaved, note, onNote, on
   const navigate = useNavigate()
 
   const resume = async (id) => {
-    try { await treeApi.update(id, { updated: new Date().toISOString().slice(0, 10) }) } catch {}
+    try { await treeApi.update(id, { updated: localDay() }) } catch {}
     navigate('/pool')
     onSaved?.()
   }
@@ -1229,7 +1229,7 @@ export function HabitReminderCard({ card, onDismiss, onSaved, note, onNote, onQu
     if (!text.trim() || saving) return
     setSaving(true)
     try {
-      const today = new Date().toISOString().slice(0, 10)
+      const today = localDay()
       await memoriesApi.add({ text: `${habit_label}:\n${text.trim()}`, date: today })
       const logData = await habitsApi.log(today).catch(() => ({ date: today, habits: {} }))
       const log = logData?.habits ? logData : { date: today, habits: {} }

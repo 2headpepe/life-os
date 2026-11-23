@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { localDay } from './local-day.js'
 
 function reject(status, message) {
   throw Object.assign(new Error(message), { status })
@@ -90,7 +91,7 @@ export function eventStore(file) {
         const changed = JSON.stringify(data)
         if (changed === saved) return
         await fs.mkdir(path.dirname(file), { recursive: true })
-        data.updated = new Date().toISOString().slice(0, 10)
+        data.updated = localDay()
         const temp = file + '.' + randomUUID() + '.tmp'
         try {
           await fs.writeFile(temp, JSON.stringify(data, null, 2))

@@ -18,10 +18,14 @@ import { eventStore, saveWorkBlock, pushWorkBlocks } from './work-blocks.js'
 import { taskDateError } from './task-dates.js'
 import { assertDeliveryTransition, handoffIsComplete, hasDependencyCycle, inboundDependencyReferences, isBlocked, workContext } from './task-lifecycle.js'
 import { assertEligibleExecutor, assertEligibleVerifier } from './agent-registry.js'
+import { localDay } from './local-day.js'
+import { habitIsDone } from '../shared/habitScoring.js'
+import { contentPath, writableContent } from './content-path.js'
 import { isPlannerCandidate, migratePlannerState, patchPlanner, plannerQueue, plannerRoots, plannerTaskFromCommit, reorderPlannerTasks, nextPlannerRank } from './planner-queue.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
+const HOST = process.env.LIFE_OS_HOST || '127.0.0.1'
 const VAULT = process.env.VAULT_PATH || path.join(import.meta.dirname, '../../brain/content')
 const WORK_DIR = process.env.WORK_DIR || path.resolve(import.meta.dirname, '../..')
 const LOCAL_UI_ORIGINS = new Set((process.env.LIFE_OS_UI_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173,http://[::1]:5173')
@@ -76,8 +80,15 @@ const STALENESS_DAYS = {
   insight: 30,
 }
 
-app.use(cors())
+app.use(cors({ origin: (origin, callback) => callback(null, !origin || LOCAL_UI_ORIGINS.has(origin)) }))
 app.use(express.json())
+app.use((req, res, next) => {
+  const origin = req.get('origin')
+  if (origin && !LOCAL_UI_ORIGINS.has(origin) && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return res.status(403).json({ error: 'This action must come from the local Life OS interface.' })
+  }
+  next()
+})
 app.get('/api/agents', async (req, res) => res.json(await agentRegistry()))
 
 // Launching a terminal, starting/stopping a managed local server, and minting
@@ -148,7 +159,7 @@ app.use('/api/memories/photos', express.static(PHOTOS_DIR))
 function addDaysToDate(dateStr, n) {
   const d = new Date(dateStr + 'T12:00:00')
   d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
+  return localDay(d)
 }
 
 // Next due date for a recurring node. monthly advances one calendar month.
@@ -158,7 +169,7 @@ function nextRecurrenceDate(dateStr, recurrence) {
   if (recurrence === 'monthly') {
     const d = new Date(dateStr + 'T12:00:00')
     d.setMonth(d.getMonth() + 1)
-    return d.toISOString().slice(0, 10)
+    return localDay(d)
   }
   return null
 }
@@ -215,7 +226,8 @@ function assertValidParentChange(nodes, node, parentId) {
 // ─── Content read/write ────────────────────────────────────────────
 
 app.get('/api/content/*', async (req, res) => {
-  const filePath = path.join(VAULT, req.params[0])
+  const filePath = contentPath(VAULT, req.params[0])
+  if (!filePath) return res.status(400).json({ error: 'invalid content path' })
   try {
     res.json(JSON.parse(await fs.readFile(filePath, 'utf-8')))
   } catch {
@@ -225,7 +237,8 @@ app.get('/api/content/*', async (req, res) => {
 
 app.put('/api/content/*', async (req, res) => {
   if (req.params[0] === 'tree/nodes.json') return res.status(409).json({ error: 'tree writes require a typed API operation' })
-  const filePath = path.join(VAULT, req.params[0])
+  const filePath = contentPath(VAULT, req.params[0])
+  if (!filePath || !writableContent(req.params[0])) return res.status(400).json({ error: 'content write is not allowed' })
   try {
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     await fs.writeFile(filePath, JSON.stringify(req.body, null, 2))
@@ -242,7 +255,9 @@ app.put('/api/content/*', async (req, res) => {
 })
 
 app.get('/api/ls/*', async (req, res) => {
-  const dirPath = path.join(VAULT, req.params[0])
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return res.status(403).json({ error: 'Available only on this computer.' })
+  const dirPath = contentPath(VAULT, req.params[0])
+  if (!dirPath) return res.status(400).json({ error: 'invalid content path' })
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true })
     res.json(entries.map(e => ({ name: e.name, isDir: e.isDirectory() })))
@@ -259,7 +274,7 @@ app.post('/api/lists/:list', async (req, res) => {
   const filePath = path.join(VAULT, 'lists', `${list}.json`)
   try {
     const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
-    const item = { id: `${list}-${Date.now()}`, status: 'want', added: new Date().toISOString().slice(0, 10), ...req.body }
+    const item = { id: `${list}-${Date.now()}`, status: 'want', added: localDay(), ...req.body }
     data.items.push(item)
     await fs.writeFile(filePath, JSON.stringify(data, null, 2))
     autoMemory('Добавлено в список', `${list}: ${item.title || item.id}`)
@@ -276,7 +291,7 @@ app.patch('/api/lists/:list/:id', async (req, res) => {
     const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
     const idx = data.items.findIndex(i => i.id === id)
     if (idx === -1) return res.status(404).json({ error: 'not found' })
-    data.items[idx] = { ...data.items[idx], ...req.body, updated: new Date().toISOString().slice(0, 10) }
+    data.items[idx] = { ...data.items[idx], ...req.body, updated: localDay() }
     await fs.writeFile(filePath, JSON.stringify(data, null, 2))
     autoMemory('Список', `${list}/${data.items[idx].title || id}: ${Object.keys(req.body).join(', ')}`)
     res.json(data.items[idx])
@@ -291,9 +306,9 @@ app.post('/api/inbox', async (req, res) => {
   const filePath = path.join(VAULT, 'inbox/current.json')
   try {
     const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
-    const item = { id: `inbox-${Date.now()}`, added: new Date().toISOString().slice(0, 10), tags: [], ...req.body }
+    const item = { id: `inbox-${Date.now()}`, added: localDay(), tags: [], ...req.body }
     data.items.push(item)
-    data.updated = new Date().toISOString().slice(0, 10)
+    data.updated = localDay()
     await fs.writeFile(filePath, JSON.stringify(data, null, 2))
     autoMemory('Inbox', `добавлено: ${item.text || item.id}`)
     res.json(item)
@@ -307,7 +322,7 @@ app.delete('/api/inbox/:id', async (req, res) => {
   try {
     const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
     data.items = data.items.filter(i => i.id !== req.params.id)
-    data.updated = new Date().toISOString().slice(0, 10)
+    data.updated = localDay()
     await fs.writeFile(filePath, JSON.stringify(data, null, 2))
     res.json({ ok: true })
   } catch (e) {
@@ -337,7 +352,7 @@ async function mutateEvents(req, res) {
         Object.assign(old, input, { id: old.id })
         return old
       }
-      const event = { id: 'event-' + randomUUID(), title: '', date: new Date().toISOString().slice(0, 10), time: null, duration_min: null, type: 'event', notes: '', ...input }
+      const event = { id: 'event-' + randomUUID(), title: '', date: localDay(), time: null, duration_min: null, type: 'event', notes: '', ...input }
       if (data.events.some(item => item.id === event.id)) throw Object.assign(new Error('Event id already exists'), { status: 409 })
       data.events.push(event)
       return event
@@ -355,7 +370,7 @@ app.delete('/api/events/:id', mutateEvents)
 // ─── Context for local AI runtimes ────────────────────────────────
 
 app.get('/api/context', async (req, res) => {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   try {
     const treeData = await readTree()
     const nodes = treeData.nodes
@@ -378,7 +393,7 @@ app.get('/api/context', async (req, res) => {
     let habitDefs = [], habitLog = {}, habitScore = 0
     try {
       const h = JSON.parse(await fs.readFile(path.join(VAULT, 'habits/definitions.json'), 'utf-8'))
-      habitDefs = (h.categories || []).flatMap(c => c.habits.filter(x => x.active))
+      habitDefs = (h.categories || []).flatMap(c => (c.habits || []).filter(x => x.active && (!x.paused_until || x.paused_until < today) && (!x.active_until || x.active_until >= today)))
     } catch {}
     try {
       const log = JSON.parse(await fs.readFile(path.join(VAULT, `habits/log/${today}.json`), 'utf-8'))
@@ -392,7 +407,7 @@ app.get('/api/context', async (req, res) => {
       scheduled_today: scheduledToday.map(n => ({ title: n.title, sphere: rootTitle(n) })),
       top_tasks: top.map(n => ({ title: n.title, status: n.status, sphere: rootTitle(n) })),
       habits: {
-        done: habitDefs.filter(h => { const v = habitLog[h.id]; return v !== null && v !== undefined && v !== false }).length,
+        done: habitDefs.filter(h => habitIsDone(h, habitLog[h.id])).length,
         total: habitDefs.length,
         score: habitScore,
       },
@@ -516,7 +531,7 @@ app.post('/api/insights', async (req, res) => {
   const filePath = path.join(VAULT, 'insights/index.json')
   try {
     const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const insight = {
       id: `ins-${Date.now()}`,
       title: '',
@@ -544,7 +559,7 @@ app.patch('/api/insights/:id', async (req, res) => {
     const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
     const idx = data.insights.findIndex(i => i.id === req.params.id)
     if (idx === -1) return res.status(404).json({ error: 'insight not found' })
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     data.insights[idx] = { ...data.insights[idx], ...req.body, updated: today }
     data.updated = today
     await fs.writeFile(filePath, JSON.stringify(data, null, 2))
@@ -569,7 +584,7 @@ app.get('/api/news', async (req, res) => {
 app.post('/api/news', async (req, res) => {
   try {
     const data = await readNews()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const incoming = Array.isArray(req.body.items) ? req.body.items : [req.body]
     const added = []
     for (const item of incoming) {
@@ -604,7 +619,7 @@ app.patch('/api/news/:id', async (req, res) => {
     const data = await readNews()
     const idx = data.items.findIndex(i => i.id === req.params.id)
     if (idx === -1) return res.status(404).json({ error: 'news item not found' })
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     data.items[idx] = { ...data.items[idx], ...req.body, updated: today }
     data.updated = today
     await writeNews(data)
@@ -689,7 +704,7 @@ function parseRssXml(xml, source) {
     const summary = clean(rawDesc.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').slice(0, 220)
     let published = null
     const d = new Date(get('pubDate') || get('published') || get('updated'))
-    if (!isNaN(d.getTime())) published = d.toISOString().slice(0, 10)
+    if (!isNaN(d.getTime())) published = localDay(d)
     items.push({
       title, url: link, summary,
       source_name: source.name, source_id: source.id,
@@ -702,7 +717,7 @@ function parseRssXml(xml, source) {
 async function refreshNewsFromSources() {
   const data = await readNews()
   const known = new Set((data.items || []).map(i => i.url).filter(Boolean))
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   let added = 0
   for (const src of (data.sources || []).filter(s => s.enabled)) {
     try {
@@ -771,13 +786,13 @@ async function readMemories() {
   try {
     return JSON.parse(await fs.readFile(MEMORIES_FILE, 'utf-8'))
   } catch {
-    return { _type: 'memories', updated: new Date().toISOString().slice(0, 10), entries: [] }
+    return { _type: 'memories', updated: localDay(), entries: [] }
   }
 }
 
 async function writeMemories(data) {
   await fs.mkdir(MEMORIES_DIR, { recursive: true })
-  data.updated = new Date().toISOString().slice(0, 10)
+  data.updated = localDay()
   await fs.writeFile(MEMORIES_FILE, JSON.stringify(data, null, 2))
 }
 
@@ -785,7 +800,7 @@ async function writeMemories(data) {
 async function autoMemory(label, detail) {
   try {
     const data = await readMemories()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const entry = {
       id: `mem-auto-${Date.now()}`,
       date: today,
@@ -819,7 +834,7 @@ app.get('/api/memories', async (req, res) => {
 app.post('/api/memories', async (req, res) => {
   try {
     const data = await readMemories()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const entry = {
       id: `mem-${Date.now()}`,
       date: today,
@@ -842,7 +857,7 @@ app.patch('/api/memories/:id', async (req, res) => {
     const data = await readMemories()
     const idx = data.entries.findIndex(e => e.id === req.params.id)
     if (idx === -1) return res.status(404).json({ error: 'entry not found' })
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     data.entries[idx] = { ...data.entries[idx], ...req.body, updated: today }
     await writeMemories(data)
     res.json(data.entries[idx])
@@ -861,7 +876,7 @@ app.delete('/api/memories/:id', async (req, res) => {
     if (removed.auto && removed.date) {
       const rdata = await readFeedReactions()
       rdata.reactions.push({ ref: `auto-mem:${removed.date}`, type: 'done', ts: new Date().toISOString() })
-      rdata.updated = new Date().toISOString().slice(0, 10)
+      rdata.updated = localDay()
       await fs.mkdir(path.dirname(FEED_REACTIONS_FILE), { recursive: true })
       await fs.writeFile(FEED_REACTIONS_FILE, JSON.stringify(rdata, null, 2))
     }
@@ -882,7 +897,7 @@ app.post('/api/memories/:id/photos', upload.array('photos', 10), async (req, res
       original_name: f.originalname,
     }))
     data.entries[idx].photos = [...(data.entries[idx].photos || []), ...photos]
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     data.entries[idx].updated = today
     await writeMemories(data)
     res.json({ photos, entry: data.entries[idx] })
@@ -902,7 +917,7 @@ function daysSince(dateStr) {
 
 app.get('/api/pulse', async (req, res) => {
   const alerts = []
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const isSnoozed = (item) => item.snoozed_until && item.snoozed_until >= today
 
   try {
@@ -982,7 +997,7 @@ app.get('/api/pulse', async (req, res) => {
 
 app.post('/api/pulse/ack', async (req, res) => {
   const { type, sphere, id, snooze_days } = req.body
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const snoozed_until = snooze_days ? addDaysToDate(today, snooze_days) : null
 
   const applyAck = (item) => {
@@ -1025,13 +1040,13 @@ async function readCalendars() {
   try {
     return JSON.parse(await fs.readFile(CALENDARS_FILE, 'utf-8'))
   } catch {
-    return { updated: new Date().toISOString().slice(0, 10), calendars: [] }
+    return { updated: localDay(), calendars: [] }
   }
 }
 
 async function writeCalendars(data) {
   await fs.mkdir(path.dirname(CALENDARS_FILE), { recursive: true })
-  data.updated = new Date().toISOString().slice(0, 10)
+  data.updated = localDay()
   await fs.writeFile(CALENDARS_FILE, JSON.stringify(data, null, 2))
 }
 
@@ -1039,13 +1054,13 @@ async function readNews() {
   try {
     return JSON.parse(await fs.readFile(NEWS_FILE, 'utf-8'))
   } catch {
-    return { _type: 'news_feed', updated: new Date().toISOString().slice(0, 10), items: [], sources: [] }
+    return { _type: 'news_feed', updated: localDay(), items: [], sources: [] }
   }
 }
 
 async function writeNews(data) {
   await fs.mkdir(path.dirname(NEWS_FILE), { recursive: true })
-  data.updated = new Date().toISOString().slice(0, 10)
+  data.updated = localDay()
   await fs.writeFile(NEWS_FILE, JSON.stringify(data, null, 2))
 }
 
@@ -1124,7 +1139,7 @@ async function readTree() {
     return data
   } catch (error) {
     if (error.code !== 'ENOENT') throw error
-    const data = { _type: 'tree', updated: new Date().toISOString().slice(0, 10), nodes: [] }
+    const data = { _type: 'tree', updated: localDay(), nodes: [] }
     Object.defineProperty(data, TREE_VERSION, { value: null, writable: true })
     return data
   }
@@ -1142,7 +1157,7 @@ async function writeTree(data) {
       error.code = 'TREE_CONFLICT'
       throw error
     }
-    data.updated = new Date().toISOString().slice(0, 10)
+    data.updated = localDay()
     const content = JSON.stringify(data, null, 2)
     const temporary = `${TREE_FILE}.${randomUUID()}.tmp`
     try {
@@ -1187,8 +1202,8 @@ app.post('/api/setup/reset', requireLifeOsUiOrigin, async (req, res) => {
     emptyTree.nodes = []
     await writeTree(emptyTree)
     await fs.writeFile(path.join(VAULT, 'habits/definitions.json'), JSON.stringify({ categories: [] }, null, 2))
-    await fs.writeFile(path.join(VAULT, 'inbox/current.json'), JSON.stringify({ _type: 'inbox', updated: new Date().toISOString().slice(0, 10), items: [] }, null, 2))
-    await fs.writeFile(path.join(VAULT, 'insights/index.json'), JSON.stringify({ updated: new Date().toISOString().slice(0, 10), insights: [] }, null, 2))
+    await fs.writeFile(path.join(VAULT, 'inbox/current.json'), JSON.stringify({ _type: 'inbox', updated: localDay(), items: [] }, null, 2))
+    await fs.writeFile(path.join(VAULT, 'insights/index.json'), JSON.stringify({ updated: localDay(), insights: [] }, null, 2))
     await fs.writeFile(path.join(VAULT, 'memories/index.json'), JSON.stringify({ entries: [] }, null, 2))
     await fs.writeFile(PEOPLE_INDEX, JSON.stringify({ people: [] }, null, 2))
     await Promise.all((listsIndex.collections || []).map(collection => {
@@ -1331,7 +1346,7 @@ app.post('/api/planner/commit', requireLocalPlanner, async (req, res) => {
   if (req.body?.confirmed !== true) return res.status(400).json({ error: 'explicit task confirmation is required' })
   try {
     const tree = await readTree()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const task = plannerTaskFromCommit(req.body?.task, {
       nodes: tree.nodes,
       id: `node-${randomUUID()}`,
@@ -1367,10 +1382,10 @@ app.patch('/api/planner/tasks/:id', requireLocalPlanner, async (req, res) => {
     const previous = tree.nodes[index]
     const start = req.body?.start === true
     if (req.body?.start != null && !start) return res.status(400).json({ error: 'start must be true' })
-    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tomsk' })
+    const today = localDay()
     const blocked = isBlocked(previous, new Map(tree.nodes.map(node => [node.id, node])))
     const appointmentUnavailable = Boolean(previous.due && previous.date_kind !== 'deadline' && (
-      previous.due !== today || (previous.time && new Date(`${previous.due}T${previous.time}:00+07:00`).getTime() > Date.now())
+      previous.due !== today || (previous.time && new Date(`${previous.due}T${previous.time}:00`).getTime() > Date.now())
     ))
     const unavailable = previous.available_from > today || blocked || appointmentUnavailable
     const hasChildren = tree.nodes.some(node => node.parent_id === previous.id)
@@ -1398,7 +1413,7 @@ app.patch('/api/planner/tasks/:id', requireLocalPlanner, async (req, res) => {
       return res.status(409).json({ error: 'task moved since it was shown; reload and retry' })
     }
     if (req.body?.planner === null || req.body?.planner?.lane === 'triage') {
-      const task = { ...previous, planner: null, updated: new Date().toISOString().slice(0, 10) }
+      const task = { ...previous, planner: null, updated: localDay() }
       tree.nodes[index] = task
       await writeTree(tree)
       return res.json({ task })
@@ -1413,7 +1428,7 @@ app.patch('/api/planner/tasks/:id', requireLocalPlanner, async (req, res) => {
     }, {
       fallbackRank: nextPlannerRank(tree.nodes, requestedLane),
     })
-    const task = { ...previous, status: start ? 'in_progress' : previous.status, planner, updated: new Date().toISOString().slice(0, 10) }
+    const task = { ...previous, status: start ? 'in_progress' : previous.status, planner, updated: localDay() }
     tree.nodes[index] = task
     if (JSON.stringify(task) !== JSON.stringify(previous)) await writeTree(tree)
     res.json({ task })
@@ -1427,7 +1442,7 @@ app.post('/api/planner/reorder', requireLocalPlanner, async (req, res) => {
     const tree = await readTree()
     const reordered = reorderPlannerTasks(tree.nodes, req.body || {})
     const updatedIds = new Set(req.body?.ordered_ids || [])
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     tree.nodes = reordered.map(node => updatedIds.has(node.id) ? { ...node, updated: today } : node)
     await writeTree(tree)
     res.json({ tasks: plannerQueue(tree.nodes) })
@@ -1455,7 +1470,7 @@ app.post('/api/product-intelligence/initiatives/:id/work-items', async (req, res
     const outcome = String(req.body?.outcome || '').trim()
     if (!title || !outcome) return res.status(400).json({ error: 'title and outcome are required' })
     const tree = await readTree()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const root = deliveryRoot(tree, today)
     const node = deliveryNode({ id: `node-${randomUUID()}`, title, outcome, parent_id: root.id, today })
     const initiative = await productIntelligence.attachWorkItem(req.params.id, node.id)
@@ -1474,7 +1489,7 @@ app.post('/api/tree/:id/dependencies', async (req, res) => {
     if (!source) return res.status(404).json({ error: 'node not found' })
     if (workContext(source) !== 'delivery') return res.status(409).json({ error: 'delivery work required' })
     if (!title || !outcome) return res.status(400).json({ error: 'title and outcome are required' })
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const dependency = deliveryNode({ id: `node-${randomUUID()}`, title, outcome, parent_id: source.parent_id, today })
     source.blocked_by = [...new Set([...(source.blocked_by || []), dependency.id])]
     source.updated = today
@@ -1547,7 +1562,7 @@ app.post('/api/tree', async (req, res) => {
     if (req.body?.work_context === 'delivery') return res.status(409).json({ error: 'delivery work must be created from an approved initiative' })
     if (req.body?.status === 'blocked') return res.status(400).json({ error: 'blocked is derived from blocked_by and cannot be stored' })
     const data = await readTree()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const dateError = taskDateError(req.body || {})
     if (dateError) return res.status(400).json({ error: dateError })
     if (req.body?.id && data.nodes.some(item => item.id === req.body.id)) {
@@ -1599,7 +1614,7 @@ app.patch('/api/tree/:id', async (req, res) => {
     const data = await readTree()
     const idx = data.nodes.findIndex(n => n.id === req.params.id)
     if (idx === -1) return res.status(404).json({ error: 'node not found' })
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const oldNode = data.nodes[idx]
     const { complete_leaf_only: leafOnly, ...patch } = req.body || {}
     if (leafOnly !== undefined && (leafOnly !== true || patch.status !== 'done' ||
@@ -1996,7 +2011,7 @@ app.get('/api/profile', async (req, res) => {
 app.put('/api/profile', async (req, res) => {
   try {
     const existing = await fs.readFile(path.join(VAULT, 'profile/profile.json'), 'utf-8').then(JSON.parse).catch(() => ({}))
-    const updated = { ...existing, ...req.body, updated: new Date().toISOString().slice(0, 10) }
+    const updated = { ...existing, ...req.body, updated: localDay() }
     await fs.mkdir(path.join(VAULT, 'profile'), { recursive: true })
     await fs.writeFile(path.join(VAULT, 'profile/profile.json'), JSON.stringify(updated, null, 2))
     res.json(updated)
@@ -2147,7 +2162,7 @@ async function readAiCards() {
 
 async function writeAiCards(cards) {
   await fs.mkdir(path.dirname(FEED_AI_CARDS_FILE), { recursive: true })
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   let reactionsData
   try { reactionsData = await readFeedReactions() } catch { reactionsData = { reactions: [] } }
   const doneRefs = new Set(reactionsData.reactions.filter(r => r.type === 'done').map(r => r.ref))
@@ -2190,37 +2205,17 @@ function seededShuffle(arr, rng) {
   return a
 }
 
-function habitValueDone(habit, value) {
-  if (value === undefined || value === null) return false
-  if (habit.kind === 'toggle') return value === true
-  if (habit.kind === 'counter') {
-    const n = typeof value === 'number' ? value : 0
-    return habit.target === 0 ? n === 0 : n >= (habit.target || 1)
-  }
-  if (habit.kind === 'cycle') {
-    return Boolean(value) && (habit.cycle_scores?.[value] || 0) >= (habit.max_score || 1)
-  }
-  if (habit.kind === 'time_window') {
-    const tw = habit.time_window
-    if (!tw || typeof value !== 'string') return false
-    if (tw.end <= tw.start) return value >= tw.start || value <= tw.end
-    return value >= tw.start && value <= tw.end
-  }
-  if (habit.kind === 'bp') return Array.isArray(value) && value.length > 0
-  return false
-}
-
 function calcHabitStreak(habit, logs) {
   let streak = 0
   const d = new Date()
-  const key = () => d.toISOString().slice(0, 10)
-  while (habitValueDone(habit, logs[key()]?.habits?.[habit.id])) {
+  const key = () => localDay(d)
+  while (habitIsDone(habit, logs[key()]?.habits?.[habit.id])) {
     streak++
     d.setDate(d.getDate() - 1)
   }
   if (streak > 0) return streak
   d.setDate(d.getDate() + 1)
-  while (habitValueDone(habit, logs[key()]?.habits?.[habit.id])) {
+  while (habitIsDone(habit, logs[key()]?.habits?.[habit.id])) {
     streak++
     d.setDate(d.getDate() - 1)
   }
@@ -2250,7 +2245,7 @@ const FEED_SIZE = 10
 app.get('/api/feed', async (req, res) => {
   try {
     const now = new Date()
-    const today = now.toISOString().slice(0, 10)
+    const today = localDay(now)
     const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000)
 
     const [treeData, memoriesData, insightsData, newsData, reactionsData, listsIndex, habitDefs, inboxData, savedAiCards] = await Promise.all([
@@ -2444,7 +2439,7 @@ app.get('/api/feed', async (req, res) => {
       for (const habit of cat.habits || []) {
         if (!habit.active) continue
         const streak = calcHabitStreak(habit, logs)
-        const todayDone = habitValueDone(habit, logs[today]?.habits?.[habit.id])
+        const todayDone = habitIsDone(habit, logs[today]?.habits?.[habit.id])
         if (todayDone && streak >= 7) {
           const ref = `streak:${habit.id}:${today}`
           if (!dismissed.has(ref)) cards.push({ ref, type: 'streak', ts: today, habit: { id: habit.id, label: habit.label }, streak, broken: false,
@@ -2478,7 +2473,7 @@ app.get('/api/feed', async (req, res) => {
       const ylog = logs[yest]
       const activeHabits = (habitDefs.categories || []).flatMap(cat => cat.habits || [])
         .filter(h => h.active)
-      const doneHabits = activeHabits.filter(h => habitValueDone(h, ylog?.habits?.[h.id]))
+      const doneHabits = activeHabits.filter(h => habitIsDone(h, ylog?.habits?.[h.id]))
       const missedCount = activeHabits.length - doneHabits.length
       const doneLists = listFiles.flatMap(({ c, items }) =>
         items.filter(i => i.status === 'done' && i.updated === yest).map(i => ({ label: c.label, title: i.title })))
@@ -2894,7 +2889,7 @@ app.post('/api/feed/reactions', async (req, res) => {
     const reaction = { ref, type, ts: now.toISOString() }
     if (req.body.text != null) reaction.text = req.body.text
     data.reactions.push(reaction)
-    data.updated = now.toISOString().slice(0, 10)
+    data.updated = localDay(now)
     await fs.mkdir(path.dirname(FEED_REACTIONS_FILE), { recursive: true })
     await fs.writeFile(FEED_REACTIONS_FILE, JSON.stringify(data, null, 2))
     autoMemory('Реакция', `${type} на ${ref}${req.body.text ? ': ' + req.body.text : ''}`)
@@ -2924,7 +2919,7 @@ async function readNoteJobs() {
 
 async function writeNoteJobs(data) {
   await fs.mkdir(path.dirname(NOTE_JOBS_FILE), { recursive: true })
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const sevenDaysAgo = addDaysToDate(today, -7)
   data.jobs = data.jobs.filter(j => (j.created || '').slice(0, 10) >= sevenDaysAgo)
   if (data.jobs.length > 200) data.jobs = data.jobs.slice(-200)
@@ -2946,7 +2941,7 @@ app.post('/api/feed/note-process', async (req, res) => {
     const now = new Date()
     const reaction = { ref, type: 'note', text, ts: now.toISOString() }
     data.reactions.push(reaction)
-    data.updated = now.toISOString().slice(0, 10)
+    data.updated = localDay(now)
     await fs.mkdir(path.dirname(FEED_REACTIONS_FILE), { recursive: true })
     await fs.writeFile(FEED_REACTIONS_FILE, JSON.stringify(data, null, 2))
 
@@ -2982,7 +2977,7 @@ app.get('/api/feed/note-jobs', async (req, res) => {
 async function processNoteJob(jobId, ref, text, cardType, cardContext) {
   await updateNoteJob(jobId, { status: 'running' })
   try {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const reactionsData = await readFeedReactions()
     const recentReactions = reactionsData.reactions.slice(-20)
 
@@ -3079,7 +3074,7 @@ const GOAL_ANALYSIS_STATUS = new Map()
 // { ref → { status: 'running'|'done'|'error', started_at, finished_at?, error? } }
 
 function currentMonday() {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const dow = new Date().getDay()
   return addDaysToDate(today, dow === 0 ? -6 : 1 - dow)
 }
@@ -3135,7 +3130,7 @@ async function triggerGoalAnalysis(monday, force = false) {
     .filter(c => c.subtitle)
 
   try {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
 
     // load all available context in parallel
     const [treeData, memoriesData, insightsData, inboxData, habitDefs] = await Promise.all([
@@ -3523,7 +3518,7 @@ async function resolveAiCards(specs, today, promptSummary) {
 
 app.post('/api/ai/run', async (req, res) => {
   const { task, params = {} } = req.body || {}
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
 
   if (task === 'feed_extend') {
     const shown = params.shown || []
@@ -3597,7 +3592,7 @@ Rules:
 // ─── Brain init ────────────────────────────────────────────────────
 
 async function initBrain() {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const dirs = ['tree', 'habits/log', 'inbox', 'insights', 'memories/photos', 'lists', 'feed', 'profile']
   for (const d of dirs) await fs.mkdir(path.join(VAULT, d), { recursive: true })
 
@@ -3639,9 +3634,9 @@ async function initBrain() {
   }
 }
 
-const backendServer = app.listen(PORT, async () => {
+const backendServer = app.listen(PORT, HOST, async () => {
   await initBrain()
-  console.log(`Life OS backend running on http://localhost:${PORT}`)
+  console.log(`Life OS backend running on http://${HOST}:${PORT}`)
 })
 
 let shuttingDown = false

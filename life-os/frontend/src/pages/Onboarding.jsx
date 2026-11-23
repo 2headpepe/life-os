@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertCircle, ArrowRight, ArrowUp, ExternalLink, Loader2, CheckCircle2, Play, Sparkles, Terminal, RefreshCw, X } from 'lucide-react'
-import { ai, config as configApi, tree as treeApi } from '../api'
+import { ai, api, config as configApi, habits as habitsApi, tree as treeApi } from '../api'
 import { openInConsole } from '../utils/openInConsole'
 import { pollAiSession } from '../utils/aiSession'
 import ThemeSwitcher from '../components/ui/ThemeSwitcher'
@@ -200,14 +200,13 @@ function CliOnboarding({ cliCommand, onDone }) {
   const [checking, setChecking] = useState(false)
 
   const launch = async () => {
-    await openInConsole(CLI_ONBOARDING_PROMPT)
-    setLaunched(true)
+    if (await openInConsole(CLI_ONBOARDING_PROMPT)) setLaunched(true)
   }
 
   const checkAndContinue = async () => {
     setChecking(true)
     try {
-      const nodes = await fetch('/api/tree').then(r => r.json())
+      const nodes = await treeApi.all()
       const hasUserNodes = nodes.some(n => n.parent_id !== null)
       if (hasUserNodes) {
         onDone()
@@ -603,27 +602,30 @@ export default function Onboarding({ onDone }) {
     if (!habits.length) { setStep(6); return }
     setLoading(true); setError(null)
     try {
-      const current = await fetch('/api/content/habits/definitions.json').then(response => response.ok ? response.json() : { categories: [] })
+      const current = await habitsApi.definitions()
       const categories = current.categories || []
       const index = categories.findIndex(category => category.id === 'onboarding')
       const category = { id: 'onboarding', label: 'Мой старт', habits }
       if (index >= 0) categories[index] = { ...categories[index], habits: [...(categories[index].habits || []), ...habits] }
       else categories.push(category)
-      await fetch('/api/content/habits/definitions.json', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ categories }) })
+      await habitsApi.saveDefinitions({ categories })
       setStep(6)
     } catch (e) { setError(e.message || 'Не удалось сохранить привычки.') }
     setLoading(false)
   }
   const startReset = async () => {
-    const response = await fetch('/api/setup/reset-preview', { method: 'POST' })
-    if (response.ok) setResetPreview(await response.json())
+    try {
+      setResetPreview(await api.post('/setup/reset-preview', {}))
+      setError(null)
+    } catch (error) {
+      setError(error.message || 'Не удалось проверить данные для сброса.')
+    }
   }
   const confirmReset = async () => {
     if (!resetPreview || resetConfirmation !== 'СТЕРЕТЬ ВСЕ ДАННЫЕ') return
     setLoading(true)
     try {
-      const response = await fetch('/api/setup/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation: resetConfirmation }) })
-      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Не удалось удалить данные.')
+      await api.post('/setup/reset', { confirmation: resetConfirmation })
       localStorage.removeItem('life-os:setup-completed'); setResetPreview(null); setResetConfirmation(''); setHasExistingData(false); setStep(0)
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }

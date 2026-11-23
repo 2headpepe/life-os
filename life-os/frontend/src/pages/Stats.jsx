@@ -2,11 +2,10 @@ import { useState, useEffect } from 'react'
 import { Navigate } from 'react-router-dom'
 import { habits } from '../api'
 import { computeHabitScore, habitIsDone } from '../utils/habitScoring'
+import { addLocalDays, localDay } from '../utils/calendarDay'
 
 function addDays(dateStr, n) {
-  const d = new Date(dateStr + 'T12:00:00')
-  d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
+  return addLocalDays(dateStr, n)
 }
 
 function calcStreak(habitId, habit, logs, dates) {
@@ -55,7 +54,7 @@ function calcPct(habitId, habit, logs, dates) {
 }
 
 export function HabitDynamics({ embedded = false, onOpenTracking }) {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const [defs, setDefs] = useState([])
   const [logs, setLogs] = useState({})
   const [scores, setScores] = useState([])

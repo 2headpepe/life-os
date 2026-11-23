@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ClipboardCopy } from 'lucide-react'
 import { serializePageContext } from '../utils/pageContext'
+import { api } from '../api'
 
 export default function PageContextHandoff() {
   const pasteShortcut = navigator.platform.includes('Mac') ? '⌘V' : 'Ctrl+V'
@@ -26,8 +27,7 @@ export default function PageContextHandoff() {
 
   async function showCodex() {
     try {
-      const response = await fetch('/api/codex/activate', { method: 'POST' })
-      if (!response.ok) throw new Error('activation failed')
+      await api.post('/codex/activate', {})
       setMessage(`Codex открыт. Вставьте контекст в нужный уже открытый чат (${pasteShortcut}).`)
     } catch {
       setMessage(`Откройте уже запущенный Codex вручную и вставьте скопированный контекст (${pasteShortcut}).`)

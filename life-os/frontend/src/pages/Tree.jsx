@@ -8,6 +8,7 @@ import { Circle, Clock, CircleDot, CheckCircle2, CircleDashed, CircleMinus, Lock
 import { tree as treeApi, habits as habitsApi, productIntelligence } from '../api'
 import { openInConsole } from '../utils/openInConsole'
 import { entityPath, legacyNodePath, nodeLineage, nodePath, resolveNodePath } from '../utils/entityLinks'
+import { localDay } from '../utils/calendarDay'
 import { plannerMeta } from '../utils/plannerSignals'
 import { leafStats, goalProgressLabel } from '../utils/goalProgress'
 
@@ -168,17 +169,31 @@ function AddChildInput({ onAdd, onCancel, placeholder = 'Название...' })
 
 function EditField({ value, onSave, placeholder, multiline, className = '' }) {
   const [editing, setEditing] = useState(false)
+  const [error, setError] = useState('')
   const [draft, setDraft] = useState(value || '')
   const ref = useRef()
+  const saving = useRef(false)
   useEffect(() => { if (editing) ref.current?.focus() }, [editing])
   useEffect(() => { if (!editing) setDraft(value || '') }, [value, editing])
-  const commit = () => { setEditing(false); if (draft !== (value || '')) onSave(draft || null) }
-  const cancel = () => { setEditing(false); setDraft(value || '') }
+  const commit = async () => {
+    if (saving.current) return
+    if (draft === (value || '')) { setEditing(false); return }
+    saving.current = true
+    try {
+      await onSave(draft || null)
+      setError('')
+      setEditing(false)
+    } catch {
+      setError('Не удалось сохранить. Попробуй ещё раз.')
+      setEditing(false)
+    } finally { saving.current = false }
+  }
+  const cancel = () => { setEditing(false); setDraft(value || ''); setError('') }
   if (!editing) return (
-    <span onClick={() => setEditing(true)}
+    <><span onClick={() => setEditing(true)}
       className={`cursor-text hover:bg-gray-50 dark:hover:bg-gray-800/60 rounded px-0.5 -mx-0.5 transition-colors whitespace-pre-wrap ${!value ? 'text-gray-300 dark:text-gray-600 italic' : ''} ${className}`}>
       {value || placeholder}
-    </span>
+    </span>{error && <span role="alert" className="ml-2 text-xs text-rose-600">{error}</span>}</>
   )
   if (multiline) return (
     <textarea ref={ref} value={draft} onChange={e => setDraft(e.target.value)}
@@ -662,7 +677,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
     node.blocked_by.some(bid => nodesMap[bid]?.status !== 'done')
   const stats = leafStats(node, nodesMap)
   const pct = stats.total > 0 ? Math.round(stats.done / stats.total * 100) : 0
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const isOverdue = node.due && node.due < today
   const _statusCfg = STATUS_CFG[node.status || 'undefined'] || STATUS_CFG.undefined
   const statusCls = (!isLeaf && (!node.status || node.status === 'undefined') && stats.undef === 0) ? 'text-gray-300 dark:text-gray-600' : _statusCfg.cls
@@ -872,7 +887,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
           <div>
             <div className="text-xs text-gray-400 mb-0.5">Результат</div>
             <EditField value={node.outcome}
-              onSave={v => { treeApi.update(node.id, { outcome: v }); onUpdate() }}
+              onSave={async v => { await treeApi.update(node.id, { outcome: v }); await onUpdate() }}
               placeholder="Что будет, когда сделано..."
               className="text-xs text-gray-600 dark:text-gray-400"
             />
@@ -880,7 +895,7 @@ function OutlinerRow({ node, depth, rootColor, nodesMap, allNodes, onUpdate, onU
           <div>
             <div className="text-xs text-gray-400 mb-0.5">Заметки</div>
             <EditField value={node.notes}
-              onSave={v => { treeApi.update(node.id, { notes: v }); onUpdate() }}
+              onSave={async v => { await treeApi.update(node.id, { notes: v }); await onUpdate() }}
               placeholder="Контекст, детали..."
               multiline
               className="text-xs text-gray-600 dark:text-gray-400"
