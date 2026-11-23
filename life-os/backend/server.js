@@ -22,6 +22,7 @@ import { isPlannerCandidate, migratePlannerState, patchPlanner, plannerQueue, pl
 
 const app = express()
 const PORT = process.env.PORT || 3001
+const HOST = '127.0.0.1'
 const VAULT = process.env.VAULT_PATH || path.join(import.meta.dirname, '../../brain/content')
 const WORK_DIR = process.env.WORK_DIR || path.resolve(import.meta.dirname, '../..')
 const LOCAL_UI_ORIGINS = new Set((process.env.LIFE_OS_UI_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173,http://[::1]:5173')
@@ -3639,9 +3640,9 @@ async function initBrain() {
   }
 }
 
-const backendServer = app.listen(PORT, async () => {
+const backendServer = app.listen(PORT, HOST, async () => {
   await initBrain()
-  console.log(`Life OS backend running on http://localhost:${PORT}`)
+  console.log(`Life OS backend running on http://${HOST}:${PORT}`)
 })
 
 let shuttingDown = false
