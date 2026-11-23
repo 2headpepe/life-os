@@ -51,13 +51,13 @@ brain/content/
 
 | Маршрут | Файл | Назначение |
 |---|---|---|
-| `/` | `Feed.jsx` | Лента задач, привычек, воспоминаний, подсказок и активной очереди `Сейчас` |
-| `/today` | `Today.jsx` | План на день с активной очередью `Сейчас` и наступившими follow-up |
+| `/` | `Feed.jsx` | Лента задач, привычек, воспоминаний, подсказок и ручных приоритетов |
+| `/today` | `Today.jsx` | Главная доступная задача по ручному приоритету и ближайшее календарное обязательство |
 | `/goals` | `Tree.jsx` | Дерево сфер, целей и задач с контекстом ручной очереди на листьях |
-| `/pool` | `Pool.jsx` | Инвентарь личных задач в list-режиме и единая очередь активной работы (`Сейчас`, `Следующая`, `Ожидание`) в режиме доски |
+| `/pool` | `Pool.jsx` | Инвентарь личных задач и доска ручных приоритетов (`Сегодня`, `Следующая`, `Позже`) |
 | `/habits` | `Habits.jsx` | Трекинг привычек и история |
 | `/lists` | `Lists.jsx` | Личные списки |
-| `/calendar` | `Calendar.jsx` | Календарь, синхронизация Google Calendar и визуальные follow-up из Waiting |
+| `/calendar` | `Calendar.jsx` | Календарь задач и рабочих интервалов с явной синхронизацией Google Calendar |
 | `/inbox` | `Inbox.jsx` | Неразобранные записи |
 | `/insights` | `Insights.jsx` | Инсайты и тематические заметки |
 | `/memories` | `Memories.jsx` | Воспоминания и фотографии |
@@ -84,13 +84,13 @@ DELETE /api/tree/:id             удалить узел и потомков
 GET    /api/tree/leaves          получить задачи без потомков
 GET    /api/tree/spheres         получить корневые сферы
 
-GET    /api/planner/queue        personal-листья со статусом `in_progress`, находящиеся в активной очереди
+GET    /api/planner/queue        приоритетные незавершённые personal-листья
 POST   /api/planner/commit       локальный chat-capture bridge (`confirmed: true`); доска `/pool` его не вызывает
 PATCH  /api/planner/tasks/:id    назначить или изменить placement существующей задачи
 POST   /api/planner/reorder      сохранить ручной порядок одной полосы
 POST   /api/planner/migrate      локально применить миграцию прежних названий полос planner
 
-GET    /api/feed                 rule-based лента, включая `Сейчас` и наступившие Waiting follow-up
+GET    /api/feed                 rule-based лента, включая сигналы ручных приоритетов
 
 GET    /api/context              краткий контекст дня
 GET    /api/search?q=            поиск

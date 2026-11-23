@@ -89,7 +89,7 @@ test('repeated events collapse into a safe grouped signal without identifiers or
 test('registry rejects a function bound to an unknown manifest identity', () => {
   assert.throws(() => validateSignalRegistry({
     schema_version: 1, id: 'life-os-analytics-signal-registry', manifest_ref: 'life-os/design-surface-manifest.json', manifest_revision: 4,
-    functions: [{ id: 'invalid', label: 'Invalid', surface_ids: ['missing'], signature: { type: 'screen_view' }], flows: [],
+    functions: [{ id: 'invalid', label: 'Invalid', surface_ids: ['missing'], signature: { type: 'screen_view' } }], flows: [],
   }, { surfaces: [{ id: 'feed', status: 'active', route: '/' }], journeys: [] }), /invalid function surface identity/)
 })
 

@@ -111,6 +111,21 @@ test('hidden calendar-layer nodes stay hidden and visible calendar items stay ou
   assert.equal(result.obligation.source, 'node')
 })
 
+test('a visible calendar task with Today priority is both the main task and an obligation', () => {
+  const prioritized = leaf('prioritized', {
+    due: friday, date_kind: 'scheduled', calendar_id: 'personal', status: 'scheduled',
+    planner: { lane: 'focus', rank: 1 },
+  })
+  const ordinary = leaf('ordinary')
+  const visible = run([prioritized, ordinary], { calendarVisible: () => true })
+  assert.equal(visible.task.id, prioritized.id)
+  assert.equal(visible.obligation.item.id, prioritized.id)
+  assert.deepEqual(visible.steps.map(task => task.id), [prioritized.id, ordinary.id])
+  const hidden = run([prioritized, ordinary], { calendarVisible: () => false })
+  assert.equal(hidden.task.id, ordinary.id)
+  assert.equal(hidden.obligation, undefined)
+})
+
 test('timed tasks become actionable at their local appointment and open dependencies remain binding', () => {
   const call = leaf('call', { due: friday, time: '19:00', date_kind: 'scheduled' })
   assert.equal(run([call]).task, undefined)

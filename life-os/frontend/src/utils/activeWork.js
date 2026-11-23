@@ -92,7 +92,9 @@ export function selectNextSteps({ nodes, queue, events = [], now, recovery = fal
     if (node.calendar_id && !calendarVisible(node)) continue
     const task = { ...node, planner: plannerById.get(node.id) }
     if (task.status !== 'waiting_for_review') addAppointment(task, task.due, 'node', task.date_kind || 'dated')
-    if (task.calendar_id) continue
+    // Calendar-linked tasks stay obligations; an explicit manual priority also
+    // makes them eligible for the main task without removing that obligation.
+    if (task.calendar_id && !plannerLane(task)) continue
     tasks.push(task)
     if (!STARTABLE.has(task.status || 'undefined') && !(task.status === 'someday' && task.planner)) continue
     const reason = reasonToWait(task, byId, today, now)
