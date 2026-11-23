@@ -39,7 +39,7 @@ async function fixture() {
   return root
 }
 
-test('AI Review overview exposes only concise local report results and initiative progress', async t => {
+test('AI Review overview exposes local report results and initiative progress', async t => {
   const root = await fixture()
   t.after(() => fs.rm(root, { recursive: true, force: true }))
   const model = await productIntelligenceStore(root).readModel({ includeLocalOverview: true })
@@ -60,6 +60,25 @@ test('AI Review overview exposes only concise local report results and initiativ
       { id: 'work:active', title: 'Проверить понятность карточек', status: 'in_progress', blockers: 1 },
     ],
   })
+})
+
+test('daily and weekly details retain full narrative while excluding evidence appendices', async t => {
+  const root = await fixture()
+  t.after(() => fs.rm(root, { recursive: true, force: true }))
+  const longParagraph = 'Полный текст обзора нужен для чтения. '.repeat(30)
+  const report = `# Обзор\n\n${longParagraph}\n\n## Что подтвердилось\n${longParagraph}\n\n## Что требует проверки\n${longParagraph}\n\n## Следующее действие\nПрочитать весь итог.\n\n## Доказательства\n- ops/ai-sessions/transcripts/private.jsonl\n`
+  await fs.writeFile(path.join(root, 'ops/ai-sessions/daily/2026-11-15.md'), report)
+  await fs.writeFile(path.join(root, 'ops/ai-sessions/weekly/2026-W46.md'), report)
+  const model = await productIntelligenceStore(root).readModel({ includeLocalOverview: true })
+  for (const kind of ['daily', 'weekly']) {
+    const entry = model.overview.streams.find(stream => stream.kind === kind)
+    assert.equal(entry.sections.length, 4)
+    assert.equal(entry.sections[0].text, longParagraph.trim())
+    assert.equal(entry.sections[1].text, longParagraph.trim())
+    assert.equal(entry.sections[3].text, 'Прочитать весь итог.')
+    assert.ok(entry.summary.length < entry.sections[0].text.length)
+    assert.doesNotMatch(JSON.stringify(entry), /private\.jsonl/)
+  }
 })
 
 test('AI Review summaries are available only to loopback callers', () => {

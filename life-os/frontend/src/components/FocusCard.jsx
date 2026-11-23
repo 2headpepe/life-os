@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { AlertCircle, CalendarClock, Check, ChevronDown, ChevronRight, Loader2, NotebookPen, Pin, Sparkles, X } from 'lucide-react'
 import { focus as focusApi } from '../api'
 import sleepRoomScene from '../focus-sleep-scene.jpg'
+import { localDay } from '../utils/calendarDay'
 
 const TONE_CLASS = {
   success: 'border-emerald-200/70 bg-emerald-50/55 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-950/70 dark:bg-emerald-950/15 dark:text-emerald-200 dark:hover:bg-emerald-950/25',
@@ -217,7 +218,7 @@ function CheckpointSection({ section, onAction, pending }) {
     <div className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50/70 px-2.5 py-2 dark:border-gray-800 dark:bg-gray-800/35">
       <CalendarClock size={14} className="shrink-0 text-gray-400" />
       <span className="min-w-0 flex-1 text-xs text-gray-600 dark:text-gray-300"><span className="font-semibold">{section.title}</span><span className="text-gray-400"> · {due}</span></span>
-      {node.due && node.due <= new Date().toISOString().slice(0, 10) && <button type="button" onClick={() => onAction(section.id, 'complete')} disabled={pending} className="rounded-md px-1.5 py-1 text-[11px] font-semibold text-gray-500 hover:bg-white hover:text-gray-900 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-100">Готово</button>}
+      {node.due && node.due <= localDay() && <button type="button" onClick={() => onAction(section.id, 'complete')} disabled={pending} className="rounded-md px-1.5 py-1 text-[11px] font-semibold text-gray-500 hover:bg-white hover:text-gray-900 disabled:opacity-50 dark:hover:bg-gray-700 dark:hover:text-gray-100">Готово</button>}
     </div>
   )
 }

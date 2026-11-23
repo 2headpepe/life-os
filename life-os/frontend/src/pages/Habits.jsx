@@ -5,8 +5,11 @@ import { Check, X, Target, GripVertical, MoreHorizontal, Clock3, Power } from 'l
 import { habits, tree as treeApi } from '../api'
 import { useRecoveryMode } from '../context/RecoveryModeContext'
 import { computeHabitScore, habitIsDone, inTimeWindow } from '../utils/habitScoring'
+import { addLocalDays, localDay, localWeekStart } from '../utils/calendarDay'
 import { HabitDynamics } from './Stats'
-import { directEntityId, entityPath } from '../utils/entityLinks'
+import { directEntityId } from '../utils/entityLinks'
+import HabitInfo from '../components/HabitInfo'
+import TrackInput from '../components/HabitTrackInput'
 import { moveHabitToCategory, orderedFoundationHabits, orderedHabits, reorderFoundationHabits, reorderHabitsInCategory } from '../utils/habitOrdering'
 
 export { computeHabitScore, habitIsDone, inTimeWindow } from '../utils/habitScoring'
@@ -14,9 +17,7 @@ export { computeHabitScore, habitIsDone, inTimeWindow } from '../utils/habitScor
 const DAYS_SHORT = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 
 function addDays(dateStr, n) {
-  const d = new Date(dateStr + 'T12:00:00')
-  d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
+  return addLocalDays(dateStr, n)
 }
 
 function formatDate(dateStr) {
@@ -26,170 +27,11 @@ function formatDate(dateStr) {
 }
 
 function getWeekStart(dateStr) {
-  const d = new Date(dateStr + 'T12:00:00')
-  const dow = (d.getDay() + 6) % 7
-  d.setDate(d.getDate() - dow)
-  return d.toISOString().slice(0, 10)
+  return localWeekStart(dateStr)
 }
 
 function getWeekDates(weekStart) {
   return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
-}
-
-// ─── Tracking tab: full-size inputs ────────────────────────────────
-
-export const CYCLE_COLORS = {
-  none: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800',
-  no_toxicity: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 border-green-200',
-  positive: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border-blue-200',
-  deep: 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-400 border-purple-200',
-  light: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border-amber-200',
-  heavy: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 border-red-200',
-  over: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 border-red-200',
-  within: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 border-green-200',
-  partial: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border-amber-200',
-  done: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 border-green-200',
-  nothing_needed: 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700',
-  bronze: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border-amber-200',
-  silver: 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600',
-  gold: 'bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-400 border-yellow-200',
-  nothing: 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800',
-  petting: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800',
-  sex: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800',
-}
-
-function TrackToggle({ value, onChange }) {
-  const next = (value === undefined || value === null) ? true : value === true ? false : null
-  return (
-    <button
-      onClick={() => onChange(next)}
-      className={`habit-track-toggle w-8 h-8 rounded-full flex items-center justify-center transition-all
-        ${value === true  ? 'bg-green-400 dark:bg-green-500 text-white'
-        : value === false ? 'bg-red-400 dark:bg-red-500 text-white'
-        :                   'border-2 border-gray-300 dark:border-gray-600 text-gray-400 hover:border-gray-400 dark:hover:border-gray-500'}`}
-    >
-      {value === true ? <Check size={14} /> : value === false ? <X size={14} /> : <span className="text-[11px] leading-none select-none">—</span>}
-    </button>
-  )
-}
-
-function TrackCounter({ habit, value, onChange }) {
-  const isNull = value === undefined || value === null
-  const v = isNull ? 0 : (typeof value === 'number' ? value : 0)
-  const color = isNull ? 'text-gray-400'
-    : habit.target === 0
-      ? (v === 0 ? 'text-green-500' : v === 1 ? 'text-amber-500' : 'text-red-500')
-      : (v >= habit.target ? 'text-green-500' : v > 0 ? 'text-amber-500' : 'text-gray-400')
-  return (
-    <div className="habit-counter flex items-center gap-2">
-      <button
-        onClick={() => onChange(isNull ? null : v === 0 ? null : v - 1)}
-        disabled={isNull}
-        className="habit-track-step w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 flex items-center justify-center"
-      >−</button>
-      <span className={`habit-counter__value text-lg font-semibold w-8 text-center ${color}`}>{isNull ? '—' : v}</span>
-      <button
-        onClick={() => onChange(isNull ? 0 : v + 1)}
-        className="habit-track-step w-7 h-7 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-center"
-      >+</button>
-      {habit.target > 0 && !isNull && <span className="text-xs text-gray-400">/ {habit.target}</span>}
-    </div>
-  )
-}
-
-function TrackCycle({ habit, value, onChange }) {
-  const cycle = habit.cycle || []
-  const currentIdx = cycle.indexOf(value)
-  const handleClick = () => onChange(cycle[(currentIdx + 1) % cycle.length])
-  const label = value ? (habit.cycle_labels?.[value] || value) : 'Не отмечено'
-  const colorClass = value ? (CYCLE_COLORS[value] || 'bg-gray-100 text-gray-600 border-gray-200') : 'bg-gray-50 dark:bg-gray-900 text-gray-400 border-gray-200 dark:border-gray-700'
-  return (
-    <button
-      onClick={handleClick}
-      className={`habit-track-cycle px-4 py-1.5 rounded-lg border text-sm font-medium transition-opacity hover:opacity-75 ${colorClass}`}
-    >{label}</button>
-  )
-}
-
-function TrackTimeWindow({ habit, value, onChange }) {
-  const tw = habit.time_window
-  const ok = inTimeWindow(tw, value)
-  const color = value ? (ok ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400') : ''
-  return (
-    <div className="habit-time-window flex items-center gap-2">
-      <input
-        type="time"
-        value={value || ''}
-        onChange={e => onChange(e.target.value || null)}
-        className={`habit-time-input text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 outline-none cursor-pointer ${color}`}
-      />
-      {tw && <span className="text-xs text-gray-400">{tw.start}–{tw.end}</span>}
-    </div>
-  )
-}
-
-function TrackBP({ value, onChange }) {
-  const readings = Array.isArray(value) ? value : []
-  const [adding, setAdding] = useState(false)
-  const [form, setForm] = useState({ time: '', sys: '', dia: '', pulse: '' })
-
-  const addReading = () => {
-    if (!form.sys || !form.dia) return
-    const r = {
-      time: form.time || new Date().toTimeString().slice(0, 5),
-      sys: Number(form.sys),
-      dia: Number(form.dia),
-      ...(form.pulse ? { pulse: Number(form.pulse) } : {}),
-    }
-    onChange([...readings, r])
-    setForm({ time: '', sys: '', dia: '', pulse: '' })
-    setAdding(false)
-  }
-
-  const remove = (i) => onChange(readings.filter((_, idx) => idx !== i))
-
-  return (
-    <div className="flex flex-col gap-1.5 items-start">
-      {readings.map((r, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <span className="text-xs text-gray-400 tabular-nums w-10">{r.time}</span>
-          <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">{r.sys}/{r.dia}</span>
-          {r.pulse && <span className="text-xs text-gray-400">пульс {r.pulse}</span>}
-          <button onClick={() => remove(i)} className="text-gray-300 hover:text-red-400 transition-colors"><X size={10} /></button>
-        </div>
-      ))}
-      {adding ? (
-        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-          <input type="time" value={form.time} onChange={e => setForm(f => ({ ...f, time: e.target.value }))}
-            className="habit-bp-input text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 w-[72px] outline-none" />
-          <input type="number" placeholder="сист" value={form.sys} onChange={e => setForm(f => ({ ...f, sys: e.target.value }))}
-            className="text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 w-14 outline-none" />
-          <span className="text-gray-400 text-xs">/</span>
-          <input type="number" placeholder="диаст" value={form.dia} onChange={e => setForm(f => ({ ...f, dia: e.target.value }))}
-            className="text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 w-14 outline-none" />
-          <input type="number" placeholder="пульс" value={form.pulse} onChange={e => setForm(f => ({ ...f, pulse: e.target.value }))}
-            className="text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 w-14 outline-none" />
-          <button onClick={addReading} disabled={!form.sys || !form.dia}
-            className="text-xs text-blue-500 hover:text-blue-600 disabled:opacity-40 font-medium">OK</button>
-          <button onClick={() => { setAdding(false); setForm({ time: '', sys: '', dia: '', pulse: '' }) }}
-            className="text-xs text-gray-400 hover:text-gray-500"><X size={10} /></button>
-        </div>
-      ) : (
-        <button onClick={() => setAdding(true)}
-          className="text-xs text-blue-400 hover:text-blue-500 transition-colors">+ измерение</button>
-      )}
-    </div>
-  )
-}
-
-export function TrackInput({ habit, value, onChange, editable }) {
-  if (!editable) return <span className="text-xs text-gray-300 dark:text-gray-700">—</span>
-  if (habit.kind === 'toggle')      return <TrackToggle value={value} onChange={onChange} />
-  if (habit.kind === 'counter')     return <TrackCounter habit={habit} value={value} onChange={onChange} />
-  if (habit.kind === 'cycle')       return <TrackCycle habit={habit} value={value} onChange={onChange} />
-  if (habit.kind === 'time_window') return <TrackTimeWindow habit={habit} value={value} onChange={onChange} />
-  if (habit.kind === 'bp')          return <TrackBP value={value} onChange={onChange} />
-  return null
 }
 
 // ─── History tab: compact dot grid ────────────────────────────────
@@ -387,7 +229,7 @@ function HabitActionsMenu({ habit, onGoal, onPause, onDisable }) {
     {open && position && createPortal(
       <div ref={menuRef} role="menu" aria-label={`Действия с привычкой «${habit.label}»`} onKeyDown={event => { if (event.key === 'Escape') close() }} className="habit-actions-menu" style={position}>
         <div className="habit-actions-menu__label">Управление привычкой</div>
-        <button type="button" role="menuitem" onClick={() => act(onGoal)}><Target size={16} /><span>Привязать к цели</span></button>
+        <button type="button" role="menuitem" onClick={() => act(onGoal)}><Target size={16} /><span>Связать с задачей или целью</span></button>
         <button type="button" role="menuitem" onClick={() => act(onPause)}><Clock3 size={16} /><span>Поставить на паузу</span></button>
         <div className="habit-actions-menu__divider" />
         <button type="button" role="menuitem" className="habit-actions-menu__danger" onClick={() => act(onDisable)}><Power size={16} /><span>Выключить</span></button>
@@ -402,7 +244,7 @@ function HabitActionsMenu({ habit, onGoal, onPause, onDisable }) {
 export default function Habits() {
   const location = useLocation()
   const navigate = useNavigate()
-  const todayStr = new Date().toISOString().slice(0, 10)
+  const todayStr = localDay()
   const [searchParams, setSearchParams] = useSearchParams()
   const initialTab = searchParams.get('tab') === 'dynamics' ? 'dynamics' : 'track'
   const [tab, setTabState] = useState(initialTab)
@@ -448,6 +290,9 @@ export default function Habits() {
   const [weekScores, setWeekScores] = useState({})
 
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [saveError, setSaveError] = useState('')
+  const [savingHabit, setSavingHabit] = useState(false)
   const [pauseTarget, setPauseTarget] = useState(null)
   const [pauseDate, setPauseDate] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
@@ -470,7 +315,7 @@ export default function Habits() {
       applyDefs(h.categories || [])
       setTreeNodes(nodes || [])
       setLoading(false)
-    })
+    }).catch(() => { setLoadError('Не удалось загрузить привычки.'); setLoading(false) })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -480,7 +325,8 @@ export default function Habits() {
       const log = data?.habits || {}
       setDayLog(log)
       setDayScore(computeHabitScore(defs, log))
-    }).catch(() => { setDayLog({}); setDayScore(0) })
+      setSaveError('')
+    }).catch(() => { setSaveError('Не удалось загрузить отметки за выбранный день.') })
   }, [trackDate, defs])
 
   useEffect(() => {
@@ -513,14 +359,19 @@ export default function Habits() {
   }, [defs, habitId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveDefs = async (updated) => {
-    await habits.saveDefinitions({ categories: updated })
-    applyDefs(updated)
+    try {
+      await habits.saveDefinitions({ categories: updated })
+      applyDefs(updated)
+      setSaveError('')
+    } catch (error) {
+      setSaveError(error.message || 'Не удалось сохранить привычки.')
+      throw error
+    }
   }
 
-  // Habit → goal link. Goals = non-leaf tree nodes (containers/domains).
+  // A habit can link to any personal task or goal in the tree.
   const nodeById = Object.fromEntries(treeNodes.map(n => [n.id, n]))
-  const parentIds = new Set(treeNodes.map(n => n.parent_id).filter(Boolean))
-  const goalNodes = treeNodes.filter(n => parentIds.has(n.id))
+  const linkedNodes = treeNodes.filter(n => n.parent_id && (n.work_context || 'personal') === 'personal')
   const rootTitleOf = (id) => {
     let n = nodeById[id], guard = 0
     while (n && n.parent_id && guard++ < 20) n = nodeById[n.parent_id]
@@ -559,13 +410,28 @@ export default function Habits() {
     await saveDefs(updated)
   }
 
-  const toggleFoundation = async (habitId) => {
-    const foundationCount = rawCategories.flatMap(category => category.habits || []).filter(habit => habit.foundation).length
-    const updated = rawCategories.map(c => ({
+  const setFoundation = (categories, habitId, foundation) => {
+    const foundationCount = categories.flatMap(category => category.habits || []).filter(habit => habit.foundation).length
+    return categories.map(c => ({
       ...c, habits: c.habits.map(h => h.id === habitId
-        ? { ...h, foundation: !h.foundation, ...(!h.foundation ? { foundation_order: foundationCount } : {}) }
+        ? { ...h, foundation, ...(foundation ? { foundation_order: foundationCount } : {}) }
         : h)
     }))
+  }
+
+  const dropIntoFoundation = async () => {
+    if (!draggedHabit || draggedHabit.scope === 'foundation') return
+    await saveDefs(setFoundation(rawCategories, draggedHabit.id, true))
+    setDraggedHabit(null)
+    setDragOverCategoryId(null)
+  }
+
+  const dropFoundationIntoCategory = async (categoryId) => {
+    if (!draggedHabit) return
+    const withoutFoundation = setFoundation(rawCategories, draggedHabit.id, false)
+    const updated = draggedHabit.categoryId === categoryId
+      ? withoutFoundation
+      : moveHabitToCategory(withoutFoundation, draggedHabit.id, categoryId)
     await saveDefs(updated)
   }
 
@@ -587,7 +453,9 @@ export default function Habits() {
 
   const dropIntoCategory = async (categoryId, targetHabitId = null) => {
     if (!draggedHabit) return
-    if (draggedHabit.categoryId === categoryId) {
+    if (draggedHabit.scope === 'foundation') {
+      await dropFoundationIntoCategory(categoryId)
+    } else if (draggedHabit.categoryId === categoryId) {
       if (targetHabitId) await reorderCategory(categoryId, draggedHabit.id, targetHabitId)
     } else {
       await moveCategory(draggedHabit.id, categoryId)
@@ -617,11 +485,25 @@ export default function Habits() {
   }
 
   const updateHabit = async (habitId, value) => {
+    if (savingHabit) return
+    setSavingHabit(true)
+    const previousLog = dayLog
+    const previousScore = dayScore
     const updatedLog = { ...dayLog, [habitId]: value }
     setDayLog(updatedLog)
     const score = computeHabitScore(defs, updatedLog)
     setDayScore(score)
-    await habits.saveLog(trackDate, { date: trackDate, habits: updatedLog, score, notes: '' }, 'habit_progress')
+    try {
+      await habits.saveLog(trackDate, { date: trackDate, habits: updatedLog, score, notes: '' }, 'habit_progress')
+      setSaveError('')
+    } catch (error) {
+      setDayLog(previousLog)
+      setDayScore(previousScore)
+      setSaveError(error.message || 'Не удалось сохранить отметку.')
+      setSavingHabit(false)
+      return
+    }
+    setSavingHabit(false)
     const weekDates = getWeekDates(histWeekStart)
     if (weekDates.includes(trackDate)) {
       setWeekLogs(prev => ({ ...prev, [trackDate]: updatedLog }))
@@ -630,6 +512,7 @@ export default function Habits() {
   }
 
   if (loading) return <div className="flex items-center justify-center h-64 text-gray-400 text-sm">Загрузка...</div>
+  if (loadError) return <div role="alert" className="mx-auto max-w-2xl px-6 py-8 text-sm text-rose-600">{loadError} <button type="button" className="underline" onClick={() => window.location.reload()}>Повторить</button></div>
 
   const isToday = trackDate === todayStr
   const pct = maxTotal > 0 ? dayScore / maxTotal : 0
@@ -639,6 +522,7 @@ export default function Habits() {
 
   return (
     <div className="habits-page max-w-2xl mx-auto py-8 px-6">
+      {saveError && <p role="alert" className="mb-4 text-sm text-rose-600">{saveError}</p>}
       <div className="habits-header">
         <div><p className="habits-kicker">Life OS · ежедневный ритм</p><h1>Привычки</h1></div>
         {/* Tabs */}
@@ -698,16 +582,28 @@ export default function Habits() {
             {/* Foundation section — always at top */}
             {(() => {
               const foundationHabits = orderedFoundationHabits(defs.filter(h => h.foundation))
-              if (!foundationHabits.length) return null
               const foundationDone = foundationHabits.filter(h => habitIsDone(h, dayLog[h.id])).length
-              const allDone = foundationDone === foundationHabits.length
+              const allDone = foundationHabits.length > 0 && foundationDone === foundationHabits.length
               return (
                 <div className={`habits-foundation card overflow-hidden border-2 ${allDone ? 'border-green-200 dark:border-green-800' : 'border-amber-200 dark:border-amber-800/60'}`}>
-                  <div className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider bg-amber-50/50 dark:bg-amber-900/10 border-b border-amber-100 dark:border-amber-800/40">
+                  <div
+                    onDragOver={event => event.preventDefault()}
+                    onDrop={event => { event.preventDefault(); dropIntoFoundation() }}
+                    className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider bg-amber-50/50 dark:bg-amber-900/10 border-b border-amber-100 dark:border-amber-800/40"
+                  >
                     <span className="text-amber-500 dark:text-amber-400">◈</span>
                     <span className="flex-1 text-left text-amber-600 dark:text-amber-400">Фундамент</span>
                     <span className={`normal-case tracking-normal tabular-nums font-medium ${allDone ? 'text-green-500' : 'text-amber-500'}`}>{foundationDone}/{foundationHabits.length}</span>
                   </div>
+                  {foundationHabits.length === 0 && (
+                    <div
+                      onDragOver={event => event.preventDefault()}
+                      onDrop={event => { event.preventDefault(); dropIntoFoundation() }}
+                      className="px-4 py-5 text-center text-sm text-gray-500 dark:text-gray-400"
+                    >
+                      Перетащите сюда привычку из категории, чтобы добавить её в фундамент.
+                    </div>
+                  )}
                   {foundationHabits.map((h, idx) => (
                     <div
                       key={h.id}
@@ -715,17 +611,14 @@ export default function Habits() {
                       draggable
                       onDragStart={() => setDraggedHabit({ id: h.id, scope: 'foundation', categoryId: h.categoryId })}
                       onDragOver={event => event.preventDefault()}
-                      onDrop={() => { if (draggedHabit?.scope === 'foundation') reorderFoundation(draggedHabit.id, h.id); setDraggedHabit(null); setDragOverCategoryId(null) }}
+                      onDrop={event => { event.preventDefault(); if (draggedHabit?.scope === 'foundation') reorderFoundation(draggedHabit.id, h.id); else dropIntoFoundation(); setDraggedHabit(null); setDragOverCategoryId(null) }}
                       onDragEnd={() => { setDraggedHabit(null); setDragOverCategoryId(null) }}
                       className={`flex items-center gap-4 px-4 py-3 ${h.id === habitId ? 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500' : ''} ${idx < foundationHabits.length - 1 ? 'border-b border-gray-50 dark:border-gray-800/50' : ''}`}
                     >
                       <GripVertical size={15} aria-hidden="true" className="shrink-0 cursor-grab text-gray-300 dark:text-gray-600" />
-                      <div className="min-w-0 flex-1">
-                        <button type="button" onClick={() => navigate(entityPath.habit(h.id))} className="text-left text-sm text-gray-800 dark:text-gray-200 font-medium hover:text-blue-600 dark:hover:text-blue-400">{h.label}</button>
-                        {h.detail && <div className="text-xs text-gray-400 mt-0.5">{h.detail}</div>}
-                      </div>
+                      <HabitInfo habit={h} nodes={treeNodes} />
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        <TrackInput habit={h} value={dayLog[h.id]} onChange={(val) => updateHabit(h.id, val)} editable={trackDate <= todayStr} />
+                        <fieldset disabled={savingHabit} className="contents"><TrackInput habit={h} value={dayLog[h.id]} onChange={(val) => updateHabit(h.id, val)} editable={trackDate <= todayStr} /></fieldset>
                       </div>
                     </div>
                   ))}
@@ -769,8 +662,7 @@ export default function Habits() {
                   >
                     <GripVertical size={15} aria-hidden="true" className="shrink-0 cursor-grab text-gray-300 dark:text-gray-600" />
                     <div className="min-w-0 flex-1">
-                      <button type="button" onClick={() => navigate(entityPath.habit(h.id))} className="text-left text-sm text-gray-800 dark:text-gray-200 font-medium hover:text-blue-600 dark:hover:text-blue-400">{h.label}</button>
-                      {h.detail && <div className="text-xs text-gray-400 mt-0.5">{h.detail}</div>}
+                      <HabitInfo habit={h} nodes={treeNodes} showLinked={goalPickerFor !== h.id} />
                       {pauseTarget === h.id && (
                         <div className="flex items-center gap-2 mt-2">
                           <input
@@ -784,11 +676,6 @@ export default function Habits() {
                           <button onClick={() => { setPauseTarget(null); setPauseDate('') }} className="flex items-center justify-center text-gray-400 hover:text-gray-500"><X size={12} /></button>
                         </div>
                       )}
-                      {h.node_id && nodeById[h.node_id] && goalPickerFor !== h.id && (
-                        <div className="flex items-center gap-1 mt-1 text-xs text-blue-500">
-                          <Target size={11} /> {nodeById[h.node_id].title}
-                        </div>
-                      )}
                       {goalPickerFor === h.id && (
                         <div className="flex items-center gap-2 mt-2">
                           <select
@@ -796,8 +683,8 @@ export default function Habits() {
                             onChange={e => setHabitGoal(h.id, e.target.value)}
                             className="text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1 outline-none max-w-[240px]"
                           >
-                            <option value="">— без цели —</option>
-                            {goalNodes.map(n => (
+                            <option value="">— без связи —</option>
+                            {linkedNodes.map(n => (
                               <option key={n.id} value={n.id}>{n.parent_id ? `${rootTitleOf(n.id)} › ${n.title}` : n.title}</option>
                             ))}
                           </select>
@@ -806,12 +693,12 @@ export default function Habits() {
                       )}
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      <TrackInput
+                      <fieldset disabled={savingHabit} className="contents"><TrackInput
                         habit={h}
                         value={dayLog[h.id]}
                         onChange={(val) => updateHabit(h.id, val)}
                         editable={trackDate <= todayStr}
-                      />
+                      /></fieldset>
                       <HabitActionsMenu
                         habit={h}
                         onGoal={() => setGoalPickerFor(h.id)}

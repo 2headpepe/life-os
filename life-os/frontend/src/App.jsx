@@ -26,7 +26,9 @@ import AiReviews from './pages/AiReviews'
 import NotificationBell from './components/NotificationBell'
 import ThemeSwitcher from './components/ui/ThemeSwitcher'
 import PageOnboarding, { onboardingStorageKey } from './components/PageOnboarding'
+import PageContextHandoff from './components/PageContextHandoff'
 import { tree as treeApi } from './api'
+import { trackScreen } from './analytics'
 
 const ONBOARDING_PAGES = {
   '/': 'feed', '/today': 'today', '/goals': 'goals', '/pool': 'pool', '/habits': 'habits',
@@ -45,6 +47,10 @@ function AppContent() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [sphere, setSphere] = useState(null)
   const previousOnboardingPage = useRef(null)
+
+  useEffect(() => {
+    trackScreen(location.pathname)
+  }, [location.pathname])
 
   // A hint remains readable for the whole first visit. Only an actual route
   // change marks it seen; this avoids React development effect cleanups
@@ -100,7 +106,7 @@ function AppContent() {
   if (!ready) return null
 
   if (location.pathname === '/setup') {
-    return <Onboarding onDone={() => navigate('/', { replace: true })} />
+    return <><Onboarding onDone={() => navigate('/', { replace: true })} /><div className="fixed right-4 top-4 z-40"><PageContextHandoff /></div></>
   }
 
   return (
@@ -112,7 +118,8 @@ function AppContent() {
         setSphere={setSphere}
       />
       <main className="life-os-main flex-1 overflow-y-auto">
-        <div className="life-os-topbar sticky top-0 z-20 flex items-center justify-end gap-2 px-6 py-2">
+        <div data-page-context-ignore className="life-os-topbar sticky top-0 z-20 flex items-center justify-end gap-2 px-6 py-2">
+          <PageContextHandoff />
           <NotificationBell />
           <ThemeSwitcher />
         </div>
@@ -147,6 +154,7 @@ function AppContent() {
       <PageOnboarding key={location.pathname} pageId={ONBOARDING_PAGES[location.pathname]} />
 
       <button
+        data-page-context-ignore
         onClick={() => setCaptureOpen(true)}
         title="Быстрый захват ⌘K"
         className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-gray-900 dark:bg-white text-white dark:text-gray-900

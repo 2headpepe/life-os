@@ -5,7 +5,7 @@ export default defineConfig(({ mode }) => {
   // The backend owns PORT. Reading its local .env keeps the development proxy
   // aligned without exposing any backend values to the browser bundle.
   const backendEnv = loadEnv(mode, '../backend', '')
-  const apiPort = backendEnv.PORT || '3001'
+  const apiPort = process.env.LIFE_OS_API_PORT || backendEnv.PORT || '3001'
 
   return {
     plugins: [react()],

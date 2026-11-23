@@ -3,6 +3,7 @@ import fs from 'fs/promises'
 import path from 'path'
 import { priorityPacket } from './priority-loop.js'
 import { buildAiReviewOverview } from './ai-review-overview.js'
+import { readAiReviewObservability } from './ai-review-observability.js'
 
 const FILES = {
   opportunities: 'opportunities.jsonl',
@@ -45,7 +46,7 @@ export function productIntelligenceStore(root) {
   const now = () => new Date().toISOString()
   const id = type => `${type}:${randomUUID()}`
 
-  async function readModel({ includeLocalOverview = false } = {}) {
+  async function readModel({ includeLocalOverview = false, analyticsWindowId = null } = {}) {
     const [opportunities, initiatives, actions, reminders, rechecks, coverage] = await Promise.all([
       ...Object.keys(FILES).map(name => safeJsonl(file(name))),
       safeJson(coverageFile, { zones: [] }),
@@ -71,8 +72,11 @@ export function productIntelligenceStore(root) {
       priority_recheck: { drafts: latest(rechecks) },
     }
     if (!includeLocalOverview) return model
-    const overview = await buildAiReviewOverview(root, model.initiatives)
-    return { ...model, boundary: overview.boundary, overview, initiatives: overview.initiatives,
+    const [overview, observability] = await Promise.all([
+      buildAiReviewOverview(root, model.initiatives),
+      readAiReviewObservability(root, analyticsWindowId),
+    ])
+    return { ...model, boundary: overview.boundary, overview, initiatives: overview.initiatives, observability,
       limits: ['Only locally generated report summaries are shown. Raw transcripts, source paths, credentials, and personal notes are excluded.'] }
   }
 

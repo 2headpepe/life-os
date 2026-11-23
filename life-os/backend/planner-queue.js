@@ -3,6 +3,7 @@ import { isBlocked, workContext } from './task-lifecycle.js'
 export const PLANNER_LANES = ['focus', 'next', 'waiting']
 export const PLANNER_URGENCY = ['unknown', 'normal', 'urgent']
 export const PLANNER_RANK_STEP = 1024
+const PRIORITIZABLE_STATUSES = new Set(['undefined', 'scheduled', 'in_progress', 'someday'])
 
 const LANE_INDEX = new Map(PLANNER_LANES.map((lane, index) => [lane, index]))
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
@@ -28,6 +29,8 @@ function allowedValue(value, values, field) {
 function optionalDate(value) {
   if (value == null || value === '') return null
   if (typeof value !== 'string' || !DATE_PATTERN.test(value)) throw new Error('follow_up_on must be YYYY-MM-DD')
+  const date = new Date(`${value}T12:00:00Z`)
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) throw new Error('follow_up_on must be a real calendar date')
   return value
 }
 
@@ -41,7 +44,7 @@ export function isPlannerTask(node) {
   return Boolean(
     node?.parent_id &&
     workContext(node) === 'personal' &&
-    node.status === 'in_progress' &&
+    PRIORITIZABLE_STATUSES.has(node.status || 'undefined') &&
     node.planner &&
     typeof node.planner === 'object' &&
     PLANNER_LANES.includes(node.planner.lane),
@@ -54,8 +57,7 @@ export function isPlannerCandidate(node, nodes) {
     node?.parent_id &&
     !parentIds.has(node.id) &&
     workContext(node) === 'personal' &&
-    node.status === 'in_progress' &&
-    !node.calendar_id,
+    PRIORITIZABLE_STATUSES.has(node.status || 'undefined'),
   )
 }
 
@@ -149,7 +151,7 @@ export function plannerTaskFromCommit(input, { nodes, id, today }) {
     calendar_id: null,
     watched: false,
     color: null,
-    status: 'in_progress',
+    status: 'undefined',
     due: null,
     notes: nonEmptyString(input.notes, 'notes', { limit: 2_000 }),
     recurrence: null,
@@ -166,11 +168,11 @@ export function migratePlannerState(nodes) {
   let changed = false
   const migrated = nodes.map(node => {
     if (!node.planner) return node
-    const isPersonalLeaf = node.parent_id && workContext(node) === 'personal' && !node.calendar_id
-    const canRestoreActiveWork = isPersonalLeaf && !['waiting_for_review', 'done', 'dropped', 'someday'].includes(node.status)
+    const isPersonalLeaf = node.parent_id && workContext(node) === 'personal'
+    const canRestoreActiveWork = isPersonalLeaf && PRIORITIZABLE_STATUSES.has(node.status || 'undefined')
     if (node.planner.lane === 'now' && canRestoreActiveWork) {
       changed = true
-      return { ...node, status: 'in_progress', planner: { ...node.planner, lane: 'focus' } }
+      return { ...node, planner: { ...node.planner, lane: 'focus' } }
     }
     if (!isPlannerCandidate(node, nodes)) {
       changed = true

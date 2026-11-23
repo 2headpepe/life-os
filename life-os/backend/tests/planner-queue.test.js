@@ -11,7 +11,7 @@ function planner(lane, rank, extra = {}) {
   return { lane, rank, urgency: 'unknown', follow_up_on: null, priority_note: null, ...extra }
 }
 
-test('planner queue contains only active personal work and keeps its order', () => {
+test('priority queue keeps order independently of personal task status', () => {
   const nodes = [
     ...roots,
     { id: 'container', title: 'Контейнер', parent_id: 'root-work' },
@@ -21,20 +21,20 @@ test('planner queue contains only active personal work and keeps its order', () 
     { id: 'next', title: 'Следующее', parent_id: 'root-work', status: 'in_progress', planner: planner('next', 1024) },
     { id: 'waiting', title: 'Ждём', parent_id: 'root-work', status: 'in_progress', planner: planner('waiting', 1024) },
     { id: 'review', title: 'На проверке', parent_id: 'root-work', status: 'waiting_for_review', planner: planner('now', 0) },
-    { id: 'someday', title: 'Потом', parent_id: 'root-work', status: 'someday', planner: planner('now', 0) },
-    { id: 'calendar', title: 'Календарь', parent_id: 'root-work', calendar_id: 'calendar-1', planner: planner('now', 0) },
+    { id: 'someday', title: 'Потом', parent_id: 'root-work', status: 'someday', planner: planner('next', 2048) },
+    { id: 'calendar', title: 'Календарь', parent_id: 'root-work', status: 'scheduled', calendar_id: 'calendar-1', planner: planner('waiting', 2048) },
     { id: 'delivery', title: 'Не личное', parent_id: 'root-delivery', work_context: 'delivery', planner: planner('now', 0) },
   ]
 
   assert.deepEqual(plannerRoots(nodes), [{ id: 'root-work', title: 'Работа', color: '#123456' }])
-  assert.deepEqual(plannerQueue(nodes).map(node => node.id), ['now-one', 'now-two', 'next', 'waiting'])
-  assert.equal(isPlannerCandidate(nodes.find(node => node.id === 'inactive'), nodes), false)
+  assert.deepEqual(plannerQueue(nodes).map(node => node.id), ['now-one', 'now-two', 'next', 'someday', 'waiting', 'calendar'])
+  assert.equal(isPlannerCandidate(nodes.find(node => node.id === 'inactive'), nodes), true)
   assert.equal(isPlannerCandidate(nodes.find(node => node.id === 'now-one'), nodes), true)
   assert.equal(isPlannerCandidate(nodes.find(node => node.id === 'review'), nodes), false)
   assert.equal(nextPlannerRank(nodes, 'focus'), 3072)
 })
 
-test('planner commit needs an existing personal root and starts active work in a valid lane', () => {
+test('planner commit creates a prioritized personal task without starting work', () => {
   const node = plannerTaskFromCommit({
     title: '  Согласовать смету  ',
     parent_id: 'root-work',
@@ -44,7 +44,7 @@ test('planner commit needs an existing personal root and starts active work in a
 
   assert.equal(node.title, 'Согласовать смету')
   assert.equal(node.parent_id, 'root-work')
-  assert.equal(node.status, 'in_progress')
+  assert.equal(node.status, 'undefined')
   assert.deepEqual(node.planner, planner('waiting', 1024, { urgency: 'urgent', follow_up_on: '2026-11-17', priority_note: 'Ждём ответ клиента' }))
   assert.throws(() => plannerTaskFromCommit({ title: 'x', parent_id: 'root-delivery' }, { nodes: roots, id: 'x', today: '2026-11-16' }), /personal root/)
 })
@@ -79,5 +79,5 @@ test('planner migration preserves active status and maps previous lane names', (
   assert.equal(byId.get('legacy-focus').status, 'in_progress')
   assert.equal(byId.get('legacy-dated').status, 'in_progress')
   assert.equal(byId.get('later').planner, null)
-  assert.equal(byId.get('someday').planner, null)
+  assert.equal(byId.get('someday').planner.lane, 'focus')
 })

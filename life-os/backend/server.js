@@ -3,8 +3,8 @@ import cors from 'cors'
 import fs from 'fs/promises'
 import path from 'path'
 import os from 'os'
-import { exec } from 'child_process'
-import { randomUUID } from 'crypto'
+import { exec, execFile } from 'child_process'
+import { createHash, randomUUID } from 'crypto'
 import { google } from 'googleapis'
 import multer from 'multer'
 import { aiRuntimeConfig, checkAiRuntime, promptFromMessages, runAiTask } from './ai-runtime.js'
@@ -13,12 +13,19 @@ import { OpenCodeServerError } from './opencode-server.js'
 import { ManagedOpenCodeServer, ManagedOpenCodeServerError } from './managed-opencode-server.js'
 import { productIntelligenceStore } from './product-intelligence.js'
 import { isLoopbackAddress } from './ai-review-overview.js'
+import { appendAnalyticsEvents } from './analytics.js'
+import { eventStore, saveWorkBlock, pushWorkBlocks } from './work-blocks.js'
+import { taskDateError } from './task-dates.js'
 import { assertDeliveryTransition, handoffIsComplete, hasDependencyCycle, inboundDependencyReferences, isBlocked, workContext } from './task-lifecycle.js'
 import { assertEligibleExecutor, assertEligibleVerifier } from './agent-registry.js'
+import { localDay } from './local-day.js'
+import { habitIsDone } from '../shared/habitScoring.js'
+import { contentPath, writableContent } from './content-path.js'
 import { isPlannerCandidate, migratePlannerState, patchPlanner, plannerQueue, plannerRoots, plannerTaskFromCommit, reorderPlannerTasks, nextPlannerRank } from './planner-queue.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
+const HOST = process.env.LIFE_OS_HOST || '127.0.0.1'
 const VAULT = process.env.VAULT_PATH || path.join(import.meta.dirname, '../../brain/content')
 const WORK_DIR = process.env.WORK_DIR || path.resolve(import.meta.dirname, '../..')
 const LOCAL_UI_ORIGINS = new Set((process.env.LIFE_OS_UI_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173,http://[::1]:5173')
@@ -73,8 +80,15 @@ const STALENESS_DAYS = {
   insight: 30,
 }
 
-app.use(cors())
+app.use(cors({ origin: (origin, callback) => callback(null, !origin || LOCAL_UI_ORIGINS.has(origin)) }))
 app.use(express.json())
+app.use((req, res, next) => {
+  const origin = req.get('origin')
+  if (origin && !LOCAL_UI_ORIGINS.has(origin) && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return res.status(403).json({ error: 'This action must come from the local Life OS interface.' })
+  }
+  next()
+})
 app.get('/api/agents', async (req, res) => res.json(await agentRegistry()))
 
 // Launching a terminal, starting/stopping a managed local server, and minting
@@ -98,6 +112,25 @@ function requireLocalPlanner(req, res, next) {
   }
   next()
 }
+
+function requireLocalAnalytics(req, res, next) {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) {
+    return res.status(403).json({ error: 'Analytics is available only on this computer.' })
+  }
+  next()
+}
+
+app.post('/api/analytics/events', requireLocalAnalytics, async (req, res) => {
+  try {
+    const result = await appendAnalyticsEvents({
+      rootDir: path.join(WORK_DIR, 'ops', 'life-os-analytics'),
+      events: req.body?.events,
+    })
+    res.status(202).json(result)
+  } catch (error) {
+    res.status(400).json({ error: error.message })
+  }
+})
 
 // ─── Memories photo upload ───────────────────────────────────────
 const MEMORIES_DIR = path.join(VAULT, 'memories')
@@ -126,7 +159,7 @@ app.use('/api/memories/photos', express.static(PHOTOS_DIR))
 function addDaysToDate(dateStr, n) {
   const d = new Date(dateStr + 'T12:00:00')
   d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
+  return localDay(d)
 }
 
 // Next due date for a recurring node. monthly advances one calendar month.
@@ -136,7 +169,7 @@ function nextRecurrenceDate(dateStr, recurrence) {
   if (recurrence === 'monthly') {
     const d = new Date(dateStr + 'T12:00:00')
     d.setMonth(d.getMonth() + 1)
-    return d.toISOString().slice(0, 10)
+    return localDay(d)
   }
   return null
 }
@@ -171,11 +204,30 @@ function propagateDoneStatus(nodes, startId) {
   }
 }
 
+function assertValidParentChange(nodes, node, parentId) {
+  if (!parentId) throw new Error('a node cannot be moved to the root')
+  if (node.parent_id === null) throw new Error('a root domain cannot be moved')
+  const byId = new Map(nodes.map(item => [item.id, item]))
+  const parent = byId.get(parentId)
+  if (!parent) throw new Error('parent node not found')
+  if (parent.id === node.id) throw new Error('a node cannot be its own parent')
+  if (workContext(parent) !== workContext(node)) throw new Error('a node can only be moved within its work context')
+
+  const seen = new Set()
+  let current = parent
+  while (current?.parent_id && !seen.has(current.id)) {
+    if (current.parent_id === node.id) throw new Error('a node cannot be moved into its descendant')
+    seen.add(current.id)
+    current = byId.get(current.parent_id)
+  }
+}
+
 
 // ─── Content read/write ────────────────────────────────────────────
 
 app.get('/api/content/*', async (req, res) => {
-  const filePath = path.join(VAULT, req.params[0])
+  const filePath = contentPath(VAULT, req.params[0])
+  if (!filePath) return res.status(400).json({ error: 'invalid content path' })
   try {
     res.json(JSON.parse(await fs.readFile(filePath, 'utf-8')))
   } catch {
@@ -184,7 +236,9 @@ app.get('/api/content/*', async (req, res) => {
 })
 
 app.put('/api/content/*', async (req, res) => {
-  const filePath = path.join(VAULT, req.params[0])
+  if (req.params[0] === 'tree/nodes.json') return res.status(409).json({ error: 'tree writes require a typed API operation' })
+  const filePath = contentPath(VAULT, req.params[0])
+  if (!filePath || !writableContent(req.params[0])) return res.status(400).json({ error: 'content write is not allowed' })
   try {
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     await fs.writeFile(filePath, JSON.stringify(req.body, null, 2))
@@ -201,7 +255,9 @@ app.put('/api/content/*', async (req, res) => {
 })
 
 app.get('/api/ls/*', async (req, res) => {
-  const dirPath = path.join(VAULT, req.params[0])
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return res.status(403).json({ error: 'Available only on this computer.' })
+  const dirPath = contentPath(VAULT, req.params[0])
+  if (!dirPath) return res.status(400).json({ error: 'invalid content path' })
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true })
     res.json(entries.map(e => ({ name: e.name, isDir: e.isDirectory() })))
@@ -218,7 +274,7 @@ app.post('/api/lists/:list', async (req, res) => {
   const filePath = path.join(VAULT, 'lists', `${list}.json`)
   try {
     const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
-    const item = { id: `${list}-${Date.now()}`, status: 'want', added: new Date().toISOString().slice(0, 10), ...req.body }
+    const item = { id: `${list}-${Date.now()}`, status: 'want', added: localDay(), ...req.body }
     data.items.push(item)
     await fs.writeFile(filePath, JSON.stringify(data, null, 2))
     autoMemory('Добавлено в список', `${list}: ${item.title || item.id}`)
@@ -235,7 +291,7 @@ app.patch('/api/lists/:list/:id', async (req, res) => {
     const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
     const idx = data.items.findIndex(i => i.id === id)
     if (idx === -1) return res.status(404).json({ error: 'not found' })
-    data.items[idx] = { ...data.items[idx], ...req.body, updated: new Date().toISOString().slice(0, 10) }
+    data.items[idx] = { ...data.items[idx], ...req.body, updated: localDay() }
     await fs.writeFile(filePath, JSON.stringify(data, null, 2))
     autoMemory('Список', `${list}/${data.items[idx].title || id}: ${Object.keys(req.body).join(', ')}`)
     res.json(data.items[idx])
@@ -250,9 +306,9 @@ app.post('/api/inbox', async (req, res) => {
   const filePath = path.join(VAULT, 'inbox/current.json')
   try {
     const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
-    const item = { id: `inbox-${Date.now()}`, added: new Date().toISOString().slice(0, 10), tags: [], ...req.body }
+    const item = { id: `inbox-${Date.now()}`, added: localDay(), tags: [], ...req.body }
     data.items.push(item)
-    data.updated = new Date().toISOString().slice(0, 10)
+    data.updated = localDay()
     await fs.writeFile(filePath, JSON.stringify(data, null, 2))
     autoMemory('Inbox', `добавлено: ${item.text || item.id}`)
     res.json(item)
@@ -266,7 +322,7 @@ app.delete('/api/inbox/:id', async (req, res) => {
   try {
     const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
     data.items = data.items.filter(i => i.id !== req.params.id)
-    data.updated = new Date().toISOString().slice(0, 10)
+    data.updated = localDay()
     await fs.writeFile(filePath, JSON.stringify(data, null, 2))
     res.json({ ok: true })
   } catch (e) {
@@ -276,61 +332,45 @@ app.delete('/api/inbox/:id', async (req, res) => {
 
 // ─── Events ───────────────────────────────────────────────────────
 
-app.post('/api/events', async (req, res) => {
-  const filePath = path.join(VAULT, 'events/index.json')
-  try {
-    const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
-    const event = {
-      id: `event-${Date.now()}`,
-      title: '',
-      date: new Date().toISOString().slice(0, 10),
-      time: null,
-      duration_min: null,
-      type: 'event',
-      notes: '',
-      ...req.body,
-    }
-    data.events.push(event)
-    data.updated = new Date().toISOString().slice(0, 10)
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2))
-    res.json(event)
-  } catch (e) {
-    res.status(500).json({ error: e.message })
-  }
-})
+const changeEvents = eventStore(path.join(VAULT, 'events/index.json'))
 
-app.patch('/api/events/:id', async (req, res) => {
-  const filePath = path.join(VAULT, 'events/index.json')
+async function mutateEvents(req, res) {
   try {
-    const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
-    const idx = data.events.findIndex(e => e.id === req.params.id)
-    if (idx === -1) return res.status(404).json({ error: 'not found' })
-    data.events[idx] = { ...data.events[idx], ...req.body }
-    data.updated = new Date().toISOString().slice(0, 10)
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2))
-    res.json(data.events[idx])
-  } catch (e) {
-    res.status(500).json({ error: e.message })
+    const result = await changeEvents(async data => {
+      const input = req.body || {}
+      const old = data.events.find(event => event.id === req.params.id)
+      if (req.method === 'DELETE') {
+        data.events = data.events.filter(event => event.id !== req.params.id)
+        return { ok: true }
+      }
+      if (req.method === 'PATCH' && !old) throw Object.assign(new Error('not found'), { status: 404 })
+      if (input.type === 'work_block' || old?.type === 'work_block') {
+        if (old && old.type !== 'work_block') throw Object.assign(new Error('Cannot replace an existing event'), { status: 409 })
+        return saveWorkBlock(data, input, (await readTree()).nodes, (await readCalendars()).calendars, old)
+      }
+      if (old) {
+        Object.assign(old, input, { id: old.id })
+        return old
+      }
+      const event = { id: 'event-' + randomUUID(), title: '', date: localDay(), time: null, duration_min: null, type: 'event', notes: '', ...input }
+      if (data.events.some(item => item.id === event.id)) throw Object.assign(new Error('Event id already exists'), { status: 409 })
+      data.events.push(event)
+      return event
+    })
+    res.json(result)
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message })
   }
-})
+}
 
-app.delete('/api/events/:id', async (req, res) => {
-  const filePath = path.join(VAULT, 'events/index.json')
-  try {
-    const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
-    data.events = data.events.filter(e => e.id !== req.params.id)
-    data.updated = new Date().toISOString().slice(0, 10)
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2))
-    res.json({ ok: true })
-  } catch (e) {
-    res.status(500).json({ error: e.message })
-  }
-})
+app.post('/api/events', mutateEvents)
+app.patch('/api/events/:id', mutateEvents)
+app.delete('/api/events/:id', mutateEvents)
 
 // ─── Context for local AI runtimes ────────────────────────────────
 
 app.get('/api/context', async (req, res) => {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   try {
     const treeData = await readTree()
     const nodes = treeData.nodes
@@ -353,7 +393,7 @@ app.get('/api/context', async (req, res) => {
     let habitDefs = [], habitLog = {}, habitScore = 0
     try {
       const h = JSON.parse(await fs.readFile(path.join(VAULT, 'habits/definitions.json'), 'utf-8'))
-      habitDefs = (h.categories || []).flatMap(c => c.habits.filter(x => x.active))
+      habitDefs = (h.categories || []).flatMap(c => (c.habits || []).filter(x => x.active && (!x.paused_until || x.paused_until < today) && (!x.active_until || x.active_until >= today)))
     } catch {}
     try {
       const log = JSON.parse(await fs.readFile(path.join(VAULT, `habits/log/${today}.json`), 'utf-8'))
@@ -367,7 +407,7 @@ app.get('/api/context', async (req, res) => {
       scheduled_today: scheduledToday.map(n => ({ title: n.title, sphere: rootTitle(n) })),
       top_tasks: top.map(n => ({ title: n.title, status: n.status, sphere: rootTitle(n) })),
       habits: {
-        done: habitDefs.filter(h => { const v = habitLog[h.id]; return v !== null && v !== undefined && v !== false }).length,
+        done: habitDefs.filter(h => habitIsDone(h, habitLog[h.id])).length,
         total: habitDefs.length,
         score: habitScore,
       },
@@ -491,7 +531,7 @@ app.post('/api/insights', async (req, res) => {
   const filePath = path.join(VAULT, 'insights/index.json')
   try {
     const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const insight = {
       id: `ins-${Date.now()}`,
       title: '',
@@ -519,7 +559,7 @@ app.patch('/api/insights/:id', async (req, res) => {
     const data = JSON.parse(await fs.readFile(filePath, 'utf-8'))
     const idx = data.insights.findIndex(i => i.id === req.params.id)
     if (idx === -1) return res.status(404).json({ error: 'insight not found' })
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     data.insights[idx] = { ...data.insights[idx], ...req.body, updated: today }
     data.updated = today
     await fs.writeFile(filePath, JSON.stringify(data, null, 2))
@@ -544,7 +584,7 @@ app.get('/api/news', async (req, res) => {
 app.post('/api/news', async (req, res) => {
   try {
     const data = await readNews()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const incoming = Array.isArray(req.body.items) ? req.body.items : [req.body]
     const added = []
     for (const item of incoming) {
@@ -579,7 +619,7 @@ app.patch('/api/news/:id', async (req, res) => {
     const data = await readNews()
     const idx = data.items.findIndex(i => i.id === req.params.id)
     if (idx === -1) return res.status(404).json({ error: 'news item not found' })
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     data.items[idx] = { ...data.items[idx], ...req.body, updated: today }
     data.updated = today
     await writeNews(data)
@@ -664,7 +704,7 @@ function parseRssXml(xml, source) {
     const summary = clean(rawDesc.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').slice(0, 220)
     let published = null
     const d = new Date(get('pubDate') || get('published') || get('updated'))
-    if (!isNaN(d.getTime())) published = d.toISOString().slice(0, 10)
+    if (!isNaN(d.getTime())) published = localDay(d)
     items.push({
       title, url: link, summary,
       source_name: source.name, source_id: source.id,
@@ -677,7 +717,7 @@ function parseRssXml(xml, source) {
 async function refreshNewsFromSources() {
   const data = await readNews()
   const known = new Set((data.items || []).map(i => i.url).filter(Boolean))
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   let added = 0
   for (const src of (data.sources || []).filter(s => s.enabled)) {
     try {
@@ -746,13 +786,13 @@ async function readMemories() {
   try {
     return JSON.parse(await fs.readFile(MEMORIES_FILE, 'utf-8'))
   } catch {
-    return { _type: 'memories', updated: new Date().toISOString().slice(0, 10), entries: [] }
+    return { _type: 'memories', updated: localDay(), entries: [] }
   }
 }
 
 async function writeMemories(data) {
   await fs.mkdir(MEMORIES_DIR, { recursive: true })
-  data.updated = new Date().toISOString().slice(0, 10)
+  data.updated = localDay()
   await fs.writeFile(MEMORIES_FILE, JSON.stringify(data, null, 2))
 }
 
@@ -760,7 +800,7 @@ async function writeMemories(data) {
 async function autoMemory(label, detail) {
   try {
     const data = await readMemories()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const entry = {
       id: `mem-auto-${Date.now()}`,
       date: today,
@@ -794,7 +834,7 @@ app.get('/api/memories', async (req, res) => {
 app.post('/api/memories', async (req, res) => {
   try {
     const data = await readMemories()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const entry = {
       id: `mem-${Date.now()}`,
       date: today,
@@ -817,7 +857,7 @@ app.patch('/api/memories/:id', async (req, res) => {
     const data = await readMemories()
     const idx = data.entries.findIndex(e => e.id === req.params.id)
     if (idx === -1) return res.status(404).json({ error: 'entry not found' })
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     data.entries[idx] = { ...data.entries[idx], ...req.body, updated: today }
     await writeMemories(data)
     res.json(data.entries[idx])
@@ -836,7 +876,7 @@ app.delete('/api/memories/:id', async (req, res) => {
     if (removed.auto && removed.date) {
       const rdata = await readFeedReactions()
       rdata.reactions.push({ ref: `auto-mem:${removed.date}`, type: 'done', ts: new Date().toISOString() })
-      rdata.updated = new Date().toISOString().slice(0, 10)
+      rdata.updated = localDay()
       await fs.mkdir(path.dirname(FEED_REACTIONS_FILE), { recursive: true })
       await fs.writeFile(FEED_REACTIONS_FILE, JSON.stringify(rdata, null, 2))
     }
@@ -857,7 +897,7 @@ app.post('/api/memories/:id/photos', upload.array('photos', 10), async (req, res
       original_name: f.originalname,
     }))
     data.entries[idx].photos = [...(data.entries[idx].photos || []), ...photos]
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     data.entries[idx].updated = today
     await writeMemories(data)
     res.json({ photos, entry: data.entries[idx] })
@@ -877,7 +917,7 @@ function daysSince(dateStr) {
 
 app.get('/api/pulse', async (req, res) => {
   const alerts = []
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const isSnoozed = (item) => item.snoozed_until && item.snoozed_until >= today
 
   try {
@@ -957,7 +997,7 @@ app.get('/api/pulse', async (req, res) => {
 
 app.post('/api/pulse/ack', async (req, res) => {
   const { type, sphere, id, snooze_days } = req.body
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const snoozed_until = snooze_days ? addDaysToDate(today, snooze_days) : null
 
   const applyAck = (item) => {
@@ -987,7 +1027,7 @@ app.post('/api/pulse/ack', async (req, res) => {
     }
     res.json({ ok: true, snoozed_until })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(treeErrorStatus(e)).json({ error: e.message })
   }
 })
 
@@ -1000,13 +1040,13 @@ async function readCalendars() {
   try {
     return JSON.parse(await fs.readFile(CALENDARS_FILE, 'utf-8'))
   } catch {
-    return { updated: new Date().toISOString().slice(0, 10), calendars: [] }
+    return { updated: localDay(), calendars: [] }
   }
 }
 
 async function writeCalendars(data) {
   await fs.mkdir(path.dirname(CALENDARS_FILE), { recursive: true })
-  data.updated = new Date().toISOString().slice(0, 10)
+  data.updated = localDay()
   await fs.writeFile(CALENDARS_FILE, JSON.stringify(data, null, 2))
 }
 
@@ -1014,13 +1054,13 @@ async function readNews() {
   try {
     return JSON.parse(await fs.readFile(NEWS_FILE, 'utf-8'))
   } catch {
-    return { _type: 'news_feed', updated: new Date().toISOString().slice(0, 10), items: [], sources: [] }
+    return { _type: 'news_feed', updated: localDay(), items: [], sources: [] }
   }
 }
 
 async function writeNews(data) {
   await fs.mkdir(path.dirname(NEWS_FILE), { recursive: true })
-  data.updated = new Date().toISOString().slice(0, 10)
+  data.updated = localDay()
   await fs.writeFile(NEWS_FILE, JSON.stringify(data, null, 2))
 }
 
@@ -1041,6 +1081,7 @@ app.post('/api/calendars', async (req, res) => {
       title: req.body.title || '',
       color: req.body.color || '#6B7280',
       sync_to_gcal: req.body.sync_to_gcal ?? false,
+      gcal_calendar_id: req.body.gcal_calendar_id || 'primary',
     }
     data.calendars.push(cal)
     await writeCalendars(data)
@@ -1071,6 +1112,11 @@ app.delete('/api/calendars/:id', async (req, res) => {
     const data = await readCalendars()
     data.calendars = data.calendars.filter(c => c.id !== req.params.id)
     await writeCalendars(data)
+    await changeEvents(events => {
+      for (const event of events.events) {
+        if (event.type === 'work_block' && event.calendar_id === req.params.id) event.calendar_id = null
+      }
+    })
     res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -1080,19 +1126,52 @@ app.delete('/api/calendars/:id', async (req, res) => {
 // ─── Tree ─────────────────────────────────────────────────────────
 
 const TREE_FILE = path.join(VAULT, 'tree/nodes.json')
+const TREE_VERSION = Symbol('treeVersion')
+let treeWriteQueue = Promise.resolve()
+const treeVersion = content => content == null ? null : createHash('sha256').update(content).digest('hex')
+const treeErrorStatus = error => error?.code === 'TREE_CONFLICT' ? 409 : 500
 
 async function readTree() {
   try {
-    return JSON.parse(await fs.readFile(TREE_FILE, 'utf-8'))
-  } catch {
-    return { _type: 'tree', updated: new Date().toISOString().slice(0, 10), nodes: [] }
+    const content = await fs.readFile(TREE_FILE, 'utf-8')
+    const data = JSON.parse(content)
+    Object.defineProperty(data, TREE_VERSION, { value: treeVersion(content), writable: true })
+    return data
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+    const data = { _type: 'tree', updated: localDay(), nodes: [] }
+    Object.defineProperty(data, TREE_VERSION, { value: null, writable: true })
+    return data
   }
 }
 
 async function writeTree(data) {
-  await fs.mkdir(path.dirname(TREE_FILE), { recursive: true })
-  data.updated = new Date().toISOString().slice(0, 10)
-  await fs.writeFile(TREE_FILE, JSON.stringify(data, null, 2))
+  const save = async () => {
+    await fs.mkdir(path.dirname(TREE_FILE), { recursive: true })
+    const current = await fs.readFile(TREE_FILE, 'utf-8').catch(error => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (data[TREE_VERSION] !== treeVersion(current)) {
+      const error = new Error('tree changed during this request; reload and retry')
+      error.code = 'TREE_CONFLICT'
+      throw error
+    }
+    data.updated = localDay()
+    const content = JSON.stringify(data, null, 2)
+    const temporary = `${TREE_FILE}.${randomUUID()}.tmp`
+    try {
+      await fs.writeFile(temporary, content)
+      await fs.rename(temporary, TREE_FILE)
+    } catch (error) {
+      await fs.unlink(temporary).catch(() => {})
+      throw error
+    }
+    data[TREE_VERSION] = treeVersion(content)
+  }
+  const result = treeWriteQueue.then(save)
+  treeWriteQueue = result.catch(() => {})
+  return result
 }
 
 // Setup reset is intentionally a server-side, two-step operation.  Opening
@@ -1119,10 +1198,12 @@ app.post('/api/setup/reset', requireLifeOsUiOrigin, async (req, res) => {
   }
   try {
     const listsIndex = JSON.parse(await fs.readFile(path.join(VAULT, 'lists/_index.json'), 'utf8').catch(() => '{"collections":[]}'))
-    await writeTree({ _type: 'tree', updated: new Date().toISOString().slice(0, 10), nodes: [] })
+    const emptyTree = await readTree()
+    emptyTree.nodes = []
+    await writeTree(emptyTree)
     await fs.writeFile(path.join(VAULT, 'habits/definitions.json'), JSON.stringify({ categories: [] }, null, 2))
-    await fs.writeFile(path.join(VAULT, 'inbox/current.json'), JSON.stringify({ _type: 'inbox', updated: new Date().toISOString().slice(0, 10), items: [] }, null, 2))
-    await fs.writeFile(path.join(VAULT, 'insights/index.json'), JSON.stringify({ updated: new Date().toISOString().slice(0, 10), insights: [] }, null, 2))
+    await fs.writeFile(path.join(VAULT, 'inbox/current.json'), JSON.stringify({ _type: 'inbox', updated: localDay(), items: [] }, null, 2))
+    await fs.writeFile(path.join(VAULT, 'insights/index.json'), JSON.stringify({ updated: localDay(), insights: [] }, null, 2))
     await fs.writeFile(path.join(VAULT, 'memories/index.json'), JSON.stringify({ entries: [] }, null, 2))
     await fs.writeFile(PEOPLE_INDEX, JSON.stringify({ people: [] }, null, 2))
     await Promise.all((listsIndex.collections || []).map(collection => {
@@ -1142,14 +1223,15 @@ app.post('/api/setup/reset', requireLifeOsUiOrigin, async (req, res) => {
     await fs.mkdir(path.join(BRAIN_DIR, 'people'), { recursive: true })
     await fs.writeFile(PEOPLE_INDEX, JSON.stringify({ people: [] }, null, 2))
     res.json({ ok: true })
-  } catch (error) { res.status(500).json({ error: error.message }) }
+  } catch (error) { res.status(treeErrorStatus(error)).json({ error: error.message }) }
 })
 
 // Local-only AI Review read model. It exposes compressed generated-report
 // results, never a transcript, source path, credential, or personal note.
 app.get('/api/ai-reviews', async (req, res) => {
   if (!isLoopbackAddress(req.socket.remoteAddress)) return res.status(403).json({ error: 'AI Reviews summaries are available only on this computer.' })
-  try { res.json(await productIntelligence.readModel({ includeLocalOverview: true })) }
+  const analyticsWindowId = typeof req.query.analytics_window === 'string' ? req.query.analytics_window : null
+  try { res.json(await productIntelligence.readModel({ includeLocalOverview: true, analyticsWindowId })) }
   catch (error) { res.status(500).json({ error: error.message }) }
 })
 
@@ -1264,7 +1346,7 @@ app.post('/api/planner/commit', requireLocalPlanner, async (req, res) => {
   if (req.body?.confirmed !== true) return res.status(400).json({ error: 'explicit task confirmation is required' })
   try {
     const tree = await readTree()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const task = plannerTaskFromCommit(req.body?.task, {
       nodes: tree.nodes,
       id: `node-${randomUUID()}`,
@@ -1274,7 +1356,7 @@ app.post('/api/planner/commit', requireLocalPlanner, async (req, res) => {
     await writeTree(tree)
     res.status(201).json({ task })
   } catch (error) {
-    res.status(400).json({ error: error.message })
+    res.status(error?.code === 'TREE_CONFLICT' ? 409 : 400).json({ error: error.message })
   }
 })
 
@@ -1288,7 +1370,7 @@ app.post('/api/planner/migrate', requireLocalPlanner, async (req, res) => {
     }
     res.json({ changed: migrated.changed, tasks: plannerQueue(migrated.nodes) })
   } catch (error) {
-    res.status(500).json({ error: error.message })
+    res.status(treeErrorStatus(error)).json({ error: error.message })
   }
 })
 
@@ -1298,23 +1380,60 @@ app.patch('/api/planner/tasks/:id', requireLocalPlanner, async (req, res) => {
     const index = tree.nodes.findIndex(node => node.id === req.params.id)
     if (index === -1) return res.status(404).json({ error: 'task not found' })
     const previous = tree.nodes[index]
-    if (!isPlannerCandidate(previous, tree.nodes)) return res.status(409).json({ error: 'task is not available in planner' })
+    const start = req.body?.start === true
+    if (req.body?.start != null && !start) return res.status(400).json({ error: 'start must be true' })
+    const today = localDay()
+    const blocked = isBlocked(previous, new Map(tree.nodes.map(node => [node.id, node])))
+    const appointmentUnavailable = Boolean(previous.due && previous.date_kind !== 'deadline' && (
+      previous.due !== today || (previous.time && new Date(`${previous.due}T${previous.time}:00`).getTime() > Date.now())
+    ))
+    const unavailable = previous.available_from > today || blocked || appointmentUnavailable
+    const hasChildren = tree.nodes.some(node => node.parent_id === previous.id)
+    const personalPath = (() => {
+      const byId = new Map(tree.nodes.map(node => [node.id, node]))
+      const seen = new Set()
+      let node = previous
+      while (node) {
+        if (workContext(node) !== 'personal' || seen.has(node.id)) return false
+        if (!node.parent_id) return true
+        seen.add(node.id)
+        node = byId.get(node.parent_id)
+      }
+      return false
+    })()
+    if (!previous.parent_id || hasChildren || !personalPath) return res.status(409).json({ error: 'task is not available in planner' })
+    if (start) {
+      if (!['undefined', 'scheduled', 'in_progress'].includes(previous.status || 'undefined') || unavailable) {
+        return res.status(409).json({ error: 'task is not available to start' })
+      }
+    } else if (!isPlannerCandidate(previous, tree.nodes)) return res.status(409).json({ error: 'task is not available in planner' })
+    const requestedLane = req.body?.planner?.lane || previous.planner?.lane || 'next'
+    if (Object.hasOwn(req.body || {}, 'expected_lane') && req.body.expected_lane !== (previous.planner?.lane || null) &&
+        previous.planner?.lane !== requestedLane) {
+      return res.status(409).json({ error: 'task moved since it was shown; reload and retry' })
+    }
     if (req.body?.planner === null || req.body?.planner?.lane === 'triage') {
-      const task = { ...previous, planner: null, updated: new Date().toISOString().slice(0, 10) }
+      const task = { ...previous, planner: null, updated: localDay() }
       tree.nodes[index] = task
       await writeTree(tree)
       return res.json({ task })
     }
-    const requestedLane = req.body?.planner?.lane || previous.planner?.lane || 'next'
-    const planner = patchPlanner(previous.planner, req.body?.planner, {
+    if (requestedLane === 'waiting' && req.body?.planner?.follow_up_on &&
+        !/^\d{4}-\d{2}-\d{2}$/.test(req.body.planner.follow_up_on)) return res.status(400).json({ error: 'invalid follow-up date' })
+    const changedLane = previous.planner?.lane !== requestedLane
+    const planner = patchPlanner(previous.planner, {
+      ...req.body?.planner,
+      ...(changedLane ? { rank: nextPlannerRank(tree.nodes, requestedLane) } : {}),
+      ...(requestedLane !== 'waiting' ? { follow_up_on: null } : {}),
+    }, {
       fallbackRank: nextPlannerRank(tree.nodes, requestedLane),
     })
-    const task = { ...previous, planner, updated: new Date().toISOString().slice(0, 10) }
+    const task = { ...previous, status: start ? 'in_progress' : previous.status, planner, updated: localDay() }
     tree.nodes[index] = task
-    await writeTree(tree)
+    if (JSON.stringify(task) !== JSON.stringify(previous)) await writeTree(tree)
     res.json({ task })
   } catch (error) {
-    res.status(400).json({ error: error.message })
+    res.status(error?.code === 'TREE_CONFLICT' ? 409 : 400).json({ error: error.message })
   }
 })
 
@@ -1323,12 +1442,12 @@ app.post('/api/planner/reorder', requireLocalPlanner, async (req, res) => {
     const tree = await readTree()
     const reordered = reorderPlannerTasks(tree.nodes, req.body || {})
     const updatedIds = new Set(req.body?.ordered_ids || [])
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     tree.nodes = reordered.map(node => updatedIds.has(node.id) ? { ...node, updated: today } : node)
     await writeTree(tree)
     res.json({ tasks: plannerQueue(tree.nodes) })
   } catch (error) {
-    res.status(400).json({ error: error.message })
+    res.status(error?.code === 'TREE_CONFLICT' ? 409 : 400).json({ error: error.message })
   }
 })
 
@@ -1351,7 +1470,7 @@ app.post('/api/product-intelligence/initiatives/:id/work-items', async (req, res
     const outcome = String(req.body?.outcome || '').trim()
     if (!title || !outcome) return res.status(400).json({ error: 'title and outcome are required' })
     const tree = await readTree()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const root = deliveryRoot(tree, today)
     const node = deliveryNode({ id: `node-${randomUUID()}`, title, outcome, parent_id: root.id, today })
     const initiative = await productIntelligence.attachWorkItem(req.params.id, node.id)
@@ -1370,14 +1489,14 @@ app.post('/api/tree/:id/dependencies', async (req, res) => {
     if (!source) return res.status(404).json({ error: 'node not found' })
     if (workContext(source) !== 'delivery') return res.status(409).json({ error: 'delivery work required' })
     if (!title || !outcome) return res.status(400).json({ error: 'title and outcome are required' })
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const dependency = deliveryNode({ id: `node-${randomUUID()}`, title, outcome, parent_id: source.parent_id, today })
     source.blocked_by = [...new Set([...(source.blocked_by || []), dependency.id])]
     source.updated = today
     tree.nodes.push(dependency)
     await writeTree(tree)
     res.status(201).json({ source, dependency })
-  } catch (error) { res.status(500).json({ error: error.message }) }
+  } catch (error) { res.status(treeErrorStatus(error)).json({ error: error.message }) }
 })
 
 app.get('/api/tree/:id/eligible-existing-dependencies', async (req, res) => {
@@ -1390,6 +1509,7 @@ app.get('/api/tree/:id/eligible-existing-dependencies', async (req, res) => {
 })
 
 app.post('/api/tree/:id/existing-dependencies', async (req, res) => {
+  try {
   const dependency_id = String(req.body?.dependency_id || '')
   const tree = await readTree()
   const source = tree.nodes.find(node => node.id === req.params.id)
@@ -1404,9 +1524,11 @@ app.post('/api/tree/:id/existing-dependencies', async (req, res) => {
   source.blocked_by = [...new Set([...(source.blocked_by || []), dependency.id])]
   await writeTree(tree)
   res.status(201).json({ source, dependency })
+  } catch (error) { res.status(treeErrorStatus(error)).json({ error: error.message }) }
 })
 
 app.patch('/api/tree/:id/handoff-contract', async (req, res) => {
+  try {
   const tree = await readTree()
   const node = tree.nodes.find(item => item.id === req.params.id)
   if (!node) return res.status(404).json({ error: 'node not found' })
@@ -1416,9 +1538,11 @@ app.patch('/api/tree/:id/handoff-contract', async (req, res) => {
   if (node.status === 'needs_grooming') node.status = 'backlog'
   await writeTree(tree)
   res.json(node)
+  } catch (error) { res.status(treeErrorStatus(error)).json({ error: error.message }) }
 })
 
 app.post('/api/tree/:id/verification', async (req, res) => {
+  try {
   const tree = await readTree()
   const node = tree.nodes.find(item => item.id === req.params.id)
   if (!node) return res.status(404).json({ error: 'node not found' })
@@ -1430,6 +1554,7 @@ app.post('/api/tree/:id/verification', async (req, res) => {
   node.status = req.body.state === 'passed' ? 'done' : 'backlog'
   await writeTree(tree)
   res.json(node)
+  } catch (error) { res.status(treeErrorStatus(error)).json({ error: error.message }) }
 })
 
 app.post('/api/tree', async (req, res) => {
@@ -1437,7 +1562,9 @@ app.post('/api/tree', async (req, res) => {
     if (req.body?.work_context === 'delivery') return res.status(409).json({ error: 'delivery work must be created from an approved initiative' })
     if (req.body?.status === 'blocked') return res.status(400).json({ error: 'blocked is derived from blocked_by and cannot be stored' })
     const data = await readTree()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
+    const dateError = taskDateError(req.body || {})
+    if (dateError) return res.status(400).json({ error: dateError })
     if (req.body?.id && data.nodes.some(item => item.id === req.body.id)) {
       return res.status(409).json({ error: 'node id already exists' })
     }
@@ -1478,7 +1605,7 @@ app.post('/api/tree', async (req, res) => {
     }
     res.json(node)
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(treeErrorStatus(e)).json({ error: e.message })
   }
 })
 
@@ -1487,20 +1614,35 @@ app.patch('/api/tree/:id', async (req, res) => {
     const data = await readTree()
     const idx = data.nodes.findIndex(n => n.id === req.params.id)
     if (idx === -1) return res.status(404).json({ error: 'node not found' })
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const oldNode = data.nodes[idx]
-    if (workContext(oldNode) === 'delivery' && (req.body?.status === 'in_progress' || req.body?.status === 'waiting_for_review')) {
-      assertEligibleExecutor(await agentRegistry(), req.body?.execution?.actor || oldNode.execution?.actor, oldNode.handoff_contract?.target_role)
+    const { complete_leaf_only: leafOnly, ...patch } = req.body || {}
+    if (leafOnly !== undefined && (leafOnly !== true || patch.status !== 'done' ||
+        workContext(oldNode) !== 'personal' || !oldNode.parent_id || data.nodes.some(node => node.parent_id === oldNode.id))) {
+      return res.status(400).json({ error: 'complete_leaf_only requires closing a personal leaf' })
     }
-    assertDeliveryTransition(oldNode, req.body?.status ?? oldNode.status, { ...oldNode, ...req.body })
-    data.nodes[idx] = { ...oldNode, ...req.body, updated: today }
+    const dateError = taskDateError(patch, oldNode)
+    if (dateError) return res.status(400).json({ error: dateError })
+    if (Object.hasOwn(patch, 'parent_id') && patch.parent_id !== oldNode.parent_id) {
+      try {
+        assertValidParentChange(data.nodes, oldNode, patch.parent_id)
+      } catch (error) {
+        return res.status(400).json({ error: error.message })
+      }
+    }
+    if (workContext(oldNode) === 'delivery' && (patch.status === 'in_progress' || patch.status === 'waiting_for_review')) {
+      assertEligibleExecutor(await agentRegistry(), patch.execution?.actor || oldNode.execution?.actor, oldNode.handoff_contract?.target_role)
+    }
+    assertDeliveryTransition(oldNode, patch.status ?? oldNode.status, { ...oldNode, ...patch })
+    data.nodes[idx] = { ...oldNode, ...patch, updated: today }
+    if (!data.nodes[idx].due && oldNode.date_kind) data.nodes[idx].date_kind = null
     if (workContext(data.nodes[idx]) === 'personal' && data.nodes[idx].planner && !isPlannerCandidate(data.nodes[idx], data.nodes)) {
       data.nodes[idx].planner = null
     }
     const newNode = data.nodes[idx]
 
     // Auto-memory: node changed
-    const changedFields = Object.keys(req.body)
+    const changedFields = Object.keys(patch)
     if (changedFields.includes('status')) {
       autoMemory('Задача', `${oldNode.title || req.params.id}: ${oldNode.status} → ${newNode.status}`)
     } else if (changedFields.length > 0) {
@@ -1509,17 +1651,18 @@ app.patch('/api/tree/:id', async (req, res) => {
 
     // Recurring node: completing it spawns the next scheduled instance.
     let nextNode = null
-    if (req.body.status === 'done' && oldNode.status !== 'done' && oldNode.recurrence && oldNode.due) {
+    if (patch.status === 'done' && oldNode.status !== 'done' && oldNode.recurrence && oldNode.due) {
       const nextDue = nextRecurrenceDate(oldNode.due, oldNode.recurrence)
       if (nextDue) {
         nextNode = { ...oldNode, id: `node-${Date.now()}`, status: 'scheduled', due: nextDue, created: today, updated: today }
+        delete nextNode.remaining_min
         delete nextNode.gcal_event_id
         data.nodes.push(nextNode)
       }
     }
 
     // Keep ancestor containers in sync with their leaves (done ↔ active).
-    if (req.body.status !== undefined) propagateDoneStatus(data.nodes, req.params.id)
+    if (patch.status !== undefined && !leafOnly) propagateDoneStatus(data.nodes, req.params.id)
 
     await writeTree(data)
     const cal = await getCalendarClient()
@@ -1550,7 +1693,7 @@ app.patch('/api/tree/:id', async (req, res) => {
     }
     res.json(newNode)
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(treeErrorStatus(e)).json({ error: e.message })
   }
 })
 
@@ -1576,6 +1719,9 @@ app.delete('/api/tree/:id', async (req, res) => {
     const deletedNames = data.nodes.filter(n => toDelete.has(n.id)).map(n => n.title || n.id)
     data.nodes = data.nodes.filter(n => !toDelete.has(n.id))
     await writeTree(data)
+    await changeEvents(events => {
+      events.events = events.events.filter(event => event.type !== 'work_block' || !toDelete.has(event.task_id))
+    })
     autoMemory('Задача удалена', deletedNames.slice(0, 3).join(', ') + (deletedNames.length > 3 ? ` +${deletedNames.length - 3}` : ''))
     if (gcalIds.length) {
       const cal = await getCalendarClient()
@@ -1583,7 +1729,7 @@ app.delete('/api/tree/:id', async (req, res) => {
     }
     res.json({ ok: true, deleted: toDelete.size })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(treeErrorStatus(e)).json({ error: e.message })
   }
 })
 
@@ -1865,7 +2011,7 @@ app.get('/api/profile', async (req, res) => {
 app.put('/api/profile', async (req, res) => {
   try {
     const existing = await fs.readFile(path.join(VAULT, 'profile/profile.json'), 'utf-8').then(JSON.parse).catch(() => ({}))
-    const updated = { ...existing, ...req.body, updated: new Date().toISOString().slice(0, 10) }
+    const updated = { ...existing, ...req.body, updated: localDay() }
     await fs.mkdir(path.join(VAULT, 'profile'), { recursive: true })
     await fs.writeFile(path.join(VAULT, 'profile/profile.json'), JSON.stringify(updated, null, 2))
     res.json(updated)
@@ -1981,6 +2127,17 @@ app.post('/api/ai/open', requireLifeOsUiOrigin, async (req, res) => {
   }
 })
 
+// Only brings the desktop application forward. Page text stays in the browser
+// clipboard; there is no supported browser-to-existing-Codex-chat message API.
+app.post('/api/codex/activate', requireLifeOsUiOrigin, (req, res) => {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return res.status(403).json({ error: 'Available only on this computer.' })
+  if (process.platform !== 'darwin') return res.status(501).json({ error: 'Codex activation is available on macOS only.' })
+  execFile('open', ['-b', 'com.openai.codex'], error => {
+    if (error) return res.status(503).json({ error: 'Codex desktop application could not be opened.' })
+    res.json({ ok: true })
+  })
+})
+
 // ─── Feed ─────────────────────────────────────────────────────────
 
 const FEED_REACTIONS_FILE = path.join(VAULT, 'feed/reactions.json')
@@ -2005,7 +2162,7 @@ async function readAiCards() {
 
 async function writeAiCards(cards) {
   await fs.mkdir(path.dirname(FEED_AI_CARDS_FILE), { recursive: true })
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   let reactionsData
   try { reactionsData = await readFeedReactions() } catch { reactionsData = { reactions: [] } }
   const doneRefs = new Set(reactionsData.reactions.filter(r => r.type === 'done').map(r => r.ref))
@@ -2048,37 +2205,17 @@ function seededShuffle(arr, rng) {
   return a
 }
 
-function habitValueDone(habit, value) {
-  if (value === undefined || value === null) return false
-  if (habit.kind === 'toggle') return value === true
-  if (habit.kind === 'counter') {
-    const n = typeof value === 'number' ? value : 0
-    return habit.target === 0 ? n === 0 : n >= (habit.target || 1)
-  }
-  if (habit.kind === 'cycle') {
-    return Boolean(value) && (habit.cycle_scores?.[value] || 0) >= (habit.max_score || 1)
-  }
-  if (habit.kind === 'time_window') {
-    const tw = habit.time_window
-    if (!tw || typeof value !== 'string') return false
-    if (tw.end <= tw.start) return value >= tw.start || value <= tw.end
-    return value >= tw.start && value <= tw.end
-  }
-  if (habit.kind === 'bp') return Array.isArray(value) && value.length > 0
-  return false
-}
-
 function calcHabitStreak(habit, logs) {
   let streak = 0
   const d = new Date()
-  const key = () => d.toISOString().slice(0, 10)
-  while (habitValueDone(habit, logs[key()]?.habits?.[habit.id])) {
+  const key = () => localDay(d)
+  while (habitIsDone(habit, logs[key()]?.habits?.[habit.id])) {
     streak++
     d.setDate(d.getDate() - 1)
   }
   if (streak > 0) return streak
   d.setDate(d.getDate() + 1)
-  while (habitValueDone(habit, logs[key()]?.habits?.[habit.id])) {
+  while (habitIsDone(habit, logs[key()]?.habits?.[habit.id])) {
     streak++
     d.setDate(d.getDate() - 1)
   }
@@ -2108,7 +2245,7 @@ const FEED_SIZE = 10
 app.get('/api/feed', async (req, res) => {
   try {
     const now = new Date()
-    const today = now.toISOString().slice(0, 10)
+    const today = localDay(now)
     const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000)
 
     const [treeData, memoriesData, insightsData, newsData, reactionsData, listsIndex, habitDefs, inboxData, savedAiCards] = await Promise.all([
@@ -2141,8 +2278,7 @@ app.get('/api/feed', async (req, res) => {
       return kids.flatMap(k => leafDescendants(k.id))
     }
 
-    // Personal status `in_progress` admits work to the active queue; planner
-    // placement then supplies its explicit order without rewriting the status.
+    // Personal planner placement expresses priority independently of task status.
     const plannerTasks = plannerQueue(treeData.nodes)
     const nowTasks = plannerTasks.filter(node => node.planner_lane === 'focus')
     if (nowTasks.length > 0 && !dismissed.has(`planner-focus:${today}`)) {
@@ -2157,29 +2293,9 @@ app.get('/api/feed', async (req, res) => {
           is_blocked: node.is_blocked,
         })),
         trace: makeTrace({ generated_by: 'rules',
-          description: `${nowTasks.length} задач(и) сейчас в активной работе`,
-          data: { 'Сейчас в работе': nowTasks.length, 'Показано': Math.min(3, nowTasks.length), 'Задачи': nowTasks.slice(0, 5).map(node => node.title).join('; ') },
+          description: `${nowTasks.length} задач(и) в приоритете на сегодня`,
+          data: { 'Приоритет на сегодня': nowTasks.length, 'Показано': Math.min(3, nowTasks.length), 'Задачи': nowTasks.slice(0, 5).map(node => node.title).join('; ') },
           truncation: nowTasks.length > 3 ? { shown: 3, total: nowTasks.length } : undefined,
-        }),
-      })
-    }
-    const dueFollowUps = plannerTasks
-      .filter(node => node.planner_lane === 'waiting' && node.planner?.follow_up_on && node.planner.follow_up_on <= today)
-      .sort((left, right) => left.planner.follow_up_on.localeCompare(right.planner.follow_up_on) || (left.planner_rank ?? Number.MAX_SAFE_INTEGER) - (right.planner_rank ?? Number.MAX_SAFE_INTEGER))
-    if (dueFollowUps.length > 0 && !dismissed.has(`planner-follow-up:${today}`)) {
-      pinnedPlannerCards.push({
-        ref: `planner-follow-up:${today}`,
-        type: 'planner_follow_up',
-        ts: today,
-        tasks: dueFollowUps.slice(0, 3).map(node => ({
-          id: node.id, title: node.title, follow_up_on: node.planner.follow_up_on,
-          urgency: node.planner?.urgency || 'unknown', is_blocked: node.is_blocked,
-          priority_note: node.planner?.priority_note || null,
-        })),
-        trace: makeTrace({ generated_by: 'rules',
-          description: `${dueFollowUps.length} follow-up из Waiting наступил(о)`,
-          data: { 'Follow-up всего': dueFollowUps.length, 'Показано': Math.min(3, dueFollowUps.length), 'Задачи': dueFollowUps.slice(0, 5).map(node => `${node.title} (${node.planner.follow_up_on})`).join('; ') },
-          truncation: dueFollowUps.length > 3 ? { shown: 3, total: dueFollowUps.length } : undefined,
         }),
       })
     }
@@ -2323,7 +2439,7 @@ app.get('/api/feed', async (req, res) => {
       for (const habit of cat.habits || []) {
         if (!habit.active) continue
         const streak = calcHabitStreak(habit, logs)
-        const todayDone = habitValueDone(habit, logs[today]?.habits?.[habit.id])
+        const todayDone = habitIsDone(habit, logs[today]?.habits?.[habit.id])
         if (todayDone && streak >= 7) {
           const ref = `streak:${habit.id}:${today}`
           if (!dismissed.has(ref)) cards.push({ ref, type: 'streak', ts: today, habit: { id: habit.id, label: habit.label }, streak, broken: false,
@@ -2357,7 +2473,7 @@ app.get('/api/feed', async (req, res) => {
       const ylog = logs[yest]
       const activeHabits = (habitDefs.categories || []).flatMap(cat => cat.habits || [])
         .filter(h => h.active)
-      const doneHabits = activeHabits.filter(h => habitValueDone(h, ylog?.habits?.[h.id]))
+      const doneHabits = activeHabits.filter(h => habitIsDone(h, ylog?.habits?.[h.id]))
       const missedCount = activeHabits.length - doneHabits.length
       const doneLists = listFiles.flatMap(({ c, items }) =>
         items.filter(i => i.status === 'done' && i.updated === yest).map(i => ({ label: c.label, title: i.title })))
@@ -2506,9 +2622,9 @@ app.get('/api/feed', async (req, res) => {
       }
     }
 
-    // Stale active work — a task has remained in the personal queue for 5+ days.
+    // Stale active work is based on task status, not priority placement.
     const staleActiveWork = plannerTasks
-      .filter(n => n.updated && daysSince(n.updated) >= 5)
+      .filter(n => n.status === 'in_progress' && n.updated && daysSince(n.updated) >= 5)
       .sort((a, b) => a.updated.localeCompare(b.updated))
     if (staleActiveWork.length > 0) {
       const ref = 'stale-active-work'
@@ -2517,7 +2633,7 @@ app.get('/api/feed', async (req, res) => {
           ref, type: 'stale_active_work', ts: today, count: staleActiveWork.length,
           tasks: staleActiveWork.slice(0, 3).map(n => ({ id: n.id, title: n.title, days: daysSince(n.updated) })),
           trace: makeTrace({ generated_by: 'rules',
-            description: `${staleActiveWork.length} задач зависло в активной очереди`,
+            description: `${staleActiveWork.length} задач со статусом «В работе» давно не обновлялись`,
             data: { 'Всего': staleActiveWork.length, 'Показано': Math.min(3, staleActiveWork.length), 'Самая старая': staleActiveWork[0] ? `${daysSince(staleActiveWork[0].updated)} дн. (${staleActiveWork[0].title})` : '—', 'Все задачи': staleActiveWork.slice(0, 10).map(n => `${n.title} (${daysSince(n.updated)}дн)`).join('; ') },
             truncation: staleActiveWork.length > 3 ? { shown: 3, total: staleActiveWork.length } : undefined,
           }),
@@ -2662,18 +2778,18 @@ app.get('/api/feed', async (req, res) => {
       }
     }
 
-    // No active queue — scheduled personal work exists but nothing has been started.
-    const hasActiveQueue = plannerTasks.length > 0
+    // Priority placement does not imply work has started.
+    const hasActiveQueue = leaves.some(n => n.status === 'in_progress' && workContext(n) === 'personal' && !(leavesByParent[n.id] || []).length)
     const hasScheduled = leaves.some(n => n.status === 'scheduled' && workContext(n) === 'personal' && !(leavesByParent[n.id] || []).length)
     if (!hasActiveQueue && hasScheduled) {
       const ref = `nudge:no-active-queue:${today}`
       if (!dismissed.has(ref)) {
         cards.push({ ref, type: 'nudge', ts: today, nudge_type: 'no_active_queue',
-          message: 'Нет задач в активной работе. Выбери что-то из запланированного.',
+          message: 'Нет задач со статусом «В работе». Можно выбрать дело из запланированного.',
           action_label: 'К пулу', action_target: null, action_link: '/pool',
           trace: makeTrace({ generated_by: 'rules',
-            description: 'Нет активной очереди, но есть scheduled',
-            data: { 'nudge_type': 'no_active_queue', 'В активной работе': hasActiveQueue ? 'да' : 'нет', 'Запланировано': hasScheduled ? 'да' : 'нет' },
+            description: 'Нет личных задач в работе, но есть запланированные',
+            data: { 'nudge_type': 'no_active_queue', 'В работе': hasActiveQueue ? 'да' : 'нет', 'Запланировано': hasScheduled ? 'да' : 'нет' },
             nudge_type: 'no_active_queue',
           }),
         })
@@ -2773,7 +2889,7 @@ app.post('/api/feed/reactions', async (req, res) => {
     const reaction = { ref, type, ts: now.toISOString() }
     if (req.body.text != null) reaction.text = req.body.text
     data.reactions.push(reaction)
-    data.updated = now.toISOString().slice(0, 10)
+    data.updated = localDay(now)
     await fs.mkdir(path.dirname(FEED_REACTIONS_FILE), { recursive: true })
     await fs.writeFile(FEED_REACTIONS_FILE, JSON.stringify(data, null, 2))
     autoMemory('Реакция', `${type} на ${ref}${req.body.text ? ': ' + req.body.text : ''}`)
@@ -2803,7 +2919,7 @@ async function readNoteJobs() {
 
 async function writeNoteJobs(data) {
   await fs.mkdir(path.dirname(NOTE_JOBS_FILE), { recursive: true })
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const sevenDaysAgo = addDaysToDate(today, -7)
   data.jobs = data.jobs.filter(j => (j.created || '').slice(0, 10) >= sevenDaysAgo)
   if (data.jobs.length > 200) data.jobs = data.jobs.slice(-200)
@@ -2825,7 +2941,7 @@ app.post('/api/feed/note-process', async (req, res) => {
     const now = new Date()
     const reaction = { ref, type: 'note', text, ts: now.toISOString() }
     data.reactions.push(reaction)
-    data.updated = now.toISOString().slice(0, 10)
+    data.updated = localDay(now)
     await fs.mkdir(path.dirname(FEED_REACTIONS_FILE), { recursive: true })
     await fs.writeFile(FEED_REACTIONS_FILE, JSON.stringify(data, null, 2))
 
@@ -2861,7 +2977,7 @@ app.get('/api/feed/note-jobs', async (req, res) => {
 async function processNoteJob(jobId, ref, text, cardType, cardContext) {
   await updateNoteJob(jobId, { status: 'running' })
   try {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
     const reactionsData = await readFeedReactions()
     const recentReactions = reactionsData.reactions.slice(-20)
 
@@ -2958,7 +3074,7 @@ const GOAL_ANALYSIS_STATUS = new Map()
 // { ref → { status: 'running'|'done'|'error', started_at, finished_at?, error? } }
 
 function currentMonday() {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const dow = new Date().getDay()
   return addDaysToDate(today, dow === 0 ? -6 : 1 - dow)
 }
@@ -3014,7 +3130,7 @@ async function triggerGoalAnalysis(monday, force = false) {
     .filter(c => c.subtitle)
 
   try {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDay()
 
     // load all available context in parallel
     const [treeData, memoriesData, insightsData, inboxData, habitDefs] = await Promise.all([
@@ -3402,7 +3518,7 @@ async function resolveAiCards(specs, today, promptSummary) {
 
 app.post('/api/ai/run', async (req, res) => {
   const { task, params = {} } = req.body || {}
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
 
   if (task === 'feed_extend') {
     const shown = params.shown || []
@@ -3476,7 +3592,7 @@ Rules:
 // ─── Brain init ────────────────────────────────────────────────────
 
 async function initBrain() {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localDay()
   const dirs = ['tree', 'habits/log', 'inbox', 'insights', 'memories/photos', 'lists', 'feed', 'profile']
   for (const d of dirs) await fs.mkdir(path.join(VAULT, d), { recursive: true })
 
@@ -3518,9 +3634,9 @@ async function initBrain() {
   }
 }
 
-const backendServer = app.listen(PORT, async () => {
+const backendServer = app.listen(PORT, HOST, async () => {
   await initBrain()
-  console.log(`Life OS backend running on http://localhost:${PORT}`)
+  console.log(`Life OS backend running on http://${HOST}:${PORT}`)
 })
 
 let shuttingDown = false
@@ -3709,8 +3825,15 @@ app.post('/api/sync/push', async (req, res) => {
       }
     }
     await writeTree(data)
-    res.json({ ok: true, synced, cleaned })
+    const blockCount = await changeEvents((events, commit) =>
+      pushWorkBlocks(events, cals.calendars, cal, commit, process.env.GOOGLE_TIMEZONE || 'Europe/Moscow'))
+    res.json({ ok: true, synced: synced + blockCount, cleaned })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(treeErrorStatus(e)).json({ error: e.message })
   }
+})
+
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error)
+  res.status(treeErrorStatus(error)).json({ error: error.message })
 })

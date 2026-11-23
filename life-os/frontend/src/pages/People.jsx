@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { entityPath, routeSegments } from '../utils/entityLinks'
-
-const api = (path) => fetch(`/api${path}`).then(r => r.json())
+import { people as peopleApi } from '../api'
 
 const HIDDEN_KEYS = new Set(['id', 'type', 'confidence'])
 
@@ -77,12 +76,13 @@ export default function People() {
   const [selected, setSelected] = useState(null)
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const personId = routeSegments(location.pathname, 'people')?.[0] || null
 
   useEffect(() => {
-    api('/people')
-      .then(data => setPeople(Array.isArray(data) ? data : []))
-      .catch(() => setPeople([]))
+    peopleApi.all()
+      .then(data => { setPeople(Array.isArray(data) ? data : []); setError('') })
+      .catch(() => setError('Не удалось загрузить людей.'))
   }, [])
 
   const select = async (person, { toggle = true } = {}) => {
@@ -90,9 +90,14 @@ export default function People() {
     setSelected(person)
     setDetail(null)
     setLoading(true)
-    const data = await api(`/people/${person.id}`)
-    setDetail(data)
-    setLoading(false)
+    setError('')
+    try {
+      setDetail(await peopleApi.get(person.id))
+    } catch {
+      setError('Не удалось загрузить сведения о человеке.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -120,6 +125,7 @@ export default function People() {
       </div>
 
       <div className="people-detail-area flex-1 overflow-y-auto">
+        {error && <p role="alert" className="p-8 text-sm text-rose-600">{error}</p>}
         {personId && !loading && people.length > 0 && !people.some(person => person.id === personId) && <div className="p-8 text-sm text-amber-700 dark:text-amber-300">Человек не найден.</div>}
         {!selected && (
           <div className="people-empty flex items-center justify-center h-full text-gray-400 text-sm"><div><span>◌</span><strong>Выбери человека</strong><p>Контакты и важные детали собраны в спокойном личном пространстве.</p></div></div>

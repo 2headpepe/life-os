@@ -1,23 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import WorkBlockForm from '../components/WorkBlockForm'
 import { createPortal } from 'react-dom'
 import { events as eventsApi, tree as treeApi, sync as syncApi, calendars as calendarsApi } from '../api'
 import { entityPath, nodePath, routeSegments } from '../utils/entityLinks'
 
-const LS_HIDDEN = 'life-os-hidden-calendars'
-const LS_FILTERS = 'life-os-cal-filters'
-
-function loadHidden() {
-  try { return new Set(JSON.parse(localStorage.getItem(LS_HIDDEN) || '[]')) }
-  catch { return new Set() }
-}
-function saveHidden(set) { localStorage.setItem(LS_HIDDEN, JSON.stringify([...set])) }
-
-function loadFilters() {
-  try { return JSON.parse(localStorage.getItem(LS_FILTERS) || '{}') }
-  catch { return {} }
-}
-function saveFilters(obj) { localStorage.setItem(LS_FILTERS, JSON.stringify(obj)) }
+import { calendarNodeVisible, loadFilters, loadHidden, saveFilters, saveHidden } from '../utils/calendarVisibility'
+import { addLocalDays } from '../utils/calendarDay'
 
 // ─── Event form ────────────────────────────────────────────────────
 
@@ -119,7 +108,7 @@ function dateStr(date) {
   const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, '0'); const d = String(date.getDate()).padStart(2, '0')
   return `${y}-${m}-${d}`
 }
-function addDays(dateStr, n) { const d = new Date(dateStr + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
+const addDays = addLocalDays
 function getWeekDates(pivot) {
   const d = new Date(pivot + 'T12:00:00'); const dow = (d.getDay() + 6) % 7
   return Array.from({ length: 7 }, (_, i) => { const x = new Date(d); x.setDate(d.getDate() - dow + i); return dateStr(x) })
@@ -139,7 +128,7 @@ function ItemChip({ item, calColor, onOpen, onToggleWatched, compact, selected }
   // introducing a gray or amber that belongs to a different palette.
   const isFollowUp = item._kind === 'follow_up'
   const color = (item._kind === 'event' || isFollowUp) ? 'var(--ds-warning)' : (calColor || item.root_color || 'var(--ds-muted)')
-  const hasCal = !!item.calendar_id
+  const hasCal = !!item.calendar_id && item._kind !== 'event'
   const isWatched = item.watched !== false
   const cls = compact ? 'text-[10px] py-px pl-1 pr-0.5 min-w-[24px]' : 'text-xs py-0.5 pl-1.5 pr-1'
   const timeStr = item._kind === 'event' && item.time ? `${item.time.slice(0,5)} ` : ''
@@ -306,6 +295,10 @@ export default function Calendar() {
   const [treeNodes, setTreeNodes] = useState([])
   const [calendars, setCalendars] = useState([])
   const [view, setView] = useState('month')
+  const [editingBlock, setEditingBlock] = useState(null)
+  const [blockError, setBlockError] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const taskId = new URLSearchParams(location.search).get('task')
   const [newEvent, setNewEvent] = useState(null)
   const [gcalStatus, setGcalStatus] = useState(null)
   const [hiddenCalendars, setHiddenCalendars] = useState(loadHidden)
@@ -331,20 +324,17 @@ export default function Calendar() {
   }
 
   const loadAll = () => Promise.all([eventsApi.all(), treeApi.leaves(), treeApi.all(), calendarsApi.all()]).then(([e, leaves, nodes, cals]) => {
-    setAllEvents(e.events || [])
+    if (!Array.isArray(e?.events) || !Array.isArray(nodes) || !Array.isArray(leaves) || !Array.isArray(cals)) throw new Error('Не удалось загрузить календарь.')
+    setAllEvents(e.events)
+    setLoaded(true)
+    setBlockError('')
     setAllTasks(leaves.filter(x => x.due && x.status !== 'done' && x.status !== 'dropped'))
-    setFollowUps(leaves.filter(x =>
-      (x.work_context || 'personal') === 'personal'
-      && x.planner?.lane === 'waiting'
-      && x.planner?.follow_up_on
-      && !x.calendar_id
-      && !['waiting_for_review', 'done', 'dropped', 'someday'].includes(x.status)
-    ))
+    setFollowUps([])
     setTreeNodes(nodes || [])
     setCalendars(cals || [])
   })
 
-  useEffect(() => { loadAll() }, [])
+  useEffect(() => { loadAll().catch(() => setBlockError('Не удалось загрузить календарь.')) }, [])
   useEffect(() => {
     if (!calendarId || !calendars.length) return
     const calendar = calendars.find(candidate => candidate.id === calendarId)
@@ -389,13 +379,21 @@ export default function Calendar() {
     setEditCal(null); loadAll()
   }
 
-  const visibleTasks = allTasks.filter(t => {
-    if (t.calendar_id) {
-      if (hiddenCalendars.has(t.calendar_id)) return false
-      if (calFilters[t.calendar_id] === 'watched' && !t.watched) return false
-    }
-    return true
-  })
+  const selectedEvent = allEvents.find(event => event.id === eventId)
+  const selectedBlock = selectedEvent?.type === 'work_block' ? selectedEvent : null
+  const task = treeNodes.find(node => node.id === (taskId || selectedBlock?.task_id))
+  const blocks = taskId ? allEvents.filter(item => item.type === 'work_block' && item.task_id === taskId)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)) : []
+  const visibleEvents = allEvents.filter(event => !event.calendar_id || !hiddenCalendars.has(event.calendar_id))
+  async function removeBlock(block) {
+    try {
+      const response = await eventsApi.delete(block.id)
+      if (response?.error) throw new Error(response.error)
+      await loadAll()
+      navigate('/calendar?task=' + encodeURIComponent(block.task_id))
+    } catch { setBlockError('Не удалось снять интервал. Обновите календарь и повторите попытку.') }
+  }
+  const visibleTasks = allTasks.filter(task => calendarNodeVisible(task, hiddenCalendars, calFilters))
 
   const prevMonth = () => { if (month === 0) { setMonth(11); setYear(y => y-1) } else setMonth(m => m-1) }
   const nextMonth = () => { if (month === 11) { setMonth(0); setYear(y => y+1) } else setMonth(m => m+1) }
@@ -436,6 +434,32 @@ export default function Calendar() {
         </div>
       </div>
 
+      {blockError && <p role="alert">{blockError} <button className="underline" onClick={() => loadAll().catch(() => {})}>Повторить</button></p>}
+      {(taskId || selectedBlock) && loaded && <section className="card mb-3 max-h-52 overflow-y-auto p-3 text-sm">
+        {task ? <>
+          <Link className="text-blue-600 underline" to={nodePath(treeNodes, task)}>Задача · {task.title}</Link>
+          {taskId && <>
+            <h2 className="mt-2 font-semibold">Рабочие интервалы</h2>
+            {blocks.map(block => <Link key={block.id} className="mt-1 block text-blue-600" to={entityPath.calendarEvent(block.id)}>
+              {block.date} · {block.time} · {block.duration_min} мин · {block.title}
+            </Link>)}
+            {!blocks.length && <p>Интервалы пока не запланированы.</p>}
+            {!['done','dropped','someday','waiting_for_review'].includes(task.status) && <button className="btn btn-ghost mt-1" onClick={() => setEditingBlock({ date: pivot })}>Добавить интервал</button>}
+          </>}
+          {selectedBlock && <>
+            <p className="my-2">{selectedBlock.title} · {selectedBlock.date} · {selectedBlock.time} · {selectedBlock.duration_min} мин</p>
+            <div className="flex flex-wrap gap-3">
+              <button className="underline" onClick={() => setEditingBlock({ block: selectedBlock })}>Перенести или изменить</button>
+              <button className="underline" onClick={() => removeBlock(selectedBlock)}>Снять интервал</button>
+              <Link to={'/calendar?task=' + encodeURIComponent(task.id)}>Все интервалы задачи</Link>
+            </div>
+          </>}
+        </> : <p>Исходная задача недоступна.</p>}
+      </section>}
+      {editingBlock && task && <WorkBlockForm {...editingBlock} task={task} calendars={calendars}
+        onClose={() => setEditingBlock(null)} onSaved={async result => {
+          await loadAll(); setEditingBlock(null); navigate(entityPath.calendarEvent(result.id))
+        }} />}
       {/* Body */}
       <div className="calendar-body flex-1 min-h-0 flex gap-3">
         {/* Calendar panel */}
@@ -476,15 +500,15 @@ export default function Calendar() {
 
         {/* Views */}
         <div className="calendar-view flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
-          {view === 'month' && <div className="flex-1 min-h-0 overflow-auto"><MonthView year={year} month={month} allEvents={allEvents} allTasks={visibleTasks} followUps={followUps} today={today} onNewEvent={setNewEvent} onOpen={openCalendarItem} calMap={calMap} onToggleWatched={toggleWatched} selectedId={eventId} /></div>}
-          {view === 'week' && <HourGrid dates={weekDates} allEvents={allEvents} allTasks={visibleTasks} followUps={followUps} today={today} onNewEvent={setNewEvent} onOpen={openCalendarItem} calMap={calMap} onToggleWatched={toggleWatched} selectedId={eventId} />}
-          {view === 'day' && <HourGrid dates={[pivot]} allEvents={allEvents} allTasks={visibleTasks} followUps={followUps} today={today} onNewEvent={setNewEvent} onOpen={openCalendarItem} calMap={calMap} onToggleWatched={toggleWatched} selectedId={eventId} />}
+          {view === 'month' && <div className="flex-1 min-h-0 overflow-auto"><MonthView year={year} month={month} allEvents={visibleEvents} allTasks={visibleTasks} followUps={followUps} today={today} onNewEvent={setNewEvent} onOpen={openCalendarItem} calMap={calMap} onToggleWatched={toggleWatched} selectedId={eventId} /></div>}
+          {view === 'week' && <HourGrid dates={weekDates} allEvents={visibleEvents} allTasks={visibleTasks} followUps={followUps} today={today} onNewEvent={setNewEvent} onOpen={openCalendarItem} calMap={calMap} onToggleWatched={toggleWatched} selectedId={eventId} />}
+          {view === 'day' && <HourGrid dates={[pivot]} allEvents={visibleEvents} allTasks={visibleTasks} followUps={followUps} today={today} onNewEvent={setNewEvent} onOpen={openCalendarItem} calMap={calMap} onToggleWatched={toggleWatched} selectedId={eventId} />}
           {newEvent && <EventForm date={newEvent.date} time={newEvent.time} onSave={() => { setNewEvent(null); loadAll() }} onCancel={() => setNewEvent(null)} />}
           {editCal && <CalEditModal cal={editCal} onSave={saveCal} onCancel={() => setEditCal(null)} onDelete={deleteCal} />}
         </div>
       </div>
       {calendarId && calendars.length > 0 && !calendars.some(calendar => calendar.id === calendarId) && <p className="mt-2 text-sm text-amber-600 dark:text-amber-300">Календарь не найден.</p>}
-      {eventId && allEvents.length > 0 && !allEvents.some(event => event.id === eventId) && <p className="mt-2 text-sm text-amber-600 dark:text-amber-300">Событие не найдено.</p>}
+      {eventId && loaded && !allEvents.some(event => event.id === eventId) && <p className="mt-2 text-sm text-amber-600 dark:text-amber-300">Событие не найдено.</p>}
     </div>
   )
 }

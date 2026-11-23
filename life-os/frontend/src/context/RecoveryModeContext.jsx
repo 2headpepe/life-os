@@ -1,14 +1,13 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { habits } from '../api'
-import { habitIsDone } from '../pages/Habits'
+import { habitIsDone } from '../utils/habitScoring'
+import { addLocalDays, localDay } from '../utils/calendarDay'
 import { trackUiAction } from '../analytics'
 
 const RecoveryModeContext = createContext()
 
 function addDays(dateStr, n) {
-  const d = new Date(dateStr + 'T12:00:00')
-  d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
+  return addLocalDays(dateStr, n)
 }
 
 export function RecoveryModeProvider({ children }) {
@@ -19,7 +18,7 @@ export function RecoveryModeProvider({ children }) {
 
   const checkFoundation = useCallback(async () => {
     try {
-      const today = new Date().toISOString().slice(0, 10)
+      const today = localDay()
       const defs = await habits.definitions()
       const foundationHabits = (defs.categories || [])
         .flatMap(c => c.habits)

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Star, Check, X } from 'lucide-react'
 import { lists as listsApi, people as peopleApi, tree as treeApi } from '../api'
 import { entityPath, routeSegments } from '../utils/entityLinks'
@@ -68,7 +68,7 @@ function ListItem({ item, listId, onUpdate, highlighted, people, selected, onOpe
               <span key={t} className="text-xs bg-gray-100 dark:bg-gray-800 text-gray-500 px-1.5 py-0.5 rounded-md">{t}</span>
             ))}
             {withPeople.map(p => (
-              <span key={p.id} className="text-xs bg-purple-50 dark:bg-purple-950 text-purple-500 dark:text-purple-400 px-1.5 py-0.5 rounded-md">с {p.name}</span>
+              <Link key={p.id} to={entityPath.person(p.id)} onClick={e => e.stopPropagation()} className="text-xs bg-purple-50 dark:bg-purple-950 text-purple-500 dark:text-purple-400 px-1.5 py-0.5 rounded-md hover:underline">с {p.name}</Link>
             ))}
           </div>
         </div>
@@ -98,7 +98,7 @@ function ListItem({ item, listId, onUpdate, highlighted, people, selected, onOpe
                   key={p.id}
                   className="inline-flex items-center gap-0.5 text-xs bg-purple-50 dark:bg-purple-950 text-purple-500 dark:text-purple-400 px-1.5 py-0.5 rounded-md"
                 >
-                  {p.name}
+                  <Link to={entityPath.person(p.id)} className="hover:underline">{p.name}</Link>
                   <button onClick={e => togglePerson(e, p.id)} className="hover:text-purple-700 dark:hover:text-purple-200 ml-0.5"><X size={10} /></button>
                 </span>
               ))}
