@@ -81,6 +81,23 @@ test('daily and weekly details retain full narrative while excluding evidence ap
   }
 })
 
+test('analytics overview exposes an incomplete weekly window', async t => {
+  const root = await fixture()
+  t.after(() => fs.rm(root, { recursive: true, force: true }))
+  await writeJson(path.join(root, 'ops/life-os-analytics/aggregates/2026-11-15.json'), {
+    date: '2026-11-15', source_event_count: 4, source_coverage: { missing_source_refs: [] },
+  })
+  await writeJson(path.join(root, 'ops/ai-sessions/runtime/health/latest.json'), { checks: [
+    { id: 'analytics_daily', status: 'healthy', detail: 'complete' },
+    { id: 'analytics_weekly', status: 'degraded', detail: 'source_coverage_incomplete', missing_source_refs: ['missing-day'] },
+  ] })
+  const model = await productIntelligenceStore(root).readModel({ includeLocalOverview: true })
+  const analytics = model.overview.streams.find(stream => stream.kind === 'analytics')
+  assert.equal(analytics.status, 'degraded')
+  assert.match(analytics.summary, /недельном агрегате не хватает источников: 1/i)
+  assert.equal(analytics.sections.at(-1).heading, 'Недельное окно')
+})
+
 test('AI Review summaries are available only to loopback callers', () => {
   assert.equal(isLoopbackAddress('127.0.0.1'), true)
   assert.equal(isLoopbackAddress('::1'), true)

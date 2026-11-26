@@ -185,7 +185,24 @@ async function analyticsEntry(root, health) {
     sections: aggregate ? [{ heading: 'Что известно', text: missing ? `Для периода не хватает ${missing} источников, поэтому данные нельзя трактовать как эффект.` : `Собрано ${aggregate.source_event_count || 0} событий. Сигналы требуют отдельной проверки.` }] : [],
     has_detail: Boolean(aggregate), generated_at: aggregate?.generated_at || null,
   }
-  return withHealth(base, healthCheck(health, 'analytics_daily'))
+  const daily = healthCheck(health, 'analytics_daily')
+  const weekly = healthCheck(health, 'analytics_weekly')
+  const dailyEntry = withHealth(base, daily)
+  if (!weekly || weekly.status === 'healthy') return dailyEntry
+  const weeklySummary = weekly.detail === 'aggregate_missing'
+    ? 'Недельный агрегат ещё не создан.'
+    : weekly.detail === 'source_coverage_incomplete'
+      ? `В недельном агрегате не хватает источников: ${(weekly.missing_source_refs || []).length}.`
+      : 'Недельный агрегат требует проверки.'
+  const status = weekly.status === 'failed' || dailyEntry.status === 'failed' ? 'failed' : 'degraded'
+  return {
+    ...dailyEntry,
+    status,
+    status_label: STATUS_LABELS[status],
+    summary: `${dailyEntry.summary} ${weeklySummary}`,
+    sections: [...dailyEntry.sections, { heading: 'Недельное окно', text: weeklySummary }],
+    has_detail: true,
+  }
 }
 
 function workSummary(initiative, nodes) {
